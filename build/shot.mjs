@@ -1,0 +1,11 @@
+import puppeteer from 'puppeteer-core';
+const b = await puppeteer.launch({executablePath:'/usr/bin/google-chrome', args:['--no-sandbox']});
+const pg = await b.newPage(); await pg.setViewport({width:1200,height:900});
+await pg.goto('file:///workspace/interview-prep/index.html#p3',{waitUntil:'networkidle0'});
+await pg.type('#search','MCP server you built');
+await pg.click('#expand'); await new Promise(r=>setTimeout(r,3000));
+const el = await pg.$('details'); await el.screenshot({path:'shot-mcp.png'});
+await pg.click('button.tab[data-k="p1"]'); await pg.evaluate(()=>{const s=document.querySelector('#search'); s.value='';});
+await pg.type('#search','middleware pipeline'); await pg.click('#expand'); await new Promise(r=>setTimeout(r,3000));
+const e2 = await pg.$('.mermaid-box'); await e2.screenshot({path:'shot-pipe.png'});
+await b.close();

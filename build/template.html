@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Pradeep — Interview Q&amp;A Bank</title>
+<style>
+:root{--bg:#ffffff;--bg2:#f5f6f8;--card:#ffffff;--text:#16181d;--muted:#5b616e;--faint:#8a909c;--border:#e2e4e9;--accent:#2563eb;--accentbg:#e8efff;--good:#15803d;--bad:#b91c1c;--code:#eef0f3}
+@media (prefers-color-scheme: dark){:root{--bg:#0f1115;--bg2:#171a21;--card:#151820;--text:#e8eaee;--muted:#a3a9b5;--faint:#737a87;--border:#2a2f3a;--accent:#7aa2ff;--accentbg:#1d2740;--good:#4ade80;--bad:#f87171;--code:#222733}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{padding:28px 20px 8px;max-width:1100px;margin:0 auto}
+h1{font-size:26px;margin:0 0 6px}
+.sub{color:var(--muted);margin:0}
+.wrap{max-width:1100px;margin:0 auto;padding:0 20px 80px}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 12px}
+.tab{border:1px solid var(--border);background:var(--bg2);color:var(--text);padding:8px 14px;border-radius:999px;cursor:pointer;font:inherit}
+.tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.controls{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.controls input[type=search],.controls select{font:inherit;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);min-width:0}
+.controls input[type=search]{flex:1 1 220px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg button{font:inherit;border:0;background:var(--card);color:var(--text);padding:7px 11px;cursor:pointer;border-right:1px solid var(--border)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accentbg);color:var(--accent);font-weight:600}
+.chk{display:inline-flex;gap:6px;align-items:center;color:var(--muted);font-size:14px;white-space:nowrap}
+.btn{font:inherit;font-size:14px;border:1px solid var(--border);background:var(--card);color:var(--text);padding:6px 11px;border-radius:8px;cursor:pointer}
+.count{color:var(--muted);font-size:14px;margin:12px 0}
+.callout{border:1px solid var(--border);background:var(--accentbg);border-radius:12px;padding:12px 14px;margin:12px 0}
+.toc{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+.toc a{font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--border);padding:3px 9px;border-radius:999px}
+h2{font-size:20px;margin:30px 0 10px;scroll-margin-top:120px}
+h2 .part{color:var(--faint);font-weight:500;font-size:14px;margin-left:6px}
+details{border:1px solid var(--border);border-radius:12px;background:var(--card);margin:8px 0}
+summary{cursor:pointer;list-style:none;padding:12px 14px;display:flex;gap:10px;align-items:flex-start}
+summary::-webkit-details-marker{display:none}
+summary .q{flex:1;font-weight:600}
+summary .num{color:var(--faint);font-weight:500;margin-right:4px}
+.tag{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.tag.A{color:var(--accent);border-color:var(--accent)}
+.tag.pic,.tag.story{color:var(--faint)}
+.body{padding:0 16px 14px 16px;border-top:1px solid var(--border)}
+.body ul{padding-left:20px;margin:12px 0}
+.body li{margin:5px 0}
+.hook{color:var(--muted);font-style:italic;margin:10px 0 0}
+.hook b{font-style:normal;color:var(--text)}
+.fu{margin-top:12px;border-top:1px dashed var(--border);padding-top:8px}
+.fu h4{margin:4px 0;font-size:14px}
+.fu li{margin:6px 0}.fu .a{color:var(--muted)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;background:var(--code);padding:1px 5px;border-radius:4px}
+.vis{margin:12px 0;overflow-x:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border:1px solid var(--border);padding:6px 9px;text-align:left;vertical-align:top}
+th{background:var(--card);font-weight:600}
+td.success{color:var(--good)}td.danger{color:var(--bad)}td.warning{color:#b45309}
+ol.steps{list-style:none;counter-reset:s;padding:0;margin:0}
+ol.steps li{counter-increment:s;position:relative;padding:0 0 12px 40px}
+ol.steps li::before{content:counter(s);position:absolute;left:0;top:0;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center;font-weight:600}
+ol.steps li:not(:last-child)::after{content:"";position:absolute;left:12px;top:28px;bottom:2px;border-left:2px solid var(--border)}
+ol.steps .t{font-weight:600}ol.steps .d{color:var(--muted);font-size:14px}
+.mermaid-box svg{max-width:none;height:auto}
+.bars{display:flex;flex-direction:column;gap:12px}
+.bargroup .lbl{font-weight:600;font-size:14px;margin-bottom:4px}
+.barrow{display:flex;align-items:center;gap:8px;font-size:13px;margin:3px 0}
+.barrow .nm{width:150px;color:var(--muted)}
+.barrow .bar{height:18px;border-radius:4px}
+.legend{display:flex;gap:14px;font-size:13px;color:var(--muted);margin-bottom:8px;flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+.hidden{display:none}
+footer{color:var(--faint);font-size:13px;margin-top:40px}
+@media (max-width:600px){.controls{position:static}.tab{font-size:14px;padding:7px 12px}h1{font-size:21px}.barrow .nm{width:100px}}
+</style>
+</head>
+<body>
+<header>
+<h1>Pradeep — Interview Q&amp;A Bank</h1>
+<p class="sub" id="sub"></p>
+</header>
+<div class="wrap">
+<div class="tabs" id="tabs"></div>
+<p class="sub" id="partsum"></p>
+<div class="callout hidden" id="callout"><b>Bracketed details are suggestions.</b> Every story here is ready to tell. Each number, date or duration in [square brackets] is a suggested detail: change it to what fits you and keep it the same in every answer. Figures without brackets (6 hours to 2, 6 people to 1, about 77 tools, a ~100-member team) come from your resume.</div>
+<div class="controls">
+<select id="topic" aria-label="Topic"></select>
+<div class="seg" id="diff"></div>
+<input type="search" id="search" placeholder="Search questions and answers, e.g. middleware, JWT, MCP" aria-label="Search">
+<label class="chk"><input type="checkbox" id="pics"> Only with pictures</label>
+<label class="chk"><input type="checkbox" id="stories"> Only with stories</label>
+<button class="btn" id="expand">Expand all</button>
+<button class="btn" id="collapse">Collapse all</button>
+</div>
+<div class="toc" id="toc"></div>
+<div class="count" id="count"></div>
+<main id="list"></main>
+<footer>Answer out loud first, then open a question to check. Diagrams are drawn with Mermaid when a question opens.</footer>
+</div>
+<script id="data" type="application/json">__DATA__</script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+(function(){
+var DATA = JSON.parse(document.getElementById('data').textContent);
+var PARTS = [
+ {key:'p1', label:'Part 1: Core Technical', sum:'C#, .NET, ASP.NET Core, EF Core, WCF, SQL, testing, frontend and the Node/Python/Java stacks.'},
+ {key:'p2', label:'Part 2: Cloud, DevOps, Security, AI and System Design', sum:'AWS, IaC, containers, CI/CD, observability, Kafka and RabbitMQ, security, MCP and AI tooling, and system design for clinical-trial workloads.'},
+ {key:'p3', label:'Part 3: Projects, Scenarios and HR', sum:'Your resume story, project deep-dives, production scenarios, STAR behavioural answers, Agile and HR.'}
+];
+var DL = {B:'Basic', I:'Intermediate', A:'Advanced'};
+var ALL = [];
+PARTS.forEach(function(p, pi){
+  var d = DATA[p.key];
+  d.QS.forEach(function(q, i){
+    ALL.push({part:p.key, pi:pi, n:i+1, topic:q[0], diff:q[1], q:q[2], a:q[3], hook:q[4], vis:q[5]||'', fu:q[6]||'', id:p.key+'-'+(i+1)});
+  });
+});
+var total = ALL.length, picTotal = ALL.filter(function(x){return x.vis;}).length, fuTotal = ALL.filter(function(x){return x.fu;}).length;
+document.getElementById('sub').textContent = total + ' questions from your resume, ' + picTotal + ' with a diagram or table and ' + fuTotal + ' full stories with follow-up questions. Tap a question to reveal the answer.';
+
+var state = {part:'p1', topic:'all', diff:'all', q:'', pics:false, stories:false};
+var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+var mermaidOK = typeof window.mermaid !== 'undefined';
+if (mermaidOK) { try { mermaid.initialize({startOnLoad:false, theme: dark ? 'dark' : 'default', securityLevel:'strict', flowchart:{htmlLabels:true, curve:'basis'}}); } catch(e){ mermaidOK=false; } }
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmt(s){return esc(s).replace(/`([^`]+)`/g,'<code>$1</code>');}
+function mesc(s){return String(s).replace(/[#&<>";]/g,function(c){return '#'+c.charCodeAt(0)+';';});}
+function topicsFor(part){
+  if (part==='all') { var o=[]; PARTS.forEach(function(p){ DATA[p.key].ORDER.forEach(function(t){ o.push({k:p.key+':'+t, label:DATA[p.key].T[t], part:p.key, t:t}); }); }); return o; }
+  return DATA[part].ORDER.map(function(t){ return {k:part+':'+t, label:DATA[part].T[t], part:part, t:t}; });
+}
+
+// ---------- visuals ----------
+var mid = 0;
+function diagramCode(p){
+  var dir = p.direction === 'vertical' ? 'TB' : 'LR';
+  var L = ['flowchart ' + dir];
+  (p.nodes||[]).forEach(function(n){
+    var lab = '<b>' + mesc(n.label) + '</b>' + (n.detail ? '<br/><small>' + mesc(n.detail) + '</small>' : '');
+    var id = 'n_' + n.id.replace(/[^A-Za-z0-9_]/g,'_');
+    var k = n.kind || 'box';
+    if (k==='decision') L.push(id + '{"' + lab + '"}');
+    else if (k==='terminal') L.push(id + '(["' + lab + '"])');
+    else if (k==='person') L.push(id + '(("' + lab + '"))');
+    else L.push(id + '["' + lab + '"]');
+  });
+  (p.edges||[]).forEach(function(e){
+    var a='n_'+e.from.replace(/[^A-Za-z0-9_]/g,'_'), b='n_'+e.to.replace(/[^A-Za-z0-9_]/g,'_');
+    var arrow = e.dashed ? '-.->' : '-->';
+    L.push(a + ' ' + arrow + (e.label ? '|"' + mesc(e.label) + '"|' : '') + ' ' + b);
+  });
+  return L.join('\n');
+}
+function seqCode(p){
+  var L = ['sequenceDiagram'];
+  var ids = p.actors.map(function(a){return a.id;});
+  p.actors.forEach(function(a){ L.push('participant a_' + a.id + ' as ' + mesc(a.label)); });
+  p.messages.forEach(function(m){
+    if (m.note !== undefined) {
+      var over = m.over ? 'a_' + m.over : ('a_' + ids[0] + ',a_' + ids[ids.length-1]);
+      L.push('Note over ' + over + ': ' + mesc(m.note));
+    } else {
+      L.push('a_' + m.from + (m.reply ? '-->>' : '->>') + 'a_' + m.to + ': ' + mesc(m.label||''));
+    }
+  });
+  return L.join('\n');
+}
+function visHTML(v){
+  if (!v) return '';
+  var p = v.props || {};
+  if (v.type === 'Table') {
+    var h = '<table><thead><tr>' + p.columns.map(function(c){return '<th>'+fmt(c)+'</th>';}).join('') + '</tr></thead><tbody>';
+    p.rows.forEach(function(r){ h += '<tr>' + r.map(function(c){ if (c && typeof c==='object') return '<td class="'+(c.tone||'')+'">'+fmt(c.text)+'</td>'; return '<td>'+fmt(c)+'</td>'; }).join('') + '</tr>'; });
+    return '<div class="vis">' + h + '</tbody></table></div>';
+  }
+  if (v.type === 'Steps') {
+    return '<div class="vis"><ol class="steps">' + p.steps.map(function(s){ return '<li><div class="t">'+fmt(s.title)+'</div>' + (s.detail ? '<div class="d">'+fmt(s.detail)+'</div>' : '') + '</li>'; }).join('') + '</ol></div>';
+  }
+  if (v.type === 'Diagram' || v.type === 'Sequence') {
+    var code = v.type === 'Diagram' ? diagramCode(p) : seqCode(p);
+    return '<div class="vis mermaid-box" data-code="' + esc(code) + '"><span class="count">Drawing diagram…</span></div>';
+  }
+  if (v.type === 'ColumnSeries') {
+    var cols = ['var(--accent)','#eab308'];
+    var max = 0; p.series.forEach(function(s){ s.values.forEach(function(x){ if (x>max) max=x; }); });
+    var h2 = '<div class="legend">' + p.series.map(function(s,i){ return '<span><i style="background:'+cols[i%2]+'"></i>'+esc(s.name)+'</span>'; }).join('') + '</div><div class="bars">';
+    p.labels.forEach(function(l, li){
+      h2 += '<div class="bargroup"><div class="lbl">'+esc(l)+'</div>';
+      p.series.forEach(function(s,i){ var val=s.values[li]; h2 += '<div class="barrow"><span class="nm">'+esc(s.name)+'</span><span class="bar" style="width:'+(val/max*60)+'%;background:'+cols[i%2]+'"></span><span>'+val+'</span></div>'; });
+      h2 += '</div>';
+    });
+    return '<div class="vis">' + h2 + '</div></div>';
+  }
+  if (v.type === 'Pyramid') {
+    var lv = [{y:20,w:200,l:'End-to-end (Playwright, Cucumber)',n:'few, slow',c:'#06b6d4'},{y:100,w:400,l:'Integration (API + DB)',n:'some',c:'#eab308'},{y:180,w:600,l:'Unit (xUnit, NUnit, Moq, Jest)',n:'many, fast',c:'#2563eb'}];
+    var s = '<svg width="100%" viewBox="0 0 700 270" role="img" aria-label="Test pyramid">';
+    lv.forEach(function(x){ s += '<rect x="'+(350-x.w/2)+'" y="'+x.y+'" width="'+x.w+'" height="64" rx="8" fill="'+x.c+'" opacity="0.9"/><text x="350" y="'+(x.y+30)+'" text-anchor="middle" fill="#fff" font-size="14" font-weight="600">'+esc(x.l)+'</text><text x="350" y="'+(x.y+50)+'" text-anchor="middle" fill="#fff" font-size="12">'+esc(x.n)+'</text>'; });
+    return '<div class="vis">' + s + '</svg></div>';
+  }
+  return '';
+}
+function renderMermaidIn(el){
+  var boxes = el.querySelectorAll('.mermaid-box[data-code]');
+  boxes.forEach(function(b){
+    var code = b.getAttribute('data-code'); b.removeAttribute('data-code');
+    if (!mermaidOK) { b.innerHTML = '<pre style="white-space:pre-wrap;font-size:12px">' + esc(code) + '</pre>'; return; }
+    var id = 'mmd' + (++mid);
+    mermaid.render(id, code).then(function(r){ b.innerHTML = r.svg; var sv=b.querySelector('svg'); if (sv && sv.style.maxWidth) { sv.style.width = sv.style.maxWidth; sv.removeAttribute('height'); } }).catch(function(err){ b.innerHTML = '<pre style="white-space:pre-wrap;font-size:12px">' + esc(code) + '</pre>'; console.warn('mermaid', err); var junk=document.getElementById('d'+id); if(junk) junk.remove(); });
+  });
+}
+
+// ---------- list ----------
+function qHTML(x){
+  var vis = x.vis ? visHTML(DATA[x.part].VIS[x.vis]) : '';
+  var fu = '';
+  if (x.fu) {
+    fu = '<div class="fu"><h4>Likely follow-up questions</h4><ul>' + x.fu.split('||').map(function(f){ var p=f.split('::'); return '<li>'+fmt(p[0])+'<div class="a">'+fmt(p[1]||'')+'</div></li>'; }).join('') + '</ul></div>';
+  }
+  return '<details data-id="'+x.id+'"><summary><span class="q"><span class="num">Q'+x.n+'.</span>'+fmt(x.q)+'</span>' +
+    (x.fu ? '<span class="tag story">Story</span>' : '') + (x.vis ? '<span class="tag pic">Picture</span>' : '') +
+    '<span class="tag '+x.diff+'">'+DL[x.diff]+'</span></summary><div class="body"><ul>' +
+    x.a.split('|').map(function(b){return '<li>'+fmt(b)+'</li>';}).join('') + '</ul>' + vis +
+    '<p class="hook"><b>Memory hook:</b> '+fmt(x.hook)+'</p>' + fu + '</div></details>';
+}
+function filtered(){
+  var s = state.q.trim().toLowerCase();
+  return ALL.filter(function(x){
+    if (state.part!=='all' && x.part!==state.part) return false;
+    if (state.topic!=='all' && (x.part+':'+x.topic)!==state.topic) return false;
+    if (state.diff!=='all' && x.diff!==state.diff) return false;
+    if (state.pics && !x.vis) return false;
+    if (state.stories && !x.fu) return false;
+    if (s && (x.q+' '+x.a+' '+x.hook+' '+x.fu).toLowerCase().indexOf(s)<0) return false;
+    return true;
+  });
+}
+function render(){
+  var items = filtered();
+  var groups = topicsFor(state.part);
+  var html = '', toc = '';
+  groups.forEach(function(g){
+    var gi = items.filter(function(x){ return x.part===g.part && x.topic===g.t; });
+    if (!gi.length) return;
+    var gid = 'g-' + g.part + '-' + g.t;
+    var partLbl = state.part==='all' ? '<span class="part">Part ' + g.part.slice(1) + '</span>' : '';
+    html += '<h2 id="'+gid+'">' + esc(g.label) + partLbl + '</h2>' + gi.map(qHTML).join('');
+    toc += '<a href="#'+gid+'">' + esc(g.label) + ' (' + gi.length + ')</a>';
+  });
+  document.getElementById('list').innerHTML = html || '<p class="count">No questions match these filters.</p>';
+  document.getElementById('toc').innerHTML = toc;
+  var scope = state.part==='all' ? total : DATA[state.part].QS.length;
+  document.getElementById('count').textContent = 'Showing ' + items.length + ' of ' + scope + ' questions.';
+  document.getElementById('callout').classList.toggle('hidden', !(state.part==='p3' || state.part==='all'));
+  var P = PARTS.filter(function(p){return p.key===state.part;})[0];
+  document.getElementById('partsum').textContent = P ? P.sum : 'All three parts in one list.';
+  document.querySelectorAll('#list details').forEach(function(d){
+    d.addEventListener('toggle', function(){ if (d.open) renderMermaidIn(d); });
+  });
+}
+function buildTabs(){
+  var t = document.getElementById('tabs');
+  var opts = PARTS.map(function(p){return {k:p.key,l:p.label+' ('+DATA[p.key].QS.length+')'};}).concat([{k:'all',l:'All ('+total+')'}]);
+  t.innerHTML = opts.map(function(o){return '<button class="tab'+(o.k===state.part?' on':'')+'" data-k="'+o.k+'">'+esc(o.l)+'</button>';}).join('');
+  t.querySelectorAll('button').forEach(function(b){ b.onclick=function(){ state.part=b.getAttribute('data-k'); state.topic='all'; buildTabs(); buildTopic(); render(); history.replaceState(null,'','#'+state.part); }; });
+}
+function buildTopic(){
+  var s = document.getElementById('topic');
+  s.innerHTML = '<option value="all">All topics</option>' + topicsFor(state.part).map(function(g){return '<option value="'+g.k+'">'+esc(g.label)+'</option>';}).join('');
+  s.value = state.topic;
+}
+function buildDiff(){
+  var d = document.getElementById('diff');
+  var o = [['all','All'],['B','Basic'],['I','Intermediate'],['A','Advanced']];
+  d.innerHTML = o.map(function(x){return '<button data-k="'+x[0]+'" class="'+(state.diff===x[0]?'on':'')+'">'+x[1]+'</button>';}).join('');
+  d.querySelectorAll('button').forEach(function(b){ b.onclick=function(){ state.diff=b.getAttribute('data-k'); buildDiff(); render(); }; });
+}
+document.getElementById('topic').onchange = function(e){ state.topic = e.target.value; render(); };
+document.getElementById('search').oninput = function(e){ state.q = e.target.value; render(); };
+document.getElementById('pics').onchange = function(e){ state.pics = e.target.checked; render(); };
+document.getElementById('stories').onchange = function(e){ state.stories = e.target.checked; render(); };
+document.getElementById('expand').onclick = function(){ document.querySelectorAll('#list details').forEach(function(d){ d.open = true; }); };
+document.getElementById('collapse').onclick = function(){ document.querySelectorAll('#list details').forEach(function(d){ d.open = false; }); };
+var h = (location.hash||'').slice(1); if (['p1','p2','p3','all'].indexOf(h)>=0) state.part = h;
+buildTabs(); buildTopic(); buildDiff(); render();
+window.__QA = {total: total, pics: picTotal, stories: fuTotal};
+})();
+</script>
+</body>
+</html>

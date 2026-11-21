@@ -1,0 +1,5 @@
+build/node_modules/
+build/package-lock.json
+build/*.png
+build/*.txt
+build/p*.mjs
