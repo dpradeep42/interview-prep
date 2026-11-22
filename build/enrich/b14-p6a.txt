@@ -1,0 +1,306 @@
+@p6-1
+Q: If state is lost, Terraform forgets which real resources it manages: the next plan tries to create everything again, causing duplicates or name conflicts. Recover by restoring a previous version from the versioned S3 backend, or re-adopt resources with import blocks (Terraform 1.5+) and verify with a plan showing no changes.
+- Prevention: S3 versioning, encryption, locking, restricted access, backups, and state per component.
+- `terraform import` CLI or declarative import blocks; `terraform plan -generate-config-out` drafts config for imported resources.
+- Never run apply when the plan unexpectedly wants to create existing resources.
+```hcl
+import {
+  to = aws_s3_bucket.imports
+  id = "irt-imports"
+}
+```
+? How do you know state is wrong? :: Plan shows creates for resources that already exist, or destroys for ones you didn't change.
+? Can you recover from partial state? :: Yes, import the missing resources one by one.
+
+@p6-2
+Q: Modules are reusable packages of Terraform code with input variables and outputs, for example a standard ECS service or VPC module, called from each environment with different values. They standardise patterns and reduce duplication.
+- Version modules (Git tags or a registry) and pin versions.
+- Keep modules focused; avoid giant "do everything" modules.
+- Validate inputs with validation blocks.
+```hcl
+module "shipments_api" {
+  source        = "git::https://dev.azure.com/irt/infra-modules//ecs-service?ref=v2.3.0"
+  name          = "shipments-api"
+  image         = var.image
+  desired_count = 3
+  cpu           = 512
+  memory        = 1024
+}
+```
+? Root module vs child module? :: The root is where you run Terraform; child modules are called from it.
+? How do you test modules? :: terraform validate, tflint and terraform test (native testing since 1.6).
+
+@p6-3
+Q: Shared modules plus one root folder per environment (envs/dev, envs/uat, envs/prod), each with its own backend state and tfvars, applied by the pipeline in promotion order. I prefer this over workspaces for strongly separated, regulated environments.
+- Separate AWS accounts per environment for blast radius and IAM isolation.
+- Same module versions promoted through environments.
+- Workspaces suit identical, short-lived environments (feature stacks).
+? Why not workspaces for prod? :: Easy to apply to the wrong workspace, and environments often differ.
+? How do you promote module changes? :: Bump the version in dev, then uat, then prod after review.
+
+@p6-4
+Q: Never hard-code secrets in .tf or tfvars. Reference AWS Secrets Manager or Parameter Store (data sources) or let services read them at runtime, mark variables sensitive, and protect state because it can contain secret values in plain text. Ephemeral resources and write-only arguments (Terraform 1.10/1.11+) keep secrets out of state.
+- Generate passwords with random_password only if state is protected; better, let RDS manage the master password in Secrets Manager (manage_master_user_password).
+- Pipeline credentials via OIDC, not stored keys.
+- sensitive = true hides values in output, not in state.
+? Does sensitive encrypt values? :: No, it only hides them from CLI output.
+? What are ephemeral resources? :: Values available during a run but never written to state or plan.
+
+@p6-5
+Q: Pull request with terraform plan (or a CloudFormation change set) attached for review; apply the reviewed plan from the pipeline only; lower environments first; small changes; protect critical resources with prevent_destroy; and have a rollback plan (revert commit and re-apply, or restore from backups for data resources).
+- Policy as code (Checkov, OPA/Sentinel) blocks risky changes automatically.
+- Watch for replacements (-/+) on databases and load balancers.
+- create_before_destroy for zero-downtime replacements.
+```hcl
+resource "aws_db_instance" "irt" {
+  lifecycle { prevent_destroy = true }
+}
+```
+? What is create_before_destroy? :: Creates the replacement before deleting the old resource.
+? How do you review a large plan? :: Focus on destroys and replacements, use -target only for emergencies.
+
+@p6-6
+Q: Docker is a platform for packaging an application and its dependencies into an image and running it as an isolated container that behaves the same on a laptop, CI agent or cloud. It uses Linux kernel features (namespaces for isolation, cgroups for resource limits) and a layered filesystem.
+- Components: Docker CLI, daemon (dockerd), containerd, registries (ECR, Docker Hub).
+- BuildKit is the default builder: parallel builds, cache mounts, secrets mounts.
+- .NET can build images without a Dockerfile (dotnet publish /t:PublishContainer).
+? Namespaces vs cgroups? :: Namespaces isolate what a process sees; cgroups limit what it can use.
+? What does PublishContainer do? :: Builds an OCI image directly from the .NET SDK without a Dockerfile.
+
+@p6-7
+Q: Each Dockerfile instruction that changes the filesystem (COPY, RUN, ADD) creates a read-only layer; layers are content-addressed, cached and shared between images. I order instructions so rarely changing steps (restore packages) come before frequently changing ones (copy source) to maximise cache hits.
+- A change invalidates the cache for that layer and all after it.
+- Deleting files in a later layer doesn't shrink the image; clean up in the same RUN.
+- docker history shows layer sizes.
+? Why copy the csproj first? :: So restore is cached unless dependencies change.
+? Do ENV and LABEL create layers? :: They create metadata-only layers with no filesystem content.
+
+@p6-8
+Q: COPY copies local files into the image; ADD also extracts local tar archives and can fetch URLs. Prefer COPY for clarity and security; use ADD only for auto-extracting a local tar.
+- For remote files, use RUN curl with checksum verification instead of ADD URL (or ADD --checksum).
+- COPY --chown sets ownership; COPY --from copies from another stage or image.
+? Why is ADD with URLs discouraged? :: It's less transparent and historically lacked checksum verification and caching control.
+? What does COPY --from do? :: Copies files from a previous build stage, the basis of multi-stage builds.
+
+@p6-9
+Q: ENTRYPOINT is the fixed executable the container runs; CMD supplies default arguments (or the default command) that docker run arguments override. Use exec form (JSON array) so the app is PID 1 and receives SIGTERM for graceful shutdown.
+- Shell form wraps in /bin/sh -c, so signals go to the shell, not your app.
+- Combine: ENTRYPOINT ["dotnet", "App.dll"] and CMD ["--urls", "http://+:8080"].
+- docker run --entrypoint overrides ENTRYPOINT.
+? Why does exec form matter for .NET? :: So SIGTERM reaches the .NET host and triggers graceful shutdown.
+? What is tini? :: A tiny init process that forwards signals and reaps zombies (docker run --init).
+
+@p6-10
+Q: Multi-stage builds (SDK image to build, small runtime image to run), slim, chiseled or Alpine base images, .dockerignore, combining and cleaning up in one RUN, and copying only published output. For .NET, chiseled images or native AOT can bring images down to tens of MB.
+- Trimming (PublishTrimmed) and self-contained with runtime-deps base images.
+- Native AOT with runtime-deps chiseled images for minimal APIs/workers.
+- Smaller images pull faster and have fewer CVEs.
+? Alpine caveats for .NET? :: musl libc and globalization (ICU) differences; test carefully.
+? What does trimming risk? :: Removing code used via reflection; test and annotate.
+
+@p6-11
+Q: Docker Compose is a YAML file that defines and runs several containers together (API, SQL Server, RabbitMQ, Redis) with networks, volumes and environment variables, using docker compose up. It's ideal for local development and integration tests, not production orchestration.
+- depends_on with condition: service_healthy waits for health checks.
+- Profiles enable optional services.
+- .NET Aspire is an alternative for local orchestration of .NET apps.
+```yaml
+services:
+  api:
+    build: .
+    ports: ["8080:8080"]
+    environment: [ "ConnectionStrings__Irt=Server=sql;Database=Irt;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=true" ]
+    depends_on: { sql: { condition: service_healthy } }
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment: [ "ACCEPT_EULA=Y", "MSSQL_SA_PASSWORD=${SA_PASSWORD}" ]
+```
+? Compose in production? :: Possible on a single host, but no self-healing across machines.
+? What does depends_on guarantee without health checks? :: Only start order, not readiness.
+
+@p6-12
+Q: Containers on the same user-defined bridge network reach each other by service name; ports are published to the host with -p; host networking shares the host stack. Volumes persist data outside the container lifecycle (named volumes managed by Docker, bind mounts for host paths), since the container's writable layer is lost on removal.
+- The default bridge network doesn't provide DNS by name; user-defined ones do.
+- tmpfs mounts for in-memory temporary data.
+- In ECS, awsvpc gives each task an ENI; EFS provides shared persistent volumes.
+? Named volume vs bind mount? :: Named volumes are managed by Docker and portable; bind mounts map host paths, good for development.
+? What happens to data written inside a container? :: Lost when the container is removed, unless on a volume.
+
+@p6-13
+Q: Use minimal, pinned and trusted base images; run as non-root; keep secrets out of layers (BuildKit secret mounts); read-only filesystem where possible; rebuild often for patches; scan in CI (Trivy, ECR scanning, Defender) and block critical CVEs; sign images and generate SBOMs.
+- Drop Linux capabilities; no privileged containers.
+- Image signing with cosign/Notation; verify at deploy.
+- Pin by digest for reproducibility.
+? How do secrets leak into images? :: ARG/ENV values or files copied in a layer remain in image history.
+? What is an SBOM? :: Software Bill of Materials listing packages in the image for vulnerability tracking.
+
+@p6-14
+Q: docker ps -a and docker logs for the exit code and error; docker inspect for config, environment, mounts and health; docker exec -it ... sh to look inside (or a debug container for distroless/chiseled images); docker stats for CPU and memory; and checking exit codes (137 OOM/kill, 139 segfault, 1 app error).
+- docker events shows lifecycle events.
+- Reproduce locally with the same image and environment.
+- In ECS, stopped reasons and CloudWatch logs; ECS Exec for a shell.
+? Exit code 137? :: Killed by SIGKILL, often out of memory.
+? How do you debug a chiseled image without a shell? :: docker debug or an ephemeral debug container sharing the process namespace.
+
+@p6-15
+Q: The main process exits and the container stops with an exit code. A restart policy (Docker), the ECS service or Kubernetes restarts it; repeated failures cause back-off (CrashLoopBackOff) and alarms, and the container's writable data is lost unless on volumes.
+- ECS replaces failed tasks and can trigger the deployment circuit breaker.
+- Logs survive if shipped to CloudWatch.
+? Docker restart policies? :: no, on-failure, always, unless-stopped.
+? How do you find the crash cause? :: Logs from the previous run and the exit code.
+
+@p6-16
+Q: Environment variables go in with -e, env files, Compose environment, or the ECS task definition; ASP.NET Core reads them with double underscores (Section__Key). Secrets should come from a secret store injected at start (ECS secrets from Secrets Manager or Parameter Store, Kubernetes Secrets or CSI driver) or read at runtime, never baked into images.
+- Docker secrets/Compose secrets mount files in /run/secrets.
+- Avoid printing environment in logs or crash dumps.
+```json
+"secrets": [{ "name": "ConnectionStrings__Irt", "valueFrom": "arn:aws:secretsmanager:eu-west-1:123:secret:irt/db-AbCd" }]
+```
+? Why are env vars weaker for secrets? :: They can appear in process listings, inspect output and crash dumps.
+? How does .NET read file-based secrets? :: AddKeyPerFile configuration provider.
+
+@p6-17
+Q: Kubernetes is an open-source container orchestrator that schedules pods across a cluster, keeps the desired number running, handles service discovery and load balancing, rolling updates, configuration and secrets, and autoscaling, all through declarative YAML reconciled by controllers.
+- Control plane: API server, etcd, scheduler, controller manager; nodes run kubelet, container runtime and kube-proxy.
+- Extensible with CRDs and operators.
+- Managed offerings: EKS, AKS, GKE.
+? What is etcd? :: The consistent key-value store holding all cluster state.
+? What is a controller? :: A loop that watches desired state and acts to make reality match.
+
+@p6-18
+Q: ClusterIP is an internal virtual IP reachable only inside the cluster (default); NodePort opens a port on every node that forwards to the service; LoadBalancer provisions a cloud load balancer (on EKS via the AWS Load Balancer Controller) in front of it. For HTTP, an Ingress or Gateway in front of ClusterIP services is typical.
+- Headless services (clusterIP: None) give DNS records for each pod (StatefulSets).
+- ExternalName maps a service to an external DNS name.
+? Why not a LoadBalancer per service? :: Cost and management; one Ingress can route many services.
+? NodePort range? :: 30000–32767 by default.
+
+@p6-19
+Q: A ReplicaSet keeps a specified number of identical pod replicas running, matching pods by labels. Deployments create and manage ReplicaSets, one per version, which enables rolling updates and rollbacks; you rarely create ReplicaSets directly.
+- Old ReplicaSets are kept (revisionHistoryLimit) for rollback.
+- Changing the pod template creates a new ReplicaSet.
+? Why use a Deployment instead? :: It adds rollout strategies and history.
+? What happens if you delete a pod? :: The ReplicaSet creates a replacement.
+
+@p6-20
+Q: In a rolling deployment new pods replace old ones gradually (maxSurge, maxUnavailable), with readiness probes gating traffic so there's no downtime. A rollback returns to the previous ReplicaSet with kubectl rollout undo, or better, by redeploying the previous version through the pipeline or GitOps.
+- kubectl rollout status waits for completion; rollout history shows revisions.
+- progressDeadlineSeconds marks stuck rollouts as failed.
+- Argo Rollouts adds canary and blue-green.
+```bash
+kubectl rollout status deployment/shipments-api
+kubectl rollout undo deployment/shipments-api --to-revision=3
+```
+? Why roll back via the pipeline? :: So Git and the cluster stay in sync.
+? What makes a rollout zero-downtime? :: Readiness probes, maxUnavailable 0 and graceful shutdown with preStop.
+
+@p6-21
+Q: The kubelet restarts the container per the restart policy with exponential back-off (CrashLoopBackOff if it keeps failing, capped at 5 minutes). If a node dies, the Deployment's ReplicaSet creates replacement pods on healthy nodes, and the Service stops routing to pods that aren't ready.
+- Pod disruption budgets protect availability during voluntary disruptions.
+- Node failure detection takes time (node controller eviction timeouts).
+? Does a crashed container get a new IP? :: A restarted container keeps the pod IP; a replaced pod gets a new one.
+? What is a PodDisruptionBudget? :: A limit on how many pods can be voluntarily evicted at once.
+
+@p6-22
+Q: Each Service gets a stable ClusterIP and DNS name (orders.default.svc.cluster.local) from CoreDNS; kube-proxy (iptables/IPVS) or an eBPF data plane routes traffic to healthy pod endpoints tracked in EndpointSlices.
+- Short names work within the same namespace (http://orders).
+- Readiness affects endpoint membership.
+? What is an EndpointSlice? :: A scalable list of pod endpoints backing a Service.
+? Cross-namespace call? :: Use service.namespace or the full DNS name.
+
+@p6-23
+Q: RBAC with least privilege and separate namespaces; network policies to restrict pod traffic; Pod Security Standards (non-root, no privileged, read-only root filesystem); secrets encrypted at rest or external (Secrets Manager via CSI or External Secrets); image scanning and signing; private API endpoint; and keeping the cluster and nodes patched.
+- Workload identity (IRSA/Pod Identity) instead of node-level credentials.
+- Admission control (Kyverno, OPA Gatekeeper) enforces policies.
+- Audit logs enabled.
+? What is a NetworkPolicy? :: Rules for which pods can talk to which, enforced by the CNI plugin.
+? Pod Security Admission levels? :: Privileged, Baseline, Restricted.
+
+@p6-24
+Q: Build a multi-stage Dockerfile image and push to ECR or ACR; deploy with a Deployment YAML or Helm chart that sets the image tag, resources, liveness and readiness probes on /health endpoints, config from ConfigMaps and secrets; a Service and Ingress route traffic; HPA scales it; the pipeline (or GitOps with Argo CD) applies it per environment.
+- Kestrel listens on 8080 in .NET 8+ images; set ASPNETCORE_HTTP_PORTS if needed.
+- Graceful shutdown: preStop sleep and terminationGracePeriodSeconds.
+- Configure GC for container limits (DOTNET_GCHeapHardLimitPercent if needed).
+? Helm vs Kustomize? :: Helm templates and packages; Kustomize overlays plain YAML without templates.
+? What is GitOps? :: The cluster state is synced from Git by an agent like Argo CD.
+
+@p6-25
+Q: A pipeline step runs dotnet test (DotNetCoreCLI task) with coverage collection, publishes results and coverage to Azure DevOps, and fails the build on any failing test or a quality gate breach. Tests run on every pull request through branch policies.
+- Coverlet or Microsoft.Testing.Platform code coverage; ReportGenerator for reports.
+- Run integration tests with Testcontainers on agents with Docker.
+- Parallelise and split slow suites.
+```yaml
+- script: dotnet test --configuration Release --logger trx --collect:"XPlat Code Coverage"
+- task: PublishTestResults@2
+  inputs: { testResultsFormat: VSTest, testResultsFiles: '**/*.trx' }
+- task: PublishCodeCoverageResults@2
+  inputs: { summaryFileLocation: '$(Agent.TempDirectory)/**/coverage.cobertura.xml' }
+```
+? What is Microsoft.Testing.Platform? :: The newer lightweight test runner replacing VSTest, supported by MSTest, xUnit v3 and others.
+? How do you handle flaky tests in CI? :: Quarantine and fix them; don't hide them with retries.
+
+@p6-26
+Q: SonarQube is a static analysis platform that scans code for bugs, code smells, security hotspots, duplication and coverage, and applies a quality gate that fails the pipeline when new code doesn't meet the bar (e.g. coverage on new code at least [80 percent], no new critical issues).
+- "Clean as you code": focus on new code.
+- Security hotspots need human review; vulnerabilities are confirmed issues.
+- PR decoration shows issues in the pull request.
+- SonarLint (now SonarQube for IDE) gives feedback in the editor.
+? Bug vs code smell? :: Bugs are likely wrong behaviour; smells are maintainability issues.
+? How do you handle false positives? :: Mark them with justification, reviewed by another developer.
+
+@p6-27
+Q: Branch policies with required reviewers; build validation (compile, tests, SonarQube gate, dependency scans); environments promoted in order with approvals; automated tests at each stage; feature flags; and monitoring with fast rollback.
+- Small PRs and pair review for risky changes.
+- Secrets scanning and SAST in the pipeline.
+- Post-deploy smoke tests.
+? What if a bug still reaches production? :: Roll back or flag off, fix, and add a test or check to catch it next time.
+? Who can bypass policies? :: Nobody routinely; emergency bypass is audited.
+
+@p6-28
+Q: An artifact is the build output promoted between environments: zip packages, NuGet packages, Docker images and scripts. I version with semantic version plus build number and commit hash (1.8.3+build.512.abc123), build once, store immutably, and promote the same artifact everywhere.
+- Immutable tags or digests for images.
+- Stamp version into the assembly and expose it via a /version endpoint.
+- Retention policies keep released artifacts for audit.
+? Why not rebuild per environment? :: A rebuild might differ; promoting one artifact guarantees what was tested is what ships.
+? Where are artifacts stored? :: Azure Artifacts, pipeline artifacts, ECR for images.
+
+@p6-29
+Q: Use the Docker task or docker build with the version tag, run tests and scans (Trivy) on the image, log in to ECR through a service connection, and push; use layer caching to speed builds and push by immutable tag, recording the digest for deployment.
+- BuildKit cache (--cache-from) or registry cache.
+- Multi-arch builds (amd64/arm64) with buildx for Graviton.
+- Fail on critical vulnerabilities.
+```yaml
+- script: |
+    docker build -t $(ECR)/shipments-api:$(Build.BuildNumber) .
+    trivy image --exit-code 1 --severity CRITICAL $(ECR)/shipments-api:$(Build.BuildNumber)
+    aws ecr get-login-password | docker login --username AWS --password-stdin $(ECR)
+    docker push $(ECR)/shipments-api:$(Build.BuildNumber)
+```
+? Why record the digest? :: Tags can move; the digest identifies the exact image.
+? ECR immutable tags? :: A repository setting that prevents overwriting an existing tag.
+
+@p6-30
+Q: Create an AWS service connection (an IAM role with least privilege, ideally OIDC federation instead of long-lived keys) and use the AWS Toolkit tasks or AWS CLI steps to push images, update ECS services, deploy CloudFormation or run Terraform, with environment approvals before production.
+- Azure DevOps supports workload identity federation (OIDC) for service connections.
+- Separate roles per environment and account.
+- Wait for ECS service stability after deployment.
+```bash
+aws ecs update-service --cluster irt-uat --service shipments-api --task-definition shipments-api:42
+aws ecs wait services-stable --cluster irt-uat --services shipments-api
+```
+? Why OIDC federation? :: No stored secrets; the pipeline gets short-lived credentials per run.
+? How do you roll back ECS? :: Update the service to the previous task definition revision.
+
+@p6-31
+Q: Variable groups per environment and pipeline variables for non-secrets; secrets as secret variables or linked from Azure Key Vault or AWS Secrets Manager; masked in logs; scoped to the pipelines and environments that need them; and never echoed or committed.
+- Secret variables aren't passed to forked PR builds.
+- Prefer runtime retrieval by the app over injecting at deploy.
+- Rotate service connection credentials or use OIDC.
+? Are secret variables available as environment variables automatically? :: No, you must map them explicitly in YAML.
+? How do you audit secret access? :: Key Vault/Secrets Manager access logs and pipeline permissions.
+
+@p6-32
+Q: Azure DevOps environments or release stages with pre-deployment approvals and checks (named approvers, business hours, change request reference, required template, invoking a REST API), plus post-deployment verification; approvals are recorded for audit.
+- Exclusive lock check prevents concurrent deployments to one environment.
+- Approver can't approve their own run (configurable).
+- The CIRT MCP server respects these; it can't bypass approvals.
+? What is an exclusive lock check? :: Ensures only one run deploys to an environment at a time.
+? How does it help GxP? :: Provides recorded, attributable approvals for each deployment.

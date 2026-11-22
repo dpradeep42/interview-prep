@@ -1,0 +1,305 @@
+@p6-33
+Q: Kafka is a distributed, durable, append-only event log. A broker is a Kafka server; a topic is a named stream of events; a partition is an ordered shard of a topic; an offset is a record's position in a partition; producers append records (choosing partitions by key); consumers read and track offsets, usually in consumer groups.
+- Since Kafka 4.0 (2025), KRaft replaces ZooKeeper entirely for metadata.
+- Records have key, value, headers and timestamp.
+- Consumers pull; brokers don't push.
+? Why pull instead of push? :: Consumers control their pace and batching.
+? What replaced ZooKeeper? :: KRaft, Kafka's built-in Raft-based metadata quorum.
+
+@p6-34
+Q: Scalability comes from partitions spread across brokers, consumer groups sharing partitions, sequential disk writes, zero-copy and batching with compression. Fault tolerance comes from replicating each partition to several brokers with leader election from in-sync replicas, plus consumers resuming from committed offsets.
+- Producer batching (linger.ms, batch.size) and compression (lz4, zstd).
+- Page cache use makes reads fast.
+? What is zero-copy? :: Sending data from page cache to the network socket without copying into user space.
+? What happens when a broker fails? :: Leadership of its partitions moves to in-sync followers.
+
+@p6-35
+Q: Replication factor is how many copies of each partition exist across brokers (typically 3); the leader handles reads and writes, followers copy it, and the in-sync replicas (ISR) are followers that are caught up. With acks=all and min.insync.replicas=2, a write is acknowledged only when at least two replicas have it.
+- unclean.leader.election.enable=false prevents data loss by not electing out-of-sync replicas.
+- Followers can serve reads (KIP-392, rack-aware fetching) to reduce cross-AZ traffic.
+? What if ISR drops below min.insync.replicas? :: Producers with acks=all get errors instead of risking loss.
+? Why RF 3? :: Survives one broker failure while still meeting min ISR 2.
+
+@p6-36
+Q: Ordering is guaranteed only within a partition, not across a topic. I use a key (such as ShipmentId) so all events for one entity go to the same partition in order, and enable the idempotent producer (default since Kafka 3.0) so retries don't reorder or duplicate.
+- Changing partition count changes key mapping for new records.
+- Consumer-side parallelism must preserve per-key order.
+- max.in.flight.requests.per.connection up to 5 is safe with idempotence.
+? Global ordering? :: Only with one partition, which limits throughput.
+? How can a consumer break ordering? :: Processing messages of the same key in parallel threads.
+
+@p6-37
+Q: Retention keeps records for a time or size limit (e.g. 7 days) whether consumed or not, allowing replay. Log compaction keeps at least the latest record per key and removes older ones, so a topic acts like a changelog of current state; a null value (tombstone) deletes a key.
+- cleanup.policy=delete, compact, or both.
+- Compacted topics suit state like "current shipment status per id" or KTable sources.
+- Tiered storage moves old segments to S3-like storage.
+? What is a tombstone? :: A record with a key and null value that marks the key for deletion in compaction.
+? Is compaction immediate? :: No, it runs in the background on closed segments.
+
+@p6-38
+Q: Its group rebalances and its partitions move to the remaining consumers, which resume from the last committed offset. Messages processed but not committed are processed again, so handlers must be idempotent; commit after processing for at-least-once.
+- session.timeout.ms and heartbeat detect crashes; max.poll.interval.ms detects stuck processing.
+- Cooperative sticky assignor and the new consumer group protocol (KIP-848, Kafka 4.0) reduce rebalance pauses.
+- Static membership avoids rebalances on quick restarts.
+? Commit before or after processing? :: After, for at-least-once; before risks loss.
+? What's max.poll.interval.ms? :: Maximum time between polls before the consumer is considered failed.
+
+@p6-39
+Q: Lag is the latest offset minus the committed offset: how far a consumer group is behind. I troubleshoot by checking which partitions lag (hot keys), slow processing or downstream dependencies, errors and retries, rebalances, and too few consumers; then fix the bottleneck, scale consumers up to the partition count, or batch work.
+- kafka-consumer-groups --describe shows lag per partition.
+- Monitor lag in time (seconds behind), not just messages.
+- Burrow, CloudWatch MSK metrics or Grafana.
+```bash
+kafka-consumer-groups --bootstrap-server $BROKERS --describe --group shipment-status-consumers
+```
+? Lag on one partition only? :: Likely a hot key or a poison message blocking it.
+? Will adding consumers always help? :: Only up to the number of partitions.
+
+@p6-40
+Q: Add consumers to the group up to the partition count, increase partitions (key mapping changes for new data), or process in parallel inside a consumer while keeping per-key order. Consumers beyond the partition count sit idle as hot standbys.
+- Size partitions for future peak throughput.
+- Parallel processing libraries (Confluent parallel consumer pattern) key-ordered.
+? Can you decrease partitions? :: No; create a new topic and migrate.
+? Idle consumers useless? :: They take over quickly if another consumer fails.
+
+@p6-41
+Q: One topic per event type or business stream (e.g. irt.shipments.status-changed.v1) with a clear naming convention and a versioned schema (Avro, Protobuf or JSON Schema in a registry); partitions sized for throughput; keys chosen for ordering; retention and compaction set per use case; and ACLs per producer and consumer.
+- Compatibility rules (backward/forward) in the schema registry.
+- Events should be facts in past tense with ids and timestamps.
+- Avoid too many tiny topics or one giant topic for everything.
+? Fat vs thin events? :: Fat events carry full data (fewer callbacks); thin events carry ids (consumers fetch details).
+? How do you evolve a schema? :: Add optional fields; never remove or change types without a new version.
+
+@p6-42
+Q: A poison message always fails and blocks the partition. I retry transient errors a few times with backoff (in-process or via retry topics), send permanently failing messages to a dead-letter topic with error headers, commit and move on, and alert and replay after a fix.
+- Distinguish transient (timeout) from permanent (deserialization, validation) errors.
+- Retry topics with delays preserve throughput but break strict ordering.
+- Store original topic, partition, offset and exception in headers.
+? Why not retry forever? :: It blocks all later messages in that partition.
+? How do you replay a DLT? :: A tool consumes it and republishes to the original topic after the fix.
+
+@p6-43
+Q: Secure Kafka with TLS in transit, SASL authentication (SCRAM or IAM on Amazon MSK), ACLs per topic and group, encryption at rest and private networking. Monitor broker health, under-replicated partitions, request latency, disk usage, producer errors and consumer lag, with alerts.
+- MSK IAM auth uses AWS credentials and IAM policies for topic access.
+- Key metrics: UnderReplicatedPartitions, OfflinePartitionsCount, ActiveControllerCount.
+? Most important broker alert? :: Under-replicated or offline partitions.
+? How do clients authenticate on MSK? :: IAM, SASL/SCRAM or mutual TLS.
+
+@p6-44
+Q: RabbitMQ is a message broker (AMQP 0-9-1, plus AMQP 1.0 native since 4.0) that routes messages from producers through exchanges to queues for consumers. A queue stores messages until consumers process them; a binding is a rule linking an exchange to a queue, with a routing key or pattern.
+- Producers publish to exchanges, never directly to queues (the default exchange routes by queue name).
+- Queue types: classic, quorum (replicated, Raft) and streams.
+- Classic mirrored queues were removed in 4.0; use quorum queues for HA.
+? What is a vhost? :: A logical namespace isolating exchanges, queues and permissions.
+? Quorum vs classic queues? :: Quorum queues are replicated and safer; classic queues are single-node.
+
+@p6-45
+Q: A consumer ack tells RabbitMQ the consumer processed the message so it can be deleted; nack or no ack (on disconnect) requeues or dead-letters it. A publisher confirm is the broker telling the publisher it safely received the message. Consumer acks protect the consumer side; confirms protect the publisher side; both are needed.
+- Manual acks after processing; autoAck=true loses messages on failure (Part 3 Q26).
+- Consumer timeout (default 30 minutes) closes channels with long-unacked messages.
+? What happens to unacked messages if a consumer dies? :: They're requeued and redelivered with the redelivered flag set.
+? Ack multiple? :: multiple=true acks all up to a delivery tag, reducing overhead.
+
+@p6-46
+Q: A durable queue or exchange survives a broker restart (its definition); a persistent message (delivery mode 2) is written to disk. You need both for messages to survive a restart, and publisher confirms to know they were actually stored. Quorum queues are always durable and persist messages.
+- Persistence costs throughput; transient messages suit non-critical data.
+- Lazy behaviour (messages on disk) is default for quorum queues and classic v2.
+? Durable queue with non-persistent messages? :: The queue survives, but messages are lost on restart.
+? Does persistence alone prevent loss? :: No; without confirms, messages can be lost before reaching disk.
+
+@p6-47
+Q: Publishers can't send: they should retry with backoff or write to an outbox table and publish later; consumers reconnect automatically when it returns (automatic recovery in the .NET client). Durable queues with persistent messages keep data; quorum queues across nodes keep the service available if one node fails.
+- Health checks and alerts on connection failures.
+- Circuit breaker on publishing to avoid thread pile-ups.
+? Does the .NET client reconnect? :: Yes, with AutomaticRecoveryEnabled (default true) and topology recovery.
+? How do you avoid losing events while it's down? :: Outbox pattern.
+
+@p6-48
+Q: For transient errors I retry in-process a few times, then nack to a retry queue with a TTL that dead-letters back to the main queue (delayed retry); after a maximum number of attempts (tracked via the x-death header or a count header), the message goes to a DLQ with an alert.
+- Quorum queues support delivery limits (x-delivery-limit, default 20 in 4.0) to stop poison loops.
+- Exponential backoff with several retry queues of increasing TTL.
+- Libraries like MassTransit provide retry and redelivery policies.
+? Why not requeue immediately? :: It creates hot loops hammering a failing dependency.
+? What is x-death? :: A header RabbitMQ adds with dead-lettering history, including counts.
+
+@p6-49
+Q: Publisher confirms (our outage fix), durable queues, persistent messages, quorum queues, manual consumer acks after processing, dead-letter queues, the outbox pattern for publish-after-commit, and monitoring of queue depth, unroutable messages and memory alarms.
+- mandatory flag or alternate exchange for unroutable messages.
+- Idempotent consumers because redelivery happens.
+? What's the most commonly missed piece? :: Publisher confirms.
+? What are unroutable messages? :: Messages with no matching binding, dropped silently unless handled.
+
+@p6-50
+Q: Scale with more competing consumers per queue and tuned prefetch, clustering with quorum queues, splitting hot queues, and bigger nodes or Amazon MQ. Monitor queue depth, publish/deliver/ack rates, unacked counts, consumer counts, memory and disk alarms, connection churn and DLQ size via Prometheus and Grafana or CloudWatch.
+- One queue is bound to one node's leader; spread queues across nodes.
+- Avoid huge backlogs; queues work best near empty.
+- Watch for connection and channel leaks.
+? Why do huge queues hurt? :: Memory pressure, slow recovery and triggered alarms.
+? How do you choose prefetch? :: Based on processing time and consumers; start small (10–50) and measure.
+
+@p6-51
+Q: I start from symptoms and scope, then follow the request: application errors and exceptions in logs; database waits, blocking, slow queries and connection pool usage; infrastructure metrics (CPU, memory, network, task restarts, load balancer target health); and recent changes. Traces show which hop spends the time.
+- If all services slow at once, suspect shared infrastructure (DB, network, DNS).
+- If one endpoint, suspect code or a query.
+- Compare with a healthy baseline period.
+? Quick sign of a database issue? :: Latency rising across endpoints with DB time dominant in traces.
+? Infrastructure sign? :: Task restarts, node CPU saturation or network errors.
+
+@p6-52
+Q: A correlation or trace id is generated at the edge and passed in headers (W3C traceparent) through HTTP calls and message headers; every log line includes it, and a tracing system (OpenTelemetry to X-Ray, Jaeger or Grafana Tempo) shows the full path with timings.
+- ASP.NET Core and HttpClient propagate Activity context automatically.
+- Add the id to error responses so users can report it.
+- Our correlation-id middleware ([2024], [4] services) cut triage from [about an hour to minutes] (Part 10 Q4).
+? How do you correlate across RabbitMQ? :: Put the trace context in message headers and restore it in the consumer.
+? What is baggage? :: Key-value context propagated with traces across services.
+
+@p6-53
+Q: Application error logs for the affected service and time window (exceptions, 5xx) first, then load balancer or gateway logs (status codes, latency, target errors), then dependency logs (database, broker), then infrastructure events (deployments, task restarts, scaling).
+- Filter by correlation id from a user report.
+- Look at the first error, not the loudest.
+? Why the first error? :: Later errors are often consequences of the first.
+? Where are ALB logs? :: Access logs in S3, queryable with Athena.
+
+@p6-54
+Q: I keep asking why (5 whys) until I reach something that, if fixed, prevents the whole chain; I check the cause explains all symptoms and timing, and that removing it stops the problem. Symptoms are what you observe (timeouts); root causes are why they happen (missing index after data growth).
+- Separate trigger, root cause and contributing factors.
+- Validate with a reproduction or a controlled change.
+? Example? :: Symptom: shipment statuses stale; trigger: memory alarm; root cause: no publisher confirms.
+? Can there be multiple root causes? :: Yes, often several contributing factors.
+
+@p6-55
+Q: Acknowledge, assess impact and severity, communicate early, mitigate first (rollback, scale, disable a feature), then find the root cause. Afterwards run a blameless post-mortem with a timeline, root cause and actions (tests, alerts, automation) tracked to completion; in GxP, document deviations and CAPA.
+- Roles: incident commander, communicator, investigators.
+- Status updates at regular intervals.
+- Action items with owners and dates.
+? What makes a post-mortem useful? :: Specific, owned actions that are actually completed.
+? How do you communicate with stakeholders? :: Short updates on impact, actions and next update time.
+
+@p6-56
+Q: In [2024] a security review flagged that external links in the IRT UI used target="_blank" without rel="noopener", letting the opened page change our tab via window.opener (phishing risk). I fixed [about 40] links across React and Angular with rel="noopener noreferrer", updated window.open calls to pass noopener, and enabled the ESLint rule react/jsx-no-target-blank so the build fails if it returns. It passed retest with no regressions.
+- Found links with a code search across both front ends.
+- Angular templates checked separately since the React lint rule doesn't cover them.
+- Cross-Origin-Opener-Policy header as extra defence.
+- Lesson: pair every fix with an automated guard.
+W: I close security gaps completely and prevent regressions.
+? Why noreferrer too? :: It also hides the Referer header, avoiding leaking internal URLs.
+? Don't browsers fix this now? :: Modern browsers default to noopener for _blank, but explicit attributes and window.open still matter.
+
+@p6-57
+Q: Mocking replaces a real dependency with a test double so you can test a unit in isolation. A stub returns canned answers; a mock also verifies interactions (was it called, with what); a fake is a working lightweight implementation (in-memory repository, FakeTimeProvider).
+- Moq, NSubstitute; Moq's 2023 SponsorLink controversy led some teams to NSubstitute.
+- Don't mock what you don't own; wrap third-party APIs.
+- Over-mocking couples tests to implementation.
+? Spy? :: A double that records calls on a real or partial object for later assertions.
+? When prefer fakes? :: When behaviour matters more than calls, like repositories in domain tests.
+
+@p6-58
+Q: Depend on interfaces, inject them, and in unit tests pass Moq mocks or fakes (repository, clock, HTTP client) to cover business logic; then add integration tests with real dependencies (database, broker in containers) for the wiring.
+- HttpClient: mock HttpMessageHandler or use a fake handler.
+- Time: FakeTimeProvider.
+- Logging: FakeLogger to assert important logs.
+? How do you test code using HttpClient? :: Inject a fake HttpMessageHandler returning prepared responses.
+? Why both unit and integration? :: Units prove logic; integration proves real configuration and queries.
+
+@p6-59
+Q: Keep controllers thin and test logic in services. For controllers, use WebApplicationFactory integration tests that send HTTP requests and assert status codes, bodies and headers, with test authentication and replaced external services via ConfigureTestServices.
+- Test auth handler to simulate users and roles.
+- Test model validation and ProblemDetails responses.
+```csharp
+public class ShipmentsApiTests(WebApplicationFactory<Program> f) : IClassFixture<WebApplicationFactory<Program>>
+{
+    [Fact] public async Task Get_unknown_returns_404()
+    {
+        var client = f.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.AddScoped<IShipmentService, FakeShipmentService>())).CreateClient();
+        var res = await client.GetAsync("/api/shipments/999");
+        Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+    }
+}
+```
+? Why not unit test controllers directly? :: Routing, binding, filters and auth are skipped, which is where bugs hide.
+? How do you fake authentication? :: A test AuthenticationHandler that creates a ClaimsPrincipal.
+
+@p6-60
+Q: Prefer a real database: SQL Server in Testcontainers or a test database, with migrations applied and data reset between tests (Respawn). SQLite in-memory is faster but differs from SQL Server; the EF Core InMemory provider isn't recommended for testing queries.
+- Test repositories and complex queries against the real provider.
+- Transactions rolled back per test, or Respawn to clean tables.
+```csharp
+var sql = new MsSqlBuilder().WithImage("mcr.microsoft.com/mssql/server:2022-latest").Build();
+await sql.StartAsync();
+var options = new DbContextOptionsBuilder<IrtDbContext>().UseSqlServer(sql.GetConnectionString()).Options;
+```
+? Why not InMemory provider? :: No relational behaviour: no transactions, constraints or real SQL translation.
+? What is Respawn? :: A library that resets database tables quickly between tests.
+
+@p6-61
+Q: Playwright is a browser automation framework that drives Chromium, Firefox and WebKit for end-to-end tests, with auto-waiting, tracing and parallel runs. Cucumber is a BDD tool that runs Given/When/Then scenarios written in Gherkin; they combine well: Cucumber for readable scenarios, Playwright for the browser steps.
+- Playwright trace viewer helps debug CI failures.
+- Use role-based locators (getByRole) for resilient tests.
+- Gherkin scenarios double as living documentation for QA and validation.
+```gherkin
+Scenario: Bulk import rejects duplicate sites
+  Given I am a study manager on study "ST-42"
+  When I upload "sites-with-duplicates.csv"
+  Then I see 2 errors with reason "Duplicate site number"
+```
+? Playwright vs Selenium? :: Playwright is faster, auto-waits and has better tooling.
+? Why BDD in GxP? :: Scenarios trace directly to requirements and are readable by validation teams.
+
+@p6-62
+Q: A flaky test passes and fails without code changes, usually from timing, shared state, order dependence, real time or network calls. I reproduce it (repeat runs), quarantine it so it doesn't block others, fix the root cause (awaits, isolation, fake time, deterministic data), and track flakiness rates.
+- Never just add sleeps; wait for conditions.
+- Retries hide problems; use only temporarily with tracking.
+- Azure DevOps flaky test detection can mark them.
+? Common async flakiness cause? :: Not awaiting tasks or asserting before background work finishes.
+? How do you find order dependence? :: Run tests in random order or isolation.
+
+@p6-63
+Q: Coverage is the percentage of lines or branches executed by tests. 100 percent is rarely worth it: coverage shows what ran, not whether it was verified. I aim for high coverage on business logic with meaningful assertions, and use thresholds on new code as a guard.
+- Mutation testing (Stryker.NET) measures test quality by injecting bugs.
+- Branch coverage is more informative than line coverage.
+? What does mutation testing tell you? :: Whether tests fail when code is changed, i.e. if assertions are meaningful.
+? What to exclude from coverage? :: Generated code, simple DTOs and startup wiring.
+
+@p6-64
+Q: Good tests are fast, isolated, repeatable, readable and test one behaviour, with clear names (Method_Scenario_Expected). Arrange-Act-Assert: set up inputs and doubles, call the method once, then assert outcomes.
+- One logical assertion per test; use theory data for variations ([Theory], [InlineData]).
+- Avoid logic in tests.
+- Builders or object mothers for test data.
+```csharp
+[Theory]
+[InlineData(ShipmentStatus.Shipped, false)]
+[InlineData(ShipmentStatus.InTransit, true)]
+public void MarkDelivered_only_from_in_transit(ShipmentStatus start, bool allowed)
+{
+    var s = ShipmentBuilder.With(start).Build();                                   // Arrange
+    var act = () => s.MarkDelivered(DateTimeOffset.UtcNow);                         // Act
+    if (allowed) act(); else Assert.Throws<InvalidOperationException>(act);         // Assert
+}
+```
+? Why one behaviour per test? :: Failures point to exactly what broke.
+? FIRST principles? :: Fast, Isolated, Repeatable, Self-validating, Timely.
+
+@p6-65
+Q: For async, make test methods async Task and await the call; never use .Result; control time with FakeTimeProvider; test cancellation. For exceptions, use Assert.ThrowsAsync<T> (xUnit) or FluentAssertions-style checks, and assert the message or properties that matter.
+- FakeTimeProvider.Advance to trigger timers and delays deterministically.
+- Test that OperationCanceledException is thrown when the token is cancelled.
+```csharp
+var ex = await Assert.ThrowsAsync<ValidationException>(() => svc.ImportAsync(badFile, ct));
+Assert.Contains("Duplicate site", ex.Message);
+var time = new FakeTimeProvider(); time.Advance(TimeSpan.FromMinutes(5));
+```
+? Why avoid .Result in tests? :: It can deadlock in some contexts and wraps exceptions in AggregateException.
+? How do you test retries with delays quickly? :: Inject TimeProvider and advance fake time.
+
+@p6-66
+Q: Unit-test handlers with the message as input and dependencies mocked. Integration tests start a real broker in Testcontainers, publish a message, and assert the consumer's effect (database row, outgoing message) with polling and timeouts; contract tests check message schemas between producers and consumers.
+- Test idempotency by publishing the same message twice.
+- Test failure paths: DLQ routing, retries.
+- Keep handler logic separate from broker plumbing for testability.
+```csharp
+var rabbit = new RabbitMqBuilder().WithImage("rabbitmq:4-management").Build();
+var kafka  = new KafkaBuilder().WithImage("confluentinc/cp-kafka:7.6.0").Build();
+await Task.WhenAll(rabbit.StartAsync(), kafka.StartAsync());
+```
+? How do you wait for async effects? :: Poll with a timeout instead of fixed sleeps.
+? What's a message contract test? :: Verifying the producer's schema matches what the consumer expects.

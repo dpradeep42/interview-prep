@@ -39,7 +39,7 @@ Q: API Gateway provides API management: auth (JWT, Lambda authorizers), throttli
 ? Can ALB authenticate users? :: Yes, with OIDC or Cognito authentication actions.
 
 @p5-68
-Q: Lambda runs functions on events (API Gateway, S3, SQS, DynamoDB Streams, EventBridge schedules); you pay per request and duration, and AWS manages servers and scaling. It supports .NET 8 (managed) and newer versions via custom runtimes or container images, up to 15 minutes per invocation and 10 GB memory.
+Q: Lambda runs functions on events (API Gateway, S3, SQS, DynamoDB Streams, EventBridge schedules); you pay per request and duration, and AWS manages servers and scaling. It supports managed .NET LTS runtimes (.NET 8 and newer as AWS adds them), plus custom runtimes or container images, up to 15 minutes per invocation and 10 GB memory.
 - Event source mappings poll SQS, Kinesis and DynamoDB Streams.
 - Cold starts; mitigate with SnapStart, provisioned concurrency, AOT.
 - Lambda Powertools for .NET for logging, metrics, tracing and idempotency.
@@ -189,6 +189,6 @@ Q: Secrets Manager is built for secrets: automatic rotation (RDS integration), c
 Q: Right-size tasks and instances, use autoscaling and scale-to-zero for dev, Savings Plans or Reserved capacity for steady load, Spot for non-critical work, S3 lifecycle and tiering, log retention, VPC endpoints to cut NAT costs, Graviton (ARM) instances, and Cost Explorer with tags and budgets to find waste.
 - Turn off non-production environments outside working hours.
 - Delete unattached volumes, old snapshots, idle load balancers.
-- .NET runs well on ARM64 (Graviton) for 20-40 percent better price-performance.
+- .NET runs well on ARM64 (Graviton) for up to about 40 percent better price-performance (AWS figure).
 ? Quick win you'd check first? :: CloudWatch log retention and idle non-production resources.
 ? How do you make teams cost-aware? :: Tag resources by team and share monthly cost reports.
