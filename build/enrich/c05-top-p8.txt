@@ -1,0 +1,111 @@
++@p8-29
+- Fine-tuning fits format, tone or narrow classification tasks; RAG fits facts that change, like our runbooks.
+- Pitfall: poor chunking or no re-ranking returns irrelevant context, and the model then answers confidently but wrongly.
++@p8-30
+- Build an eval set of real questions with expected answers ([30] for our runbook assistant) and re-run it on every prompt or model change.
+- Measure groundedness (answer supported by the cited chunks), correctness, and refusal when context is missing; LLM-as-judge plus human spot checks.
++@p8-31
+- Keep data in enterprise endpoints (Azure OpenAI in our tenant) with no training on prompts; no patient data in prompts.
+- Treat model output as untrusted: validate before acting, enforce permissions in tools, and log prompts and tool calls for audit.
++@p8-32
+- Data residency and contracts decide what data can go to which model.
+- Model choice changes fast, so keep prompts and evals portable.
++@p8-33
+- Risks: insecure patterns (SQL string concatenation, missing auth checks), hallucinated packages, licence issues, and subtle logic bugs.
+- Controls: same code review and tests as human code, SAST and dependency scanning in CI, and developers accountable for every line.
++@p8-34
+- Production tools need separate permission and explicit confirmation, and the user's own PAT limits what the agent can do.
+- Environment allow-lists and dry-run modes; approvals for controlled environments stay in Azure DevOps with humans.
++@p8-35
+- Use the platform's approval gates (Azure DevOps release approvals) rather than building a parallel system; the agent can only request.
+- Record approver, time and change request reference.
++@p8-36
+- Log every tool call: user, tool, parameters (secrets redacted), result, duration and correlation id, as structured logs.
+- Azure DevOps keeps its own history of builds, releases and approvals as the system of record.
++@p8-37
+- Tools return clear, structured errors with next steps so the agent can report instead of guessing.
+- Retries only for idempotent steps (status polls, single-node retry), never blind re-deploys of everything.
++@p8-38
+- Environment is an explicit parameter validated against an allow-list, never inferred.
+- Per-environment configuration and stricter rules (confirmations, approvals) as you move toward production.
++@p8-39
+- Agent acts with the user's identity and permissions, never a shared super-user.
+- No tool can change permissions or approvals, preventing escalation via the agent.
++@p8-40
+- Secrets live in the OS credential store or a vault, never in prompts, tool outputs or logs.
+- Short-lived, least-privilege tokens with rotation.
++@p8-41
+- Classify tools by risk (read, write, destructive) and apply checks per class: read freely, writes with confirmation, destructive with approval.
+- Validate parameters deterministically (environment, version format, existence) before execution.
++@p8-42
+- Specialised agents (planner, coder, reviewer) with narrow tools and a coordinator; avoid giving every agent every tool.
+- Add termination conditions and cost limits; our [AutoGen experiment] used coder plus reviewer agents for unit tests.
++@p8-43
+- OAuth 2.0 is delegated authorization (access tokens for APIs); OIDC adds authentication with an ID token about the user.
+- Use Authorization Code with PKCE for browser and mobile apps; client credentials for service-to-service.
++@p8-44
+- The app redirects to the identity provider; the user signs in once; the IdP issues tokens or SAML assertions trusted by many apps.
+- Our SSO cookie fix ([~13 KB→<1 KB]) came from storing too many claims in the cookie.
++@p8-45
+- EF Core and Dapper parameterize by default; FromSqlInterpolated is safe, FromSqlRaw with concatenated strings is not.
++@p8-46
+- Chrome and Edge treat cookies without a SameSite attribute as Lax (other browsers differ, so always set it explicitly); None requires Secure; use the __Host- prefix to lock cookies to the host.
++@p8-47
+- Authentication at the gateway and in each service (zero trust), with scopes and policies per endpoint.
+- Rate limiting (ASP.NET Core's built-in middleware since .NET 7), input validation, and TLS everywhere.
++@p8-48
+- Least-privilege IAM roles, private subnets, security groups, encryption with KMS, and CloudTrail plus GuardDuty.
+- Infrastructure as code reviewed through pull requests.
++@p8-49
+- dotnet list package --vulnerable, npm audit, and Dependabot or similar in CI with a fail threshold.
+- Track transitive dependencies; central package management made our upgrades consistent.
++@p8-50
+- Assess severity and exploitability, mitigate quickly (WAF rule, config change), then patch via controlled emergency change.
+- Root cause and a test or scan rule so it doesn't return.
++@p8-51
+- Stateless services behind load balancers, caching, pagination, async processing, and rate limits.
+- Database: indexes, read replicas, and partitioning when needed; observability on p95 latency.
++@p8-52
+- Short codes via base62 of a unique id; redirect with 301 vs 302 (302 if you need click analytics); cache hot codes in Redis.
++@p8-53
+- Queue per channel (email, SMS, push) with retries, templates, user preferences and idempotency keys to avoid duplicate sends.
++@p8-54
+- Order state machine with explicit transitions; inventory reservation and payment via sagas with compensations.
+- Outbox for events; idempotent APIs with keys.
++@p8-55
+- Pre-signed S3 URLs so clients upload directly; virus scan and metadata processing via S3 events.
+- Multipart upload for large files and size limits.
++@p8-56
+- Queue-based workers, idempotent jobs, retries with DLQ, visibility timeouts and job status tracking.
+- Scale workers on queue depth.
++@p8-57
+- Idempotency keys on every payment request; a ledger with double-entry records; reconciliation with the provider.
+- Never store card data; use a PCI-compliant provider and tokens.
++@p8-58
+- WebSockets (SignalR) for live delivery, messages stored per conversation with ordering ids, and offline delivery via push.
+- Scale out with a backplane (Redis or Azure SignalR Service).
++@p8-59
+- Events as contracts with schemas and versioning; outbox for reliable publishing; idempotent consumers.
+- Choreography for simple flows, orchestration (saga) when you need visibility.
++@p8-60
+- Use a proven IdP (OIDC) instead of building one; short-lived access tokens, refresh token rotation, and MFA.
+- Revocation via a jti denylist like our logout fix ([15-min] tokens, ElastiCache, [~1 ms]).
++@p8-61
+- Cache-aside with TTLs, consistent hashing across nodes, and invalidation on writes.
+- Protect against stampedes (HybridCache, released alongside .NET 9, coalesces concurrent requests for the same key).
++@p8-62
+- Vendor integrations isolated behind adapters so a vendor change doesn't touch core services.
+- Multi-AZ ECS and RDS for availability; reporting off read replicas.
++@p8-63
+- Scale stateless services horizontally; cache reference data; move heavy work to queues.
+- Database: indexes and query tuning first, then read replicas, then partition by study.
++@p8-64
+- Caching: reference data and permissions (Redis).
+- Kafka: shipment status events with replay and many consumers; RabbitMQ: task queues (notifications, reports).
+- Synchronous APIs: user-facing reads and commands needing an immediate answer, such as randomization.
++@p8-65
+- Timeouts, retries with backoff, circuit breakers, DLQs and outbox.
+- Runbooks and alerts so failures are visible and actionable.
++@p8-66
+- Monitor: metrics, logs, traces with correlation ids, and SLO-based alerts.
+- Secure: SSO, RBAC, encryption, audit trails, and least-privilege IAM.

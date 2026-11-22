@@ -1,0 +1,165 @@
++@p5-6
+- Hybrid: scaffold once from an existing database (dotnet ef dbcontext scaffold), then continue Code First with migrations.
++@p5-7
+- The provider translates expression trees to SQL; ToQueryString() shows the SQL without executing it.
++@p5-8
+- Since EF Core 3.0, untranslatable expressions in Where throw instead of silently evaluating on the client; only the final Select projection may run client-side.
+- Common causes: calling your own C# methods in Where, string.Format, or unsupported overloads; fix with translatable expressions or a mapped DB function.
++@p5-10
+- SaveChanges wraps all changes in one transaction by default and batches statements (SQL Server batching).
++@p5-12
+- EF Core already caches query plans; compiled queries mainly save the expression-tree compare and translation cost on very hot paths.
++@p5-13
+- In tests or dev: optionsBuilder.LogTo(Console.WriteLine, LogLevel.Information); never EnableSensitiveDataLogging in production.
++@p5-15
+- Common use: audit columns (CreatedAt, UpdatedBy) set in SaveChanges via ChangeTracker without polluting the domain model.
++@p5-16
+- Owned types can map to the same table (columns prefixed) or a separate table; in EF Core 8, complex types are an alternative for value objects.
++@p5-18
+- Choose surrogate keys (int/bigint identity or sequential GUID) for stability; natural keys can change.
++@p5-19
+- A unique constraint allows one NULL in SQL Server; use a filtered unique index (WHERE col IS NOT NULL) to allow many NULLs.
++@p5-20
+- Our shipment index (StudyId, Status, ShipmentDate) INCLUDE (...) served the main list query: equality columns first, the range/sort column last.
++@p5-21
+- Parameterized queries may not use a filtered index if the plan can't prove the filter matches; use literals or OPTION(RECOMPILE) when needed.
++@p5-22
+- Monitor with sys.dm_db_index_usage_stats: indexes with many updates and no seeks are candidates to drop.
++@p5-24
+- Key lookups after a nonclustered seek can dominate cost; covering indexes with INCLUDE remove them.
++@p5-25
+- Auto-update statistics triggers after a percentage of changes; large tables may need manual UPDATE STATISTICS after bulk loads.
++@p5-26
+- UNION adds a sort or hash distinct, which costs CPU and memory on large sets.
+- Use UNION ALL by default when sets can't overlap or duplicates are fine.
++@p5-27
+- NOT IN with a NULL in the subquery returns no rows; NOT EXISTS behaves as expected, so prefer it.
++@p5-28
+- Table variables have limited statistics (improved by deferred compilation in SQL Server 2019+); temp tables have full stats.
++@p5-29
+- Use ROW_NUMBER for pagination and dedup; DENSE_RANK for "nth highest" when ties count once.
++@p5-30
+- Delete duplicates keeping one: WITH d AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY Email ORDER BY Id) rn FROM Users) DELETE FROM d WHERE rn > 1.
+- Prevent recurrence with a unique index after cleanup.
++@p5-31
+- OFFSET/FETCH alternative: SELECT DISTINCT Salary ... ORDER BY Salary DESC OFFSET n-1 ROWS FETCH NEXT 1 ROW ONLY.
++@p5-32
+- CROSS APPLY with TOP (N) ... ORDER BY can be faster than ROW_NUMBER when an index supports the per-group ordering.
+- Ties: use RANK or WITH TIES if equal values should all appear.
++@p5-33
+- READ COMMITTED SNAPSHOT (RCSI) avoids readers blocking writers by reading row versions from tempdb.
+- Isolation levels: Read Uncommitted allows all three; Repeatable Read stops non-repeatable reads; Serializable stops phantoms.
++@p5-34
+- Durability in SQL Server comes from write-ahead logging: the log record is hardened before commit returns.
+- Distributed services can't have ACID across databases cheaply, so we used outbox plus eventual consistency.
++@p5-35
+- EF Core: a rowversion column marked IsRowVersion() gives optimistic concurrency; catch DbUpdateConcurrencyException and return 409.
++@p5-36
+- Measure first: Query Store top resource consumers, wait stats, and actual execution plans before changing anything.
++@p5-37
+- Design from queries: list the top queries' WHERE, JOIN and ORDER BY columns, then build the fewest indexes covering most of them.
++@p5-38
+- Each service owns its data; sharing a database between services recreates a monolith.
++@p5-39
+- Advantages: independent deploys, scaling per service, fault isolation, team autonomy.
+- Disadvantages: network failures, distributed data consistency, more ops (observability, CI/CD per service).
++@p5-40
+- Small teams, unclear domains, or early products: start with a modular monolith and split on proven boundaries.
+- If services must always deploy together, they are a distributed monolith.
++@p5-41
+- Event storming with domain experts finds boundaries where language and data ownership change.
++@p5-42
+- Rule of thumb: sync for queries needing an immediate answer, async events for state changes others react to.
++@p5-43
+- Sync chains multiply latency and failure probability: three services at 99.9% each give about 99.7% combined.
+- Async decouples availability but needs idempotency, ordering decisions and monitoring of lag.
++@p5-44
+- On ECS: Cloud Map or Service Connect; on Kubernetes: Services and DNS; behind an ALB, the ALB is the stable endpoint.
+- Client-side vs server-side discovery: client picks an instance from a registry vs a load balancer picks.
++@p5-45
+- Retry only transient errors (timeouts, 5xx, 429 with Retry-After) and idempotent operations; use exponential backoff with jitter.
++@p5-46
+- Polly v8 / Microsoft.Extensions.Resilience: the concurrency limiter strategy acts as a bulkhead.
++@p5-48
+- Users must see something sensible meanwhile, e.g. "Processing" status, not stale success.
+- Reconciliation jobs catch messages that went missing despite the outbox.
++@p5-49
+- Timeouts on every call, retries with backoff, circuit breakers, fallbacks, and DLQs for async work.
+- Idempotent consumers so retries don't double-apply.
++@p5-50
+- Prefer backward-compatible changes (additive fields); version URLs (/v2) only for breaking changes, with a deprecation window.
++@p5-51
+- Each service has its own pipeline and artifact; rolling or blue/green deployments with health checks gate traffic.
++@p5-52
+- Correlation ids across services (our [2024] middleware) let you follow one request through logs and traces.
++@p5-53
+- On AWS: IAM roles per task, security groups allowing only required ports, and TLS; JWT client-credentials for app-level identity.
++@p5-54
+- Timeouts shorter than the caller's, circuit breakers, bulkheads, load shedding (429) and caches for read paths.
+- Avoid retry storms: retry budgets and jitter.
++@p5-55
+- Consumer-driven contract tests (e.g. Pact) catch breaking API changes before deploy.
++@p5-56
+- Parameter Store/Secrets Manager plus appsettings per environment; options validated on start.
++@p5-57
+- Structured JSON logs with correlation id, service name and environment fields make cross-service queries possible.
++@p5-58
+- Stateless services behind load balancers, autoscaling on CPU or queue depth, caching, and async processing for spikes.
++@p5-59
+- REST suits request/response queries from the React UI; HTTP caching and tooling (OpenAPI) are mature.
+- Messaging was used where the caller didn't need an immediate answer (shipment status updates).
++@p5-60
+- Kafka keeps events for replay and multiple independent consumers; REST is point-to-point and immediate.
++@p5-61
+- Producers buffer and retry (delivery.timeout.ms); after that, the app must persist to an outbox and resend.
+- Consumers simply pause and resume from committed offsets when the cluster returns.
++@p5-62
+- Kafka transactions plus idempotent producers give exactly-once within Kafka (read-process-write).
+- With external side effects (database, email), use at-least-once plus idempotent consumers (processed-message table).
++@p5-64
+- Company standard plus managed services (RDS, ECS Fargate, ElastiCache) reduce ops for a small team.
++@p5-65
+- ECS is simpler and AWS-native; EKS gives Kubernetes portability and ecosystem at higher operational cost.
++@p5-66
+- You pay per vCPU and memory per second; no EC2 patching, but less control (no daemonsets, GPU limited).
++@p5-67
+- API Gateway: auth, throttling, usage plans, request validation; ALB: cheaper at high request volume, path/host routing to containers.
+- HTTP API (API Gateway v2) is cheaper and faster than REST API when advanced features aren't needed.
++@p5-68
+- Cold starts for .NET can be reduced with Native AOT or SnapStart (supported for .NET managed runtimes since late 2024).
++@p5-69
+- Reserved concurrency caps a function to protect downstream databases; provisioned concurrency keeps instances warm.
++@p5-70
+- Max timeout is 15 minutes; API Gateway has its own integration timeout (29 s by default) that can cut off earlier.
++@p5-71
+- Design access patterns first; partition key choice determines scalability (avoid hot partitions).
++@p5-72
+- GSIs are eventually consistent and can be added anytime; LSIs must be created with the table and share its partition key.
++@p5-73
+- RDS handles backups, patching and Multi-AZ failover; EC2 gives OS control at the cost of running it yourself.
++@p5-74
+- Our logout denylist used ElastiCache Redis keyed by jti with TTL equal to token expiry: [~1 ms] lookups.
++@p5-76
+- Prefer roles with temporary credentials everywhere; users with long-lived keys are a common breach source.
++@p5-77
+- Metric filters can turn log patterns into metrics, which alarms can then watch.
++@p5-79
+- Start from the dashboard (errors, latency), correlate with recent deploys, then dig into Logs Insights and traces.
++@p5-80
+- Define RPO/RTO first; strategies range from backup/restore to pilot light, warm standby and multi-site active-active.
++@p5-81
+- ECS service autoscaling with target tracking on CPU or ALB requests per target.
+- Scale-in cooldowns and graceful shutdown avoid dropping in-flight work.
++@p5-82
+- Security groups are stateful and attached to ENIs; NACLs are stateless and apply to subnets.
+- NACLs need explicit ephemeral-port rules for return traffic.
++@p5-83
+- Lets private subnets reach the internet outbound; charged per hour and per GB processed.
+- VPC endpoints for S3/DynamoDB avoid NAT data charges.
++@p5-84
+- ECS task roles give each task its own IAM credentials via the container metadata endpoint; the SDK picks them up automatically.
++@p5-85
+- Secrets Manager: rotation, cross-account sharing, per-secret cost; Parameter Store: free standard tier, SecureString with KMS.
+- We used Secrets Manager for database credentials and Parameter Store for config.
++@p5-86
+- Rightsize with Compute Optimizer, Savings Plans for steady load, Graviton, and tagging plus Cost Explorer for accountability.

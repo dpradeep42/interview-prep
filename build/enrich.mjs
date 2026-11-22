@@ -7,6 +7,12 @@ for (const f of files) {
   let cur = null, code = null;
   for (let ln of lines) {
     if (code) { if (ln.trim() === '```') { cur.c.push([code.lang, code.buf.join('\n')]); code = null; } else code.buf.push(ln); continue; }
+    if (ln.startsWith('+@')) {
+      const id = ln.slice(2).trim();
+      if (!E[id]) console.warn('APPEND TO MISSING', id, f);
+      cur = E[id] || (E[id] = { q: '', i: [], c: [], f: [], w: [] });
+      continue;
+    }
     if (ln.startsWith('@')) {
       const id = ln.slice(1).trim();
       if (E[id]) console.warn('DUP', id, f);

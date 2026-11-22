@@ -1,0 +1,79 @@
++@p8-2
+- Lifecycle: initialize (protocol version and capability negotiation) → tools/list → tools/call; transports are stdio (ours, launched as a .NET global tool) or Streamable HTTP.
++@p8-3
+- MCP is a standard: one server works in Cursor, Claude Code, VS Code and other hosts, instead of a custom integration per host.
+- Tools are curated for tasks ("deploy release to UAT") rather than mirroring every REST endpoint, which keeps the agent accurate.
++@p8-4
+- Discovery: the client calls tools/list and gets each tool's name, description and JSON Schema for inputs; the host passes these to the model as function definitions.
+- The model picks a tool from the user's intent and descriptions; the host may ask the user to confirm before tools/call runs.
++@p8-5
+- In the C# SDK, [McpServerTool] methods with [Description] attributes on parameters generate the JSON Schema automatically.
++@p8-6
+- Error messages say what to do next ("Release 1234 is waiting for approval; ask the approver") so the agent reports instead of retrying blindly.
++@p8-7
+- Read-only tools by default; write tools need explicit confirmation, and environment names are validated against an allow-list.
+- Each user's own PAT means Azure DevOps permissions still apply; the server can't do more than the user could.
++@p8-8
+- Validate server-side with deterministic checks: environment allow-list, version format, ids that exist, before calling Azure DevOps.
+- Never trust the model's parameters just because the schema matched; schemas check shape, not meaning.
++@p8-9
+- Our stdio server runs locally with the user's PAT from the credential store; for an HTTP version the spec uses OAuth 2.1 with the server as a resource server.
+- Authorization is enforced by Azure DevOps permissions plus tool-level rules in the server.
++@p8-10
+- Each tool call logs user, tool, parameters (redacted), result and duration with a correlation id.
+- Azure DevOps history remains the system of record for builds, releases and approvals.
++@p8-11
+- PATs stored in the OS credential store, never in config files committed to git or in tool outputs.
+- Least-privilege PAT scopes (build and release only) with expiry.
++@p8-12
+- Packaged as a .NET global tool: dotnet tool install installs it in one command and versions are easy to roll out.
++@p8-13
+- Groups: Builds ~15, Releases ~20, Deployments ~25, Diagnostics ~17, about 77 in total.
+- Read-only tools are the majority; write tools are fewer and guarded.
++@p8-14
+- Typed HttpClient with Polly resilience for Azure DevOps calls.
++@p8-15
+- Per-node status table lets the user see which node failed and retry just that node.
+- Final version check across all nodes confirms consistency.
++@p8-16
+- On failure, the tool summarises the failing step's logs so the engineer can decide: fix and retry the node, or roll back.
+- Rollback redeploys the previous release version through the same pipeline, under the same approvals.
++@p8-17
+- Others join only on failure, so their time goes back to development.
++@p8-18
+- Automation covered repeatable steps; judgement stayed with people.
+- Change requests and approvals were never automated, keeping GxP compliance.
+- Failure decisions stayed manual because they need context the agent doesn't have.
++@p8-19
+- The biggest challenge: preventing the agent from deploying to the wrong environment or without approval.
+- Solved with per-user PATs, environment allow-lists, confirmations and unchanged Azure DevOps approvals.
++@p8-20
+- An HTTP version with central audit logging and OAuth instead of local PATs.
++@p8-21
+- Stateless HTTP servers behind a load balancer scale horizontally.
+- Health checks and multiple instances across AZs for availability.
++@p8-22
+- Unit tests for each tool's validation and output; integration tests against a test Azure DevOps project.
+- Metrics: tool call counts, failures and latency per tool.
++@p8-23
+- Treat tool outputs and logs as data, not instructions; confirm write actions with the user.
+- Least privilege and allow-lists limit damage even if the model is tricked.
++@p8-24
+- Read-only tools are harmless if chosen wrongly; write tools need confirmation, so the user catches the mistake.
+- Validation rejects wrong parameters with a clear message.
+- Clear names and descriptions reduce mistakes in the first place.
++@p8-25
+- Approvals stay in Azure DevOps with named approvers; the agent can only check approval status.
+- Approver, time and change request reference are recorded.
++@p8-26
+- Tool calling: the model outputs a structured call (name plus JSON arguments) that the application executes and returns results for.
+- Function calling is the vendor API feature; MCP is an open protocol so tools work across hosts.
+- Plugins (e.g. ChatGPT plugins, Semantic Kernel plugins) were earlier, platform-specific ways to package tools.
++@p8-27
+- An agent plans and takes actions with tools in a loop toward a goal; a chatbot mainly answers in conversation.
+- Our CIRT MCP agent loop: queue build, deploy, poll status, summarise failures.
++@p8-28
+- Multi-agent: specialised agents collaborate, like our [AutoGen experiment] with coder and reviewer agents drafting unit tests.
+- The reviewer caught issues, but output still needed human review.
++@p9-54
+- I'm precise about team size so my claims stay credible.

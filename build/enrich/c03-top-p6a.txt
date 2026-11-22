@@ -1,0 +1,78 @@
++@p6-3
+- Separate state per environment (separate S3 keys or accounts) so a mistake in dev can't touch prod state.
++@p6-4
+- State files store secrets in plain text; encrypt the S3 backend with KMS and restrict access.
++@p6-6
+- Containers share the host kernel, unlike VMs, so they start in seconds and are much lighter.
++@p6-7
+- Order Dockerfile steps from least to most frequently changed: restore packages before copying source for cache hits.
++@p6-8
+- ADD can extract local tar archives and fetch URLs; that implicit behaviour is why COPY is preferred.
+- Use curl/wget plus checksum in a RUN step if you must download.
++@p6-9
+- Exec form (["dotnet","app.dll"]) makes the app PID 1 so it receives SIGTERM for graceful shutdown.
++@p6-10
+- Microsoft's chiseled Ubuntu images (.NET 8+) are small, distroless-style and run as non-root.
++@p6-12
+- Containers in the same user-defined network resolve each other by name.
++@p6-13
+- .NET 8 images include a non-root "app" user; set USER $APP_UID.
++@p6-14
+- docker logs, docker exec (if a shell exists), docker inspect for exit code and OOMKilled, then reproduce locally.
++@p6-15
+- Exit code 137 means SIGKILL, often OOM; 139 means segfault.
+- In ECS the service scheduler replaces the task; repeated failures show in service events.
++@p6-16
+- In ECS, secrets in the task definition reference Secrets Manager/Parameter Store and are injected at start.
++@p6-17
+- Desired-state reconciliation: controllers keep working to make actual state match the spec.
++@p6-18
+- ClusterIP: internal only; NodePort: a port on every node; LoadBalancer: provisions a cloud LB.
+- Ingress or Gateway API in front of ClusterIP services is the usual production pattern.
++@p6-19
+- You rarely create ReplicaSets directly; Deployments manage them for rollouts.
+- Each rollout creates a new ReplicaSet, and rollbacks scale the old one back up.
++@p6-21
+- The kubelet restarts it per restartPolicy with exponential backoff (CrashLoopBackOff, max 5 minutes).
+- kubectl logs --previous shows logs from the crashed container.
++@p6-22
+- CoreDNS gives services names like orders.default.svc.cluster.local.
+- kube-proxy (iptables/IPVS) routes the ClusterIP to healthy pod endpoints.
++@p6-23
+- RBAC least privilege, NetworkPolicies, Pod Security Standards, and image scanning/signing.
++@p6-24
+- Readiness probes on /health/ready, graceful shutdown via SIGTERM and HostOptions.ShutdownTimeout.
++@p6-27
+- Branch protection with required reviews and checks, plus staged environments.
++@p6-28
+- Build once, promote the same artifact (image digest) across environments.
++@p6-31
+- Use OIDC federation from CI to AWS instead of long-lived access keys.
++@p6-32
+- GitHub environments with required reviewers, or the approval gate in our MCP release tools with a recorded audit trail.
++@p6-33
+- Offsets are per partition per consumer group; committing after processing gives at-least-once.
++@p6-34
+- Scale: partitions spread across brokers and consumers in a group.
+- Fault tolerance: replicas with ISR; min.insync.replicas=2 with acks=all prevents data loss on single broker failure.
++@p6-35
+- Leader handles reads and writes for a partition; followers replicate; a new leader is elected from the ISR on failure.
+- RF=3 is the production norm.
++@p6-36
+- Ordering is guaranteed only within a partition; use a key (e.g. ShipmentId) to keep related events ordered.
++@p6-37
+- Compaction keeps the latest value per key, useful for state topics like "current shipment status".
++@p6-38
+- Its partitions are rebalanced to other consumers in the group, which resume from the last committed offset.
++@p6-40
+- Add consumers up to the number of partitions; extra consumers sit idle.
+- To go beyond, add partitions (this changes key-to-partition mapping) or process in parallel inside a consumer.
++@p6-41
+- One topic per event type or aggregate, keys for ordering, enough partitions for future consumer parallelism.
++@p6-42
+- Retry topics with delays, then a DLT carrying the error and original headers for reprocessing.
++@p6-43
+- Security: TLS, SASL or IAM auth (MSK), ACLs per topic.
+- Monitor consumer lag, under-replicated partitions and request latency.
++@p6-44
+- Producers publish to exchanges; bindings route to queues by routing key (direct, topic, fanout, headers).

@@ -1,0 +1,159 @@
++@p9-2
+- Uploads are capped at [5 MB] with request size limits configured on the endpoint.
++@p9-4
+- Unit tests for the parser and each validation rule with good and bad rows; integration tests with real SQL Server for the transaction.
+- Edge cases: empty file, header only, [~10,000] rows, BOM, quoted commas, and duplicate site numbers.
++@p9-5
+- Tested with two parallel imports for the same study: one succeeds, the other gets the friendly message.
+- The per-user limit returns 429 with a clear message.
++@p9-6
+- Validation happens before the transaction, so most failures are caught with a full error report and nothing is written.
+- For millions of rows, a staging table with batch commits would replace the single transaction.
++@p9-7
+- Upload to S3, process asynchronously with SqlBulkCopy into a staging table, validate in set-based SQL, then merge in batches with progress reporting.
++@p9-8
+- Tests ran in CI and as part of FV evidence for validation.
+- Regression tests added for every bug found in UAT.
++@p9-9
+- Audit records are append-only and can't be edited by application users.
+- Blocked attempts are reviewed in support reports.
++@p9-10
+- Merging work from [5] teams into one release branch, building and installing it in test environments, and coordinating fixes before FV.
++@p9-11
+- Release checklist: FV sign-off, UAT approval, change request approved, then production deploy with smoke checks.
+- The same artifact versions are promoted from UAT to production.
++@p9-12
+- Order: database scripts first (backward-compatible), then APIs, then UI, with feature flags for incomplete features.
+- A release plan with owners and rollback steps per component.
++@p9-13
+- Ansible, Python and Shell were already used for installation on Linux nodes; scripts are easy to version and review.
+- Python for parsing and validation, Shell for system tasks.
++@p9-14
+- Release stages run install scripts on each node; a version-check tool compares versions across all nodes at the end.
+- A failed node can be retried alone after a fix.
++@p9-15
+- Smoke tests, health endpoints, version checks across nodes, and log review for errors after deployment.
+- Grafana dashboards and CloudWatch Logs Insights for the first hours.
++@p9-16
+- Scrum: fixed sprints, roles and ceremonies; Kanban: continuous flow with WIP limits.
+- Our team used Scrum with [two-week] sprints; release integration work fits Kanban.
++@p9-17
+- Planning: commit to sprint goals and stories with estimates including validation effort.
+- Retrospective: what went well, what didn't, and one or two actions with owners.
++@p9-18
+- Clarify the reason for the change and its priority with the product owner.
+- Assess impact on the sprint and GxP documentation, then agree what moves out.
+- Keep changes visible on the board so nobody is surprised.
++@p9-19
+- Disagreements: discuss the trade-off with data, prefer team standards, and escalate to a quick call rather than long comment threads.
++@p9-20
+- I measured before and after on [8 vs 8] comparable deployments, which made the case convincing.
++@p9-21
+- Prioritise the most important work, communicate status regularly, and avoid risky shortcuts.
+- Ask for help early instead of hiding problems.
++@p9-22
+- Use analogies and impact (time, risk, cost), not technical terms.
+- Offer options with trade-offs and a recommendation.
+- Example: explaining the RabbitMQ outage as "updates queued and replayed, nothing lost".
++@p9-23
+- Spring Boot is an opinionated framework on top of Spring with auto-configuration, embedded servers and starters.
+- Similar to ASP.NET Core with minimal setup.
++@p9-24
+- Spring's IoC container creates and wires beans; constructor injection is preferred over field @Autowired.
+- With one constructor, @Autowired is optional.
++@p9-25
+- All are @Component stereotypes; @Service marks business logic and @Repository adds exception translation for persistence.
+- They help readability and component scanning.
++@p9-26
+- @RestController with @GetMapping/@PostMapping methods, @RequestBody for input, ResponseEntity for status codes.
+- Validation with @Valid and Bean Validation annotations.
++@p9-27
+- application.yml with profiles (application-dev.yml) selected by spring.profiles.active.
+- Similar to appsettings.{Environment}.json in .NET.
++@p9-28
+- Spring Data JPA generates repositories from interfaces; Hibernate is the JPA implementation.
+- EF Core is the .NET equivalent with LINQ instead of JPQL/derived queries.
++@p9-29
+- @ControllerAdvice with @ExceptionHandler for global errors; Spring Security for authentication and authorization.
+- Similar to ASP.NET Core exception handlers and auth middleware.
++@p9-30
+- Similar languages; C# has features like LINQ, async/await built in, properties, and value types with structs.
+- Java has a huge ecosystem and virtual threads (Java 21).
++@p9-31
+- Choose based on team skills, existing systems and ecosystem rather than language preference.
+- Both have strong performance and enterprise support.
+- I'm productive in .NET and can learn Spring Boot quickly because concepts map closely.
++@p9-32
+- Connect the role's needs to your experience: .NET services, cloud, and AI tooling.
+- Show you've researched the team and product.
+- Explain what you'd contribute in the first months.
++@p9-33
+- Short-term: grow as a senior engineer owning larger systems.
+- Long-term: technical leadership in architecture and AI-enabled engineering.
+- Show how this role fits that path.
++@p9-34
+- I never complained about him to others; I solved it directly.
++@p9-35
+- Admitting it quickly kept trust with the product owner.
++@p9-36
+- I tracked actual vs estimated effort for the next few stories to check my estimates improved.
+- I shared the lesson with the team so others added validation effort too.
++@p9-37
+- I kept the release manager and teams updated every few hours.
+- Afterwards I added a pre-FV merge check to catch script conflicts earlier.
++@p9-38
+- I wrote documentation and trained the team so the tool didn't depend only on me.
+- I gathered feedback and kept improving the tools.
++@p9-39
+- Manager: reliable, takes ownership, and improves processes.
+- Teammates: helpful in reviews and willing to share knowledge.
++@p9-40
+- Team: collaborative, with clear goals and honest feedback.
+- Motivates me: solving real problems with measurable impact.
+- Frustrates me: repeated manual work, which is why I automate it.
++@p9-41
+- Explain the trade-offs you made, such as consistency vs availability and sync vs async.
++@p9-42
+- .NET 8: Native AOT for ASP.NET Core, keyed services, TimeProvider; .NET 10: LTS release with C# 14 and further performance gains.
++@p9-43
+- Deployment circuit breaker rolls back failed deployments automatically.
+- Task roles give each service least-privilege AWS access.
++@p9-44
+- Terraform: multi-cloud, modules and plan; CloudFormation: AWS-native with drift detection and StackSets.
+- State management differs: Terraform keeps state files; CloudFormation manages state in AWS.
+- I'd pick one for new work to reduce duplication.
++@p9-45
+- I can explain Deployments, Services, probes and ConfigMaps from hands-on use.
+- I'd ramp up quickly on production Kubernetes operations.
++@p9-46
+- Kafka retention allowed replaying events to rebuild reports.
+- RabbitMQ DLQs handled failed notification messages.
+- Publisher confirms cost [~5 percent] throughput but stopped lost messages.
++@p9-47
+- Tool design matters most: clear names, descriptions and structured outputs help the agent choose correctly.
+- Humans approve controlled environments.
+- Results: 6 hours to 2, 6 people to 1.
++@p9-48
+- Answers include citations so engineers can verify them.
+- Access control matches document permissions.
++@p9-49
+- Used across many screens, which reduced duplicate code and kept the UI consistent.
++@p9-50
+- Type hints and Pydantic give validation and docs with little code.
+- Async support handles many concurrent requests.
+- The integration team could maintain it easily.
++@p9-51
+- Node fits I/O-bound text processing and quick tooling.
+- TypeScript gives type safety.
+- Core domain services stay in .NET for consistency.
++@p9-52
+- Audit trails for every change to GxP data (who, what, when, why).
+- Access control, electronic signatures where needed, validated releases, and change control.
+- Data integrity following ALCOA+ principles.
++@p9-53
+- I created a small onboarding checklist and architecture notes for them.
+- I reviewed their pull requests with explanations, not just corrections.
+- Both became independent contributors within [a few months].
++@p9-54
+- Daily work with my team; cross-team coordination for releases.
+- Shows I can work at team and organisation scale.

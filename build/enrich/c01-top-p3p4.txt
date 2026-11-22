@@ -1,0 +1,171 @@
++@p3-57
+- Avoid: salary as the headline reason, complaints about managers, or "boredom"; interviewers read these as flight risk.
++@p3-58
+- Close with a one-line summary they'll remember: "I ship reliable .NET services and make teams faster, with numbers to prove it."
++@p3-59
+- Tie the five-year picture to their career ladder (senior → staff/lead) so it sounds like a plan inside their company, not elsewhere.
++@p3-61
+- If asked to "join next week", say you'll ask about early release but won't leave your team without a handover; that integrity is a positive signal.
++@p3-62
+- Mention something current: a recent product launch, engineering blog post or open-source project of theirs, and how your work relates.
++@p3-63
+- If pressed, add one concrete learning habit (e.g. building the MCP prototype from the spec in a week) to show ability beyond grades.
++@p4-2
+- Name a recent deep-dive you did, e.g. diagnosing a parameter-sniffing plan regression with Query Store or the async state machine, to prove "strongest" means depth.
++@p4-3
+- Mention the feedback loop: Grafana dashboards and CloudWatch Logs Insights after every release to confirm behaviour in production.
++@p4-4
+- Why it was hard: technical (tool design, long-running operations), regulatory (approvals, audit) and human (adoption) problems at the same time.
++@p4-5
+- Show the decision record: options, criteria (GxP risk, UX, effort), decision, consequences, and who agreed; that's what senior engineers do.
++@p4-6
+- Result framing: "a library change went from a code rewrite to a configuration change", which is the kind of leverage interviewers remember.
++@p4-7
+- Add what you're not looking for (pure maintenance or pure front end) to sound decisive.
+- Ask them what a senior engineer owns in their team, which turns the answer into a conversation.
++@p4-8
+- Give one concrete example of culture you value, e.g. blameless post-mortems like the one after our RabbitMQ outage.
+- Mention learning time or budget for certifications (AWS, Azure) as a practical expectation.
++@p4-10
+- Evidence of responsible use: per-user permissions, human approvals, audit logs, and measured outcomes.
++@p4-11
+- Example flow: designed the CSV import API contract with the UI in mind (preview errors per row and column), then built both sides.
++@p4-12
+- Depth examples: middleware pipeline and DI lifetimes, EF Core query translation, async internals and thread pool behaviour.
+- Breadth around it: SQL Server tuning, messaging guarantees, AWS deployment.
++@p4-13
+- Show a plan with dates: "[I'm doing a Spring Boot course and a small service this quarter]".
++@p4-14
+- Non-functional drivers: compliance, latency targets, expected scale and team size can override personal preference.
++@p4-15
+- Stories without AI: the [9 s to under 300 ms] shipment-list query fix, the memory leak fix, the SSO cookie fix and the CSV import.
+- Engineering habits: tests first for risky logic, config validation at startup, observability before release.
++@p4-16
+- Team examples with your specific part: "In the .NET 10 upgrade I owned [three] services and the central package management change."
+- Credit others clearly; interviewers trust candidates who distinguish "I" from "we".
++@p4-17
+- Interview tip: give one example per principle from your own code, not textbook animals and shapes.
++@p4-20
+- Example: an INotifier interface with EmailNotifier and SmsNotifier; a loop over IEnumerable<INotifier> sends through all without knowing types.
++@p4-21
+- Abstraction levels: repository hides SQL, ISftpClient hides libraries, the service layer hides workflow; each layer talks only to the one below.
++@p4-22
+- Records add value-based equality and with-expressions; structs are copied by value; classes are referenced.
++@p4-23
+- Overload resolution happens at compile time on static types: passing an object-typed variable picks the object overload even if it holds a string.
++@p4-24
+- Virtual calls go through the method table (vtable); the JIT can devirtualize when the exact type is known, e.g. sealed classes.
++@p4-25
+- Real-world use: hiding happens accidentally when a base library adds a member with the same name; treat CS0108 as an error.
++@p4-26
+- Records can be sealed and their ToString can be sealed (C# 10) so derived records keep it.
++@p4-28
+- Generic constraints (where T : struct) and generic interfaces (IEquatable<T>) avoid boxing in comparisons.
++@p4-30
+- Example: public const int MaxRows = 10000 in a library; changing it to 20000 doesn't affect already-compiled consumers until rebuilt.
++@p4-31
+- ref struct types (like Span<T>) can only live on the stack, which is why they can't be used in async methods.
++@p4-33
+- Real use: switch expressions on ShipmentStatus to compute next allowed transitions, with the compiler warning on missing cases.
++@p4-37
+- Rule of thumb: in app code (ASP.NET Core) skip it; in reusable libraries use ConfigureAwait(false) on every await.
++@p4-39
+- Method parameters: accept IEnumerable<T> or IReadOnlyCollection<T>; return concrete or read-only interfaces based on what callers need.
++@p4-41
+- In memory, LINQ Count() checks for ICollection<T> and uses .Count without enumerating.
+- For IQueryable, Count() becomes SELECT COUNT(*), which scans more rows than EXISTS.
++@p4-43
+- Our provider contract tests ran the same suite (upload, list, overwrite, error mapping) against Rebex, SSH.NET and ComponentPro, enforcing LSP.
++@p4-44
+- Microsoft's own example: IReadOnlyList<T> separated from IList<T> for consumers that only read.
++@p4-45
+- Without DIP: VendorExchangeService news up RebexClient directly, so changing libraries means editing business code.
+- With DIP: the service owns the ISftpClient abstraction and infrastructure implements it.
++@p4-46
+- Interfaces also let you add decorators (logging, retry, metrics) around an implementation without changing it.
+- Consider an abstract base class when implementations share most code; we used both.
++@p4-47
+- Example: a RetryingSftpClient decorator wraps any ISftpClient instead of a RetryingRebexClient subclass per library.
+- Inheritance across assemblies couples release cycles: a base class change can break consumers.
++@p4-51
+- Dependencies can be services, configuration (IOptions<T>), time (TimeProvider), randomness and the file system.
+- The fewer and more abstract the dependencies, the easier the class is to test and change.
++@p4-52
+- ASP.NET Core itself is IoC: it calls your middleware, controllers and hosted services; you don't call them.
+- Containers also manage lifetimes and disposal, not just construction.
++@p4-53
+- Property injection hides required dependencies and allows half-initialised objects.
+- Method injection in minimal APIs: handler parameters are resolved from DI per request.
++@p4-54
+- Building the provider: builder.Build() creates the root provider; Development validates scopes and the graph when ValidateOnBuild is on.
++@p4-55
+- Example captive bug: a singleton cache holding a scoped DbContext ends up sharing one context across threads and requests.
++@p4-56
+- GetRequiredService gives a clear error naming the missing type, much easier to debug than a NullReferenceException later.
+- Keyed versions: GetKeyedService / GetRequiredKeyedService.
++@p4-57
+- Constructor selection: the container picks the constructor with the most parameters it can satisfy.
+- Primary constructors (C# 12) work the same way for controllers.
++@p4-58
+- Order matters: IEnumerable<T> preserves registration order, which can define a pipeline (e.g. validators).
++@p4-59
+- Scoped services resolved inside the scope are disposed when the scope is disposed, preventing leaks.
++@p4-60
+- Legitimate uses: factory classes, middleware InvokeAsync parameters are fine; static service locators (ServiceLocator.Current) are not.
+- Detect it in reviews: IServiceProvider injected into domain classes.
++@p4-61
+- Integration example: WebApplicationFactory with ConfigureTestServices to replace ISftpClient with a fake.
++@p4-62
+- Registration with keyed services: AddKeyedTransient<ISftpClient, RebexSftpClient>("Rebex"), resolved by vendor configuration.
++@p4-63
+- Transient disposables resolved from the root container are tracked until shutdown, effectively a memory leak.
+- Rule: singleton for stateless/thread-safe, scoped for per-request state, transient for lightweight stateless helpers.
++@p4-64
+- The request's CancellationToken (RequestAborted) is signalled if the client disconnects earlier.
+- Scoped IAsyncDisposable services are disposed asynchronously.
++@p4-65
+- Factories like AddSingleton(sp => new X()) are disposed by the container because it created them via the factory.
+- IDisposable transients resolved repeatedly from the root are a classic leak; use scopes.
++@p4-68
+- Real example: putting app.UseCors() after app.MapControllers() means preflight responses miss headers and the browser blocks calls.
++@p4-69
+- Map with nested pipelines can host separate branches, e.g. /admin with its own auth middleware.
++@p4-71
+- Testing: in .NET 10 a source generator makes Program public automatically for WebApplicationFactory.
++@p4-77
+- PATCH with JSON Merge Patch: send only changed fields; null means remove.
++@p4-78
+- 201 vs 202: 201 means created now; 202 means accepted for later processing.
++@p4-79
+- ASP.NET Core returns 401 via the authentication handler's challenge and 403 via forbid.
+- Return ProblemDetails consistently for all three.
++@p4-80
+- In ASP.NET Core, endpoint routing returns 405 when a route matches but no endpoint supports the method.
+- Use 404 for "no such resource id" rather than 200 with null.
++@p4-81
+- 409 example: inserting a site number that already exists in the study.
+- 422 example: kit count exceeds depot stock, a valid request breaking a business rule.
++@p4-82
+- 503 should include Retry-After when planned maintenance or overload.
++@p4-84
+- Security example: an entity with IsUnblinded or audit fields accidentally serialized to the client.
++@p4-85
+- In our APIs, request DTOs (commands) and response DTOs (views) are separate records.
+- ViewModels belong to Razor/MVC; in React the client shapes its own view state.
++@p4-86
+- Since .NET 7, parameters registered in DI are inferred as services in [ApiController] actions without [FromServices].
++@p4-87
+- Route templates support optional parameters ({id?}), defaults and catch-all ({*path}).
++@p4-91
+- Access tokens are validated locally by APIs; refresh tokens are validated only by the identity provider.
++@p4-93
+- Integration test sending {"status":"Delivered","isAdmin":true} to verify extra fields are ignored.
+- System.Text.Json UnmappedMemberHandling.Disallow (.NET 8) can reject unknown fields entirely.
++@p4-94
+- Streaming request bodies: read Request.Body directly or use MultipartReader instead of buffering IFormFile.
++@p4-95
+- Large files: disable form value model binding and stream sections with MultipartReader to avoid buffering.
++@p4-96
+- Startup checks: ValidateOnStart for options, health checks for dependencies, and fail fast on misconfiguration.
++@p4-97
+- Example: API checks the CSV format, the service checks "site belongs to an active country/depot", and the database's unique index stops duplicate site numbers.

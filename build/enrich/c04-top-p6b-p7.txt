@@ -1,0 +1,194 @@
++@p6-45
+- Publisher confirms: the broker acks once the message is routed and (for persistent messages on durable/quorum queues) written; nacks mean resend.
+- Consumer acks: manual ack after processing; nack/reject with requeue=false sends it to the DLX.
++@p6-46
+- Durable queue survives restart; persistent messages (delivery mode 2) are written to disk; you need both.
+- Quorum queues (Raft-replicated) are the recommended durable type since RabbitMQ 3.8; classic mirrored queues were removed in 4.0.
++@p6-47
+- Publishers fail or block; with an outbox, events wait in the database and flush on recovery, as in our [mid-2024] [~40 min] outage with [~1,200] updates replayed.
+- Consumers reconnect (client automatic recovery) and continue from unacked messages.
++@p6-48
+- Delayed retries via a retry queue with TTL dead-lettering back to the main queue, with a retry-count header and a final parking queue.
++@p6-49
+- Chain: outbox on the producer, publisher confirms, durable quorum queues with persistent messages, manual consumer acks, DLQ.
+- Confirms cost us about [~5 percent] throughput, an easy trade for no lost updates.
++@p6-50
+- Scale with competing consumers and prefetch tuning; monitor queue depth, unacked counts, and consumer utilization via the management plugin or Prometheus.
++@p6-51
+- Correlate: app errors with a DB wait spike points to DB; all services degrading at once points to infra or a shared dependency.
++@p6-52
+- OpenTelemetry auto-instrumentation propagates W3C traceparent through HttpClient and messaging headers.
++@p6-53
+- First: the error logs for the failing correlation id around the incident start, then the deploy history.
+- Then dependency logs (DB, broker) and infrastructure events (ECS task restarts, OOM).
++@p6-54
+- Ask "why" repeatedly (5 whys): high CPU is a symptom; a missing index causing scans is the cause.
+- Validate the root cause by reproducing it or showing that the fix removes the symptom.
++@p6-55
+- Post-incident: blameless review, timeline, action items with owners, and alerts/tests that would have caught it.
++@p6-57
+- Over-mocking couples tests to implementation; prefer fakes (in-memory repository, FakeTimeProvider) for behaviour tests.
++@p6-58
+- Testcontainers runs real SQL Server or RabbitMQ in Docker for integration tests.
++@p6-59
+- WebApplicationFactory tests the full pipeline (routing, model binding, filters, auth) rather than calling action methods.
++@p6-60
+- The EF Core InMemory provider doesn't enforce relational behaviour; Microsoft recommends a real database (Testcontainers) or SQLite with caveats.
++@p6-62
+- Common causes: shared state, time, ordering, and real network calls; fix the cause, quarantine only temporarily.
++@p6-63
+- Coverage shows untested code, not tested behaviour; assertions matter.
+- 100 percent is costly; aim for high coverage on business rules and risky paths, plus mutation testing (Stryker.NET) to check test quality.
++@p6-65
+- Use await Assert.ThrowsAsync<T>() and never async void tests; FakeTimeProvider makes timeouts deterministic.
++@p7-2
+- An element is a plain object describing UI ({type, props}); a component is a function that returns elements.
+- JSX <Button/> compiles to a jsx() call that creates an element.
++@p7-3
+- Hooks replaced most class lifecycle methods; error boundaries are the main case still needing a class.
+- Function components are simpler, easier to test and work with concurrent features.
++@p7-4
+- State updates are asynchronous and batched (automatic batching in React 18+).
++@p7-6
+- useMemo caches a computed value; useCallback caches a function identity (useCallback(fn) is useMemo(() => fn)).
+- React Compiler (stable 2025) can memoize automatically, reducing manual use.
++@p7-7
+- Changing ref.current doesn't re-render; useful for DOM nodes, timers and previous values.
++@p7-8
+- Context passes values without prop drilling; every consumer re-renders when the value changes.
+- Redux Toolkit adds a store with selectors, devtools and middleware; use it for complex shared state.
++@p7-10
+- Controlled: value lives in React state; uncontrolled: DOM holds it and you read via refs.
+- React Hook Form uses uncontrolled inputs for performance.
++@p7-11
+- Parent re-renders, new object/function props each render, and context value changes.
+- Profile with React DevTools before optimizing with memo.
++@p7-12
+- Route guards only hide UI; real protection is on the API with token validation.
++@p7-13
+- React Hook Form with Zod schemas for validation shared with types.
++@p7-14
+- Feature-based folders (shipments/, imports/) with components, hooks and API clients together.
++@p7-15
+- React: flexible library, huge ecosystem, team experience; Angular: batteries-included framework with strong conventions.
+- Both are fine; choose on team skills and project needs.
++@p7-16
+- var is function-scoped and hoisted as undefined; let/const are block-scoped with a temporal dead zone.
+- const prevents reassignment, not mutation of objects.
++@p7-17
+- Declarations are registered during the creation phase before code runs.
+- Function declarations are fully hoisted; function expressions assigned to var are hoisted as undefined.
+- let/const/class are hoisted but in the TDZ: access before declaration throws ReferenceError.
++@p7-18
+- A function keeps access to variables from its outer scope even after the outer function returns.
+- Uses: private state, factories, React hooks capturing state (stale closures are a common bug).
++@p7-19
+- A Promise is pending, fulfilled or rejected; async/await is syntax over promises.
+- Promise.all for parallel work; Promise.allSettled when partial failures are fine.
++@p7-20
+- Deeply nested callbacks make error handling and flow hard to follow.
+- Fix with promises/async-await and small named functions.
++@p7-21
+- a?.b returns undefined instead of throwing if a is null/undefined.
+- x ?? y uses y only for null/undefined, unlike || which also replaces 0 and "".
++@p7-22
+- any disables type checking; unknown forces you to narrow before use.
+- Use unknown for parsed JSON and catch variables (useUnknownInCatchVariables in strict).
++@p7-23
+- Example: function apiGet<T>(url: string): Promise<T> gives typed API responses.
++@p7-24
+- Union: A | B (either); intersection: A & B (both).
+- Narrowing via typeof, in, instanceof, and discriminated unions with a kind field.
++@p7-25
+- JS "use strict" disallows silent errors (undeclared variables); ES modules are strict by default.
+- TypeScript "strict": true enables strictNullChecks, noImplicitAny and more.
++@p7-26
+- Node runs JS on a single thread with an event loop; I/O is async through libuv.
+- CPU-heavy sync work blocks every request; use worker threads.
++@p7-27
+- Express middleware is (req, res, next); error middleware has four args (err, req, res, next), similar to ASP.NET Core's pipeline.
++@p7-28
+- Express 5 forwards rejected promises from async handlers to error middleware automatically.
+- Handle process-level unhandledRejection to log and exit cleanly.
++@p7-29
+- helmet for headers, rate limiting, input validation (zod), JWT validation, and npm audit for dependencies.
+- Never trust req.body shapes; validate them.
++@p7-30
+- Node: same language as the front end, fast for I/O-bound APIs; .NET: strong typing, high throughput, mature tooling for large systems.
+- Our domain services stayed .NET for performance and team skills.
++@p7-31
+- Python was a tool for the right job, not a replacement for our .NET core services.
++@p7-32
+- Routers per feature, Pydantic models in schemas, dependencies via Depends, and settings with pydantic-settings.
++@p7-33
+- OAuth2PasswordBearer or HTTPBearer dependencies validating JWTs from the identity provider.
++@p7-34
+- SFTP runs over SSH (port 22), one encrypted channel; FTP is plain text; FTPS is FTP over TLS with separate data channels.
+- SFTP is firewall-friendlier than FTPS.
++@p7-35
+- Key authentication: the server holds the public key, the client proves it holds the private key; no secret travels.
++@p7-37
+- Host key fingerprint pinning prevents man-in-the-middle; a mismatch is never retried.
++@p7-38
+- Upload to a temp name then rename, so consumers never read a partial file.
+- Compare sizes and checksums (SHA-256 manifest) when the vendor provides them.
++@p7-39
+- Track processed files by name plus hash in a table with a unique constraint.
+- Move or archive processed files on the server.
++@p7-40
+- Keys and passwords in AWS Secrets Manager, read at runtime via the task role.
+- Rotation with vendors coordinated through change control.
++@p7-41
+- Vendor server quirks: different directory listing formats, timeouts, and files still being written.
++@p7-42
+- Testcontainers with an atmoz/sftp container for integration tests plus fakes for unit tests.
++@p7-43
+- WCF supports SOAP, multiple transports and WS-* standards; Web API is HTTP/REST and JSON-first.
+- WCF server isn't in modern .NET; CoreWCF is the community port.
++@p7-44
+- XML envelope protocol with WSDL contracts; strongly typed but verbose.
+- Still common in older enterprise and healthcare integrations.
++@p7-45
+- [ServiceContract] marks an interface, [OperationContract] its methods, [DataContract]/[DataMember] the payloads.
+- They define the WSDL that clients generate proxies from.
++@p7-46
+- No built-in container in .NET Framework; teams used Unity, Autofac or Ninject.
+- WCF needed custom IInstanceProvider to inject services.
++@p7-47
+- Reasons: no WCF server in modern .NET, tooling and hosting limits, and the team's skills moving to REST.
+- Challenges: SOAP clients still needing contracts, WS-Security, and testing parity.
++@p7-48
+- Blinding: sites and patients don't know which arm; IRT controls kit assignment to keep it.
+- That's why audit and access controls are strict.
++@p7-49
+- GxP: Good x Practice (clinical, manufacturing, laboratory) regulations ensuring product quality and patient safety.
+- For software: 21 CFR Part 11 and EU Annex 11 for electronic records and signatures.
++@p7-50
+- Documented requirements, risk-based validation, traceability to tests, and controlled changes.
+- CSA guidance (FDA final Sept 2025) promotes risk-based, less documentation-heavy assurance.
++@p7-51
+- Validation proves software does what it should; traceability links requirements to tests.
+- Auditability: who did what, when, and why, recorded in tamper-evident audit trails.
++@p7-52
+- Every change has a request, risk assessment, approvals, testing evidence and a release record.
+- Emergency changes still get documented afterwards.
++@p7-53
+- UAT: users accept functionality; FV: functional validation by QA; TechOps: production operations.
+- Each gates promotion to the next environment.
++@p7-54
+- Approved change requests, gated pipelines and segregated access to production.
+- Our MCP release tools kept human approvals and logged every action.
++@p7-55
+- Automated tests and code reviews, plus validation documentation for traceability.
+- Static analysis and dependency scanning in CI.
++@p7-56
+- Role-based access, encryption in transit and at rest, audit trails, and blinding-safe data exposure.
+- Pen testing and OWASP checks; our tabnabbing fix across [~40] links is one example.
++@p7-57
+- Message contracts are versioned so vendors can change formats without breaking us.
++@p7-58
+- Depots and couriers (SFTP/APIs), EDC systems, identity providers (SSO), and notification services.
+- Each integration has monitoring and reconciliation.
++@p7-59
+- Database constraints, transactions, idempotency keys and validation at every boundary.
+- Audit trails and reconciliation reports confirm nothing was lost or altered.
