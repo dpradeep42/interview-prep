@@ -1,0 +1,117 @@
++@p3-1
+X: Sure. I'm Pradeep, a backend-focused full-stack engineer with about five and a half years of experience, mainly in C# and .NET.
+X: For the last four years I've been at IQVIA, working on IRT. IRT is a regulated clinical-trial platform that handles patient randomization, drug supply, shipment tracking and eConsent for global trials. I design and build .NET microservices and ASP.NET Core Web APIs with EF Core and SQL Server, and I also build Node and Python services and React components. Everything runs on AWS, with Docker, Terraform and Azure DevOps pipelines.
+X: The work I'm proudest of is an internal MCP server that I designed and built on my own. It gives AI agents about 77 tools to run our builds, releases and multi-node deployments, and it cut deployment time from 6 hours to 2, and the people needed from 6 to 1. I also own production issues, for example I root-caused a RabbitMQ outage and fixed it with publisher confirms.
+X: I started my career at DXC on C#, .NET Framework and SharePoint. Now I'm looking for a senior backend role where I can own design and delivery. Happy to go deeper into any of these.
++@p3-2
+X: I'll keep it short and in order. I finished my B.Tech in Computer Science in 2020, and in March 2021 I joined DXC Technology as an Associate Professional.
+X: At DXC I built C# and .NET Framework solutions on SharePoint: custom web parts, lists and workflows that automated client business processes. I also handled integrations with other enterprise systems and production support, so I learned early how to debug issues under pressure and follow change processes.
+X: In July 2022 I moved to IQVIA as a Software Development Engineer 2 on IRT, our clinical-trial platform. There my scope grew step by step. First I built features in .NET Core microservices and APIs. Then I owned whole components, like the pluggable SFTP integration and the CSV bulk import. Then I took on release integration across the application, APIs, database and UI, and finally platform tooling, where I built the MCP deployment server that cut deployments from 6 hours to 2.
+X: So the pattern is growing ownership: features, then services, then releases and platform. The next step I'm looking for is a senior backend role where I own design end to end. I can go deeper into any stage you like.
++@p3-3
+X: Let me explain it with a simple picture. When a new medicine is tested, thousands of patients in hospitals around the world take part. Each patient is randomly given either the new medicine or a comparison treatment, and nobody, not the doctor and not the patient, should know which one. That's what keeps the trial fair.
+X: IRT is the system that makes that random choice fairly and secretly. When a site enrols a patient, IRT decides the treatment group and tells the site which numbered drug kit to give, so the kit number hides what's inside. It also acts like an automatic stock manager: it watches the stock at every hospital, sends shipments from depots before they run out, and tracks those shipments. It also supports electronic consent.
+X: Because mistakes here can affect patient safety and the trial results, it's a regulated, GxP system. Every change we make is tested, validated and approved, and every action is recorded in an audit trail.
+X: So in one line: a fair, secret lottery plus a global pharmacy stock manager. I can explain the technical side too if that's useful.
++@p3-4
+X: My title is Software Development Engineer 2, and I work in an IRT engineering organisation of about 100 people, inside a smaller scrum team of [~8 people].
+X: My role has four parts. First, I design and build .NET services and ASP.NET Core APIs, plus some Node, Python and React work, from the design discussion to production. Second, I own release integration and verification. That means merging and tagging releases, and running our automated multi-node installs through FV, TechOps, UAT and production, and checking every node runs the right version. Third, I handle production issues, I do root-cause analysis using CloudWatch and Grafana, like the RabbitMQ outage I fixed with publisher confirms. Fourth, I built and own the CIRT MCP server, which lets AI agents run our deployments, and I helped the team adopt it.
+X: Along with that, I review code, mentor newer developers and take part in PI planning, grooming and sprint demos.
+X: So it's a hands-on engineering role with real ownership of releases and tooling. I'm happy to go deeper into any one of these areas.
++@p3-5
+X: It was a growth decision. At DXC I learned a lot: enterprise C# and .NET, working with clients, and handling production support with proper change processes. But most of the work was SharePoint customisation and support, and I knew I wanted to build modern backend systems.
+X: I wanted three things: cloud-based microservices, a real product used around the world rather than one client's customisation, and a domain where engineering quality really matters. IQVIA IRT gave me all three. I moved to .NET Core microservices, AWS, messaging with RabbitMQ and Kafka, and a regulated clinical-trial domain where every change is validated and audited.
+X: Looking back, it was the right move. In four years there I went from building features to owning components, releases and the MCP deployment platform.
+X: I'm grateful for what DXC taught me, especially the discipline around production support. It was simply about growing as an engineer, not about leaving anything behind.
++@p3-6
+X: That's a fair question. SDE 2 is IQVIA's internal level name, and levels differ a lot between companies. My headline describes the scope of work I actually do, and I'm happy to back it with facts.
+X: For example, I designed and solely built the CIRT MCP server, about 77 tools that cut deployments from 6 hours to 2 and from 6 people to 1. I own release integration across the application, APIs, database and UI, through FV, TechOps, UAT and production. I lead root-cause analysis on production issues, like the RabbitMQ outage and the SSO cookie failures. I make design decisions, like the validate-first, all-or-nothing design for our CSV bulk import, and I mentor newer developers.
+X: That's the kind of ownership a senior engineer has, so I describe the work honestly and let the examples speak. I'm applying for senior roles because I'm already doing much of that work every day, and I want the title and the scope to match.
+X: I'm happy to go into any of those examples in detail.
++@p4-1
+X: Roughly [70 percent] of my work is backend, about [15 percent] is frontend, and the other [15 percent] is release, DevOps and tooling.
+X: The backend part is the core: C# and .NET microservices, ASP.NET Core Web APIs, EF Core and SQL Server, messaging with RabbitMQ and Kafka, and deployments on AWS. The frontend part is React and TypeScript components and some Angular modules in the IRT UI, usually when a feature I own needs screen changes. The last part is release integration, pipelines in Azure DevOps, and tooling like the CIRT MCP server.
+X: So I describe myself as backend-first full-stack. I can take a feature from the database to the screen and into production, which helps a lot with ownership, but my real depth is APIs, data and distributed systems.
+X: For example, in the CSV bulk import I built the parsing, validation and transactional save in .NET, and also the upload and error preview screen in React. I can talk more about either side.
++@p4-2
+X: My strongest technology is C# with ASP.NET Core Web API, backed by EF Core and SQL Server.
+X: I've used this stack every day for more than four years on IRT. I'm comfortable with the parts that matter in production: async code, dependency injection and lifetimes, middleware and filters, the Options pattern, EF Core change tracking and query performance, and SQL indexing. I also led part of our upgrade to .NET 10 in [early 2026], where I upgraded [3] services and we saw about [10-15%] better p95 latency.
+X: Close behind that, I'm strong in messaging with RabbitMQ and Kafka, AWS deployments on ECS and Lambda, CI/CD and release automation, and AI-assisted engineering, especially MCP.
+X: A good example is when I fixed a slow shipment-list query from [9 seconds to under 300 milliseconds] by rewriting it to be SARGable and adding a covering index. So I'm strong both in writing the C# code and in understanding what it does in the database. Happy to go deeper into any of these.
++@p4-3
+X: Day to day, my core is C# and .NET. I build features with ASP.NET Core Web API, EF Core and SQL Server, and I write tests with xUnit and Moq, plus Playwright for end-to-end checks.
+X: For the workflow, I use Git with Azure DevOps for pull requests, code reviews and pipelines, and SonarQube quality gates before anything merges. For running systems, I check CloudWatch and Grafana for logs, metrics and alerts, and I work with RabbitMQ and Kafka when features publish or consume events. Our services run on AWS, mainly ECS with Docker, plus Lambda, API Gateway, DynamoDB and RDS, with Terraform and CloudFormation for infrastructure.
+X: On some days I also work in React and TypeScript for UI changes, or in Node and Python services.
+X: And I use AI tools daily: GitHub Copilot and Cursor while coding, and our CIRT MCP server to run builds and deployments. For example, a typical release day for me is Azure DevOps plus the MCP server plus Grafana. I can walk through a normal day if that helps.
++@p4-4
+X: The most challenging project was the CIRT MCP server.
+X: The situation was that our deployments ran on on-premise Azure DevOps Server across many nodes. A full deployment took about 6 hours and needed about 6 people, following manual steps and checklists, and mistakes were costly in a regulated product.
+X: My task was to automate this safely, on my own, without disturbing live releases or the approval process.
+X: I started by mapping [about 30] manual steps. Then I built read-only tools first, things like checking build status and node versions, so people could trust it with no risk. After that I added write tools, like triggering builds and releases, but with confirmations, per-user credentials so every action is audited under the real person, and polling for long-running jobs. Approvals stayed exactly as they were. Step by step it grew to about 77 tools, grouped by build, release, deploy and info.
+X: The result was deployments going from 6 hours to 2, and from 6 people to 1, and I packaged it so teammates install and use it.
+X: The hardest part wasn't the code, it was safety and good tool design. I can explain how I kept it safe if that's useful.
++@p4-5
+X: A decision I'm proud of was the design of our CSV bulk import for clinical study data.
+X: The situation was that study teams wanted to upload large CSV files instead of entering data one record at a time. The key choice was: if some rows are bad, do we save the good rows, a partial import, or nothing at all?
+X: I owned the design, so I weighed both options. Partial imports feel friendlier, but in a GxP system they leave a study half-configured, they make rollback and the audit trail messy, and users have to work out what got saved. All-or-nothing is safer, but frustrating if users only find errors at the end.
+X: So I proposed a two-step design: first a validate-only preview that checks every row and shows all errors with row numbers, and then an all-or-nothing save in one transaction, but only once the file is clean. I walked the BA and the QA lead through the trade-off and we agreed on it.
+X: The result: it's live in production, users fix every error before saving, and we've never had a half-imported study. I learned that the best decision often combines both options. I can go into the technical design too.
++@p4-6
+X: A good example is our SFTP integration for vendor file exchange.
+X: The situation was that all our vendor file transfers were tied to one SFTP library, ComponentPro. In [2024] a depot vendor hardened their server security, and our connection broke. Because the library calls were spread across the code, switching libraries was risky.
+X: My task was to fix it, and to make sure a library change would never touch business code again.
+X: I introduced a common ISftpClient interface for connect, upload, download and list, with a factory that picks the provider for each vendor from configuration. I added a base class for the shared parts like retries, timeouts and logging. Then I implemented three providers behind it, ComponentPro, SSH.NET and Rebex, and moved vendors over one at a time by configuration, verifying each one in UAT first.
+X: The result was that Rebex went to production with [no failed transfers caused by the switch], no business code changed, and a future library change is now one class plus a config entry.
+X: It's a nice real example of the open-closed principle and the strategy pattern. I'm happy to explain how I tested it.
++@p4-7
+X: I'm looking for a senior backend or API engineer role, mainly on .NET, where I own the design and delivery of services, not just individual tickets.
+X: Ideally it involves AWS or another cloud, and event-driven systems with something like Kafka or RabbitMQ, because that's where I've built most of my experience. I'd like a product with real scale and high quality standards, where things like testing, observability and reliability are taken seriously, because that's how I've worked in a regulated domain.
+X: I'd also like room to keep using AI-assisted engineering and to build developer tooling, like I did with the MCP server that cut our deployments from 6 hours to 2. And I enjoy mentoring, so a role where I can help newer engineers grow would be great.
+X: What I'm not looking for is a pure maintenance or support role. From what I've read about this position, the ownership and the backend focus match well. I'd love to hear more about what the team is building.
++@p4-8
+X: I'm mainly expecting three things.
+X: First, bigger ownership: being trusted with design decisions and with production systems, not only implementing tickets. I've already been doing that with releases and the MCP platform, so I'm ready for more.
+X: Second, a strong engineering culture. That means proper code reviews, CI/CD, good monitoring and observability, blameless post-mortems when things go wrong, and some time to learn. In my current team, for example, our post-incident reviews after the RabbitMQ outage led to real fixes, and I value that kind of honesty.
+X: Third, a modern stack that's open to AI tools and new ideas, and a clear growth path, from senior towards lead or architect, with honest feedback along the way.
+X: In return, I bring reliable delivery, ownership of production quality, and a habit of improving the team's tooling. I'd be curious to know how growth and ownership work in your team.
++@p4-9
+X: Honestly, it started because my first job at DXC was in C# and .NET. But I stayed because I think it's one of the best platforms for enterprise backends.
+X: There are a few reasons. C# is strongly typed, which catches a lot of mistakes at compile time, and the tooling, Visual Studio, Rider and the debugger, is excellent. Since .NET Core it's cross-platform, so our services run in Linux containers on AWS. Performance is very good, with Kestrel among the fastest web servers, and features like async/await, dependency injection, configuration and logging are built into the framework instead of bolted on.
+X: For a regulated product like ours, Microsoft's predictable long-term support releases are also important, because we can plan upgrades. For example, we moved services to .NET 10 in [early 2026] and got about [10-15%] better p95 latency without changing business logic.
+X: That said, I'm not religious about it. I also build Node and Python services when they fit better. I can compare .NET with Node or Java if you like.
++@p4-10
+X: I'd say I didn't move away from backend. I added AI on top of it, because it multiplies what a backend engineer can do.
+X: It started with a real problem. Our deployments took about 6 hours and 6 people, mostly repetitive, checklist-driven steps on Azure DevOps. When MCP, the Model Context Protocol, came out, I saw it was a safe, standard way to let AI agents call real tools. So I built the CIRT MCP server with about 77 tools, and deployments went from 6 hours to 2 and from 6 people to 1.
+X: Building it was mostly backend work: API design, orchestration, security, audit and error handling. That's also how I use AI generally, where it removes repetitive work, like deployments, test scaffolding and log triage, while humans stay in charge of approvals and design decisions. I also review AI-generated code carefully for security and accuracy.
+X: So for me AI is a tool to deliver faster and safer, and my core is still backend engineering. I can explain how I kept the MCP server safe if that's useful.
++@p4-11
+X: I call myself full-stack because I can deliver a feature end to end, from the database to the screen and into production, although my real depth is in the backend.
+X: On the backend I build .NET services and ASP.NET Core APIs, with EF Core and SQL Server. On the frontend I build React and TypeScript components and I've worked on Angular modules in the IRT UI, things like forms, data tables and error displays, using reusable components and proper state handling. I also write Playwright end-to-end tests, and I handle the pipeline and release side in Azure DevOps.
+X: A good example is the CSV bulk import. I built the backend parsing, validation and transactional save, and also the React upload screen that shows a preview of every error by row number before the user saves.
+X: Being able to work across layers means fewer hand-offs and I understand the whole user flow. But if you asked me where I'm strongest, it's APIs, data and distributed systems. I can go deeper on either side.
++@p4-12
+X: I'm strongest in C# and .NET backend development: ASP.NET Core Web API, EF Core and SQL Server.
+X: I've worked with this stack every day for over four years on IRT, so I'm comfortable with what matters in production: async and threading, dependency injection lifetimes, middleware and filters, configuration with the Options pattern, EF Core performance like AsNoTracking and avoiding N+1 queries, and SQL indexing and execution plans. I also have solid distributed-systems basics, like messaging with RabbitMQ and Kafka, retries, idempotent consumers and the outbox pattern.
+X: A close second is CI/CD and release automation, because I own release integration for our team and built the MCP server that runs our deployments.
+X: A concrete example is the slow shipment-list query I fixed, from [9 seconds to under 300 milliseconds], by making it SARGable and adding a covering index. I'm happy to go deeper into any part of the .NET stack.
++@p4-13
+X: I'd say Java and Spring Boot. I have worked on Spring Boot services, so I can read the code, fix bugs and extend features, but I'm much stronger in .NET.
+X: The good part is that the concepts map almost one to one. Spring's IoC container is like the .NET DI container, controllers are very similar, Spring Data JPA with Hibernate is close to EF Core, and profiles are like appsettings per environment. So when I work in Spring I'm mostly learning syntax and conventions, not new ideas, and I'd ramp up quickly.
+X: The other area is Kubernetes cluster administration. I write deployment YAML, deploy services and debug pods, but platform teams run the clusters themselves, things like node pools and networking.
+X: I'm working on both. For example, when I picked up a Spring service, I compared it side by side with our .NET patterns and was productive within [a couple of weeks]. I'm open about these gaps and I close them quickly.
++@p4-14
+X: It really depends on the team's skills and the workload, but I can tell you my default choices and why.
+X: For a core business service, I'd choose ASP.NET Core on .NET 10, which is a long-term support release, with EF Core and SQL Server, or DynamoDB if the access patterns are simple key lookups at high scale. I'd run it in containers on ECS, define infrastructure with Terraform, and use RabbitMQ or Kafka for events. Kafka if we need high throughput and replay, RabbitMQ for task queues and routing.
+X: For lightweight glue or tooling, I might use Node with TypeScript, and Python for data processing or AI scripting. For the UI, React with TypeScript.
+X: I'd also start with a well-structured modular monolith unless there's a clear reason for microservices, like separate teams or very different scaling needs. And things like compliance, latency targets and what the team already knows can override my preferences.
+X: For example, I built our MCP server in C# with the official C# MCP SDK, packaged as a .NET global tool, because the team and our deployment code were already .NET. I can explain that choice if you like.
++@p4-15
+X: Without AI, my core strength is shipping reliable .NET backend services in a regulated environment, and owning them in production.
+X: That covers the whole lifecycle. I design and build APIs and services with ASP.NET Core, EF Core and SQL Server, with messaging through RabbitMQ and Kafka. I care about quality: tests first for risky logic, configuration validated at startup, and monitoring in place before a release. And I own releases, merging, tagging and verifying deployments through FV, TechOps, UAT and production.
+X: Most of my best stories have nothing to do with AI. I root-caused a RabbitMQ outage and fixed it with publisher confirms. I fixed a slow shipment query from [9 seconds to under 300 milliseconds]. I fixed SSO failures by shrinking an oversized cookie from [~13 KB to under 1 KB]. And I delivered the CSV bulk import, which is live in production.
+X: Even the MCP server is really backend engineering: API design, orchestration, security and audit. AI is a multiplier on top. I can go into any of those stories.
++@p4-16
+X: It's a mix, and I try to be precise about what was mine and what was the team's.
+X: Some work was individual. I designed and built the CIRT MCP server on my own. I owned the SFTP integration component and the Rebex release to production. I built the study-transfer safety guard, and I led several production investigations, like the RabbitMQ outage and the SSO cookie issue.
+X: Other work was team-based, and there I can tell you my part. Our IRT microservices are built by the whole team. In the .NET 10 upgrade, I owned [3] of the services. In the CSV bulk import, I owned the design and most of the build, working closely with the BA and QA. And releases involve [5] scrum teams, where my part is integration and verification.
+X: So when I describe something I'll say "I" for my own work and "we" for team work. I think that honesty matters in an interview. Which of these would you like me to go into?
