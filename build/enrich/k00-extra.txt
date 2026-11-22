@@ -1,0 +1,8 @@
++@p6-6
+K: virtual machine, vm, docker vs vm, containers vs virtual machines
++@p10-3
+K: custom middleware, imiddleware, middleware factory
++@p10-4
+K: custom middleware, correlation id middleware, audit middleware
++@p3-57
+K: why leave, leaving current company, job change, reason for change, switch

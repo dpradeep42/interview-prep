@@ -34,7 +34,7 @@ app.Run();
 @p10-2
 S: mw
 D: I
-T: How do you write custom middleware?
+T: What is custom middleware, and how do you write one?
 A: Convention-based: a class with a constructor taking RequestDelegate next and a public InvokeAsync(HttpContext ...) method, registered with app.UseMiddleware<T>().|Factory-based: implement IMiddleware, register it in DI, then UseMiddleware<T>().|Inline: app.Use(async (ctx, next) => { ...; await next(ctx); }).|Wrap it in an extension method such as app.UseCorrelationId() for a clean Program.cs.
 H: Before, next, after.
 V: mwcustom

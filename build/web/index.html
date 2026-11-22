@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#2563eb">
+<title>Pradeep: Interview Prep</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232563eb'/%3E%3Ctext x='32' y='43' font-size='30' text-anchor='middle' fill='white' font-family='Arial' font-weight='700'%3EIP%3C/text%3E%3C/svg%3E">
+<!--CSS-->
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>Interview Prep</b><span class="who">Pradeep · .NET backend</span></div>
+  <nav class="nav" id="nav" aria-label="Sections">
+    <button data-v="study" class="on"><span class="ic">📚</span><span>Study</span></button>
+    <button data-v="top"><span class="ic">⭐</span><span>Top 50</span></button>
+    <button data-v="mock"><span class="ic">🎤</span><span>Mock</span></button>
+    <button data-v="revise"><span class="ic">⚡</span><span>Revise</span></button>
+    <button data-v="kit"><span class="ic">🧳</span><span>Day kit</span></button>
+  </nav>
+</header>
+<main class="wrap">
+  <section id="view-study" class="view">
+    <div class="searchbar">
+      <div class="sbox">
+        <input type="search" id="search" autocomplete="off" spellcheck="false" placeholder="Search: custom middleware, DI lifetimes, kafka partition, #131" aria-label="Search questions" aria-autocomplete="list" aria-controls="sugg">
+        <div class="sugg hidden" id="sugg" role="listbox"></div>
+      </div>
+      <button class="btn" id="ftoggle" aria-expanded="false">Filters</button>
+    </div>
+    <div class="chips" id="tabs" role="tablist"></div>
+    <div class="filters" id="filters">
+      <select id="topic" aria-label="Topic"></select>
+      <select id="status" aria-label="Practice status">
+        <option value="all">All questions</option>
+        <option value="new">Not practised yet</option>
+        <option value="weak">Revise weak ones (shaky + missed)</option>
+        <option value="m">Missed only</option>
+        <option value="g">Got it</option>
+      </select>
+      <div class="seg" id="diff"></div>
+      <label class="chk"><input type="checkbox" id="pics"> With pictures</label>
+      <label class="chk"><input type="checkbox" id="stories"> Stories</label>
+      <label class="chk" title="Also match words inside the answers"><input type="checkbox" id="inans"> Also search answers</label>
+      <label class="chk"><input type="checkbox" id="deep"> Open "More detail" by default</label>
+      <button class="btn sm" id="collapse">Collapse all</button>
+    </div>
+    <p class="partsum" id="partsum"></p>
+    <div class="toc" id="toc"></div>
+    <div class="count" id="count"></div>
+    <div id="list"></div>
+  </section>
+  <section id="view-top" class="view hidden"></section>
+  <section id="view-mock" class="view hidden"></section>
+  <section id="view-revise" class="view hidden"></section>
+  <section id="view-kit" class="view hidden"></section>
+  <div id="loading" class="count">Loading questions…</div>
+</main>
+<div class="toast hidden" id="toast"></div>
+<!--JS-->
+</body>
+</html>

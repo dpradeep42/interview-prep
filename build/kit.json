@@ -1,0 +1,68 @@
+{
+"pitch": {
+ "beats": [
+  "Who I am: backend-focused full-stack engineer, about 5.5 years, C# and .NET at the core.",
+  "Where: 4+ years at IQVIA on IRT, a regulated (GxP) clinical-trial platform: randomization, drug supply, shipments, eConsent.",
+  "What I build: .NET microservices and ASP.NET Core APIs, plus Node/TypeScript, Python and React, on AWS with Docker, Terraform and Azure DevOps.",
+  "Proof 1: the CIRT MCP server I built alone, about 77 tools, deployments from 6 hours to 2 and 6 people to 1.",
+  "Proof 2: production ownership: RabbitMQ outage fixed with publisher confirms, logout, SSO cookie and tabnabbing security fixes, SQL tuning.",
+  "Proof 3: features end to end: CSV bulk import live in production, the study-transfer safety guard, release integration.",
+  "Started at DXC on C#, .NET Framework and SharePoint.",
+  "Why here: a senior backend role where I own design and delivery of scalable services and keep using AI to move faster."
+ ],
+ "script": [
+  "Thank you. I'm Pradeep, a backend-focused full-stack engineer with about five and a half years of experience, mainly in C# and .NET.",
+  "For the last four years I've been at IQVIA, working on IRT. IRT is a regulated clinical-trial platform that handles patient randomization, drug supply, shipment tracking and eConsent for global trials. Because it's GxP regulated, every change we make has to be tested, traceable and auditable, and that has shaped how I work.",
+  "Day to day, I design and build .NET microservices and ASP.NET Core Web APIs with EF Core and SQL Server, and I also build Node.js and Python services and React components. Our services run on AWS, on ECS, Lambda, API Gateway, DynamoDB and RDS, with Terraform and CloudFormation, Docker, and Azure DevOps pipelines.",
+  "The work I'm proudest of is an internal MCP server that I designed and built on my own. It exposes about 77 tools for builds, releases and multi-node deployments to AI agents. That cut our deployment time from 6 hours to 2, and the people needed per deployment from 6 to 1, and I packaged it so my teammates install and use it.",
+  "I also own production issues. For example, I root-caused a RabbitMQ outage and fixed it with publisher confirms, and I delivered security fixes for token-based logout, SSO cookie failures and reverse tabnabbing. I've delivered features end to end too, like a CSV bulk import that is live in production and a study-transfer safety guard.",
+  "Before IQVIA, I started my career at DXC Technology, building C# and .NET Framework solutions on SharePoint.",
+  "Now I'm looking for a senior backend role where I can own the design and delivery of scalable services, and keep using AI tools to help the team move faster. That's why this role interests me."
+ ]
+},
+"numbers": [
+ ["Experience", "about 5.5 years: DXC Mar 2021 to Jul 2022, IQVIA Jul 2022 to now"],
+ ["Role", "Software Development Engineer 2, IQVIA RDS India, Bengaluru"],
+ ["Product", "IQVIA IRT: randomization, drug supply, shipment tracking, eConsent (GxP)"],
+ ["Org size", "~100-member engineering team"],
+ ["MCP server", "CIRT MCP server, ~77 tools, designed and built alone"],
+ ["MCP impact", "deployment time 6 hours to 2; people per deployment 6 to 1"],
+ ["SFTP providers", "ComponentPro, SSH.NET, Rebex (Rebex released to production)"],
+ ["Releases", "FV, TechOps, UAT, production; Ansible, Python and Shell multi-node installs"],
+ ["Education", "B.Tech CSE 2016 to 2020, Annamacharya Institute of Technology and Sciences, 67.7%"]
+],
+"facts": [
+ ["Your team", "[~8 people] in the IRT team; [5] teams contribute to a release"],
+ ["RabbitMQ outage", "[mid-2024], about [40 min] of impact, [~1,200] updates at risk; fixed with publisher confirms, which cost about [5 percent] throughput"],
+ ["Token logout fix", "[15-min] access tokens, jti denylist in ElastiCache, check adds about [1 ms]"],
+ ["SSO cookie fix", "cookie from [~13 KB] to [under 1 KB] against a [16 KB] header limit; [~30] support tickets"],
+ ["Reverse tabnabbing", "[~40] links fixed with rel=noopener noreferrer"],
+ ["CSV bulk import", "up to [5 MB / ~10,000 rows], [2 imports per user] at a time"],
+ [".NET 10 upgrade", "[early 2026], [3] services, about [10-15%] better p95 latency"],
+ ["Slow SQL fix", "[9 s to under 300 ms], logical reads [400,000 to 2,000]"],
+ ["Correlation-id middleware", "written in [2024], traced requests across [4] services"],
+ ["Mentoring", "[two graduates in 2024]"],
+ ["MCP adoption", "[30-min] demo, [10] starter prompts, [4] engineers first, team-wide in [~2 months]; measured on [8 vs 8] deployments; tool groups ~15 build, ~20 release, ~25 deploy, ~17 info"]
+],
+"ask": [
+ ["About the role", ["What would success look like for this role in the first 90 days?", "What is the biggest technical challenge the team will face in the next year?", "Which part of the system would I own first?"]],
+ ["About the team", ["How is the team structured, and who would I work with most closely?", "How do code reviews and design decisions work here?", "How does the team use AI coding tools today?"]],
+ ["About engineering", ["How do you deploy and monitor services, and what does on-call look like?", "How do you balance new features against tech debt?", "What does your testing and release process look like?"]],
+ ["About growth", ["What does the path from this role to senior or staff look like?", "What separates a good engineer from a great one on this team?", "Is there anything in my background you'd like me to clarify?"]]
+],
+"checklist": [
+ "Read the 2-minute pitch out loud twice, with the timer.",
+ "Run one 10-question mock on Top 50, then one on your weak ones.",
+ "Skim Last-minute revision for the job description's main topics.",
+ "Re-read the story facts below so every number stays the same.",
+ "Pick 3 questions to ask the interviewer.",
+ "Keep water, charger, headphones and a quiet room ready; test the meeting link 10 minutes early.",
+ "In the interview: pause, structure (definition, how, example), and invite the follow-up."
+],
+"framework": [
+ ["Technical answer", "Definition in plain words, how it works or why it matters, a real example from my work, then a closing line that invites a follow-up."],
+ ["Story answer (STAR)", "Situation in one or two lines, Task (what I owned), Action (what I did, in first person), Result with a number, then what I learned."],
+ ["Design answer", "Clarify requirements and scale, sketch the main components, walk one request through, then talk about failure, security and monitoring."],
+ ["When you don't know", "Say what you do know, how you would find out, and a related thing you have done. Never bluff."]
+]
+}
