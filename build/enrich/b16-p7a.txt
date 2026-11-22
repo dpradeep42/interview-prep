@@ -1,0 +1,374 @@
+@p7-1
+Q: React is a JavaScript library for building user interfaces from reusable components. You describe what the UI should look like for a given state, and React reconciles changes efficiently (virtual DOM diffing) to update only what changed in the real DOM.
+- React 18 introduced concurrent rendering, automatic batching and transitions.
+- React 19 (Dec 2024): Actions, useActionState, useOptimistic, the use() hook, ref as a prop, and Server Components support.
+- React Compiler (stable 2025) auto-memoises components, reducing manual useMemo/useCallback.
+- One-way data flow: props down, events up.
+? What is reconciliation? :: React compares the new element tree with the previous one and applies minimal DOM changes.
+? Why keys in lists? :: Stable keys let React match items between renders and keep state correct.
+
+@p7-2
+Q: A component is a function (or class) that returns UI; an element is the plain object it returns describing what to render. <Button /> creates an element of type Button; React calls the component to get more elements until it reaches DOM elements.
+- Elements are immutable descriptions; cheap to create.
+- JSX compiles to jsx() calls (new JSX transform).
+? Is JSX required? :: No, but it's the standard and compiles to function calls.
+? What is a fragment? :: <>...</> groups elements without adding a DOM node.
+
+@p7-3
+Q: Functional components are plain functions using hooks for state and effects: less code, easier reuse through custom hooks, and the modern standard. Class components extend React.Component with this.state and lifecycle methods; they're still supported but only needed for error boundaries today.
+- Hooks rules: call at top level, only in components or custom hooks.
+- Lifecycle mapping: componentDidMount/Update/WillUnmount ≈ useEffect with cleanup.
+? Why are error boundaries still classes? :: They rely on componentDidCatch/getDerivedStateFromError, which have no hook equivalent.
+? Can you mix both? :: Yes, in the same app.
+
+@p7-4
+Q: Props are read-only inputs passed from parent to child; state is data owned by a component that changes over time (useState) and triggers a re-render. Props flow down and are controlled by the parent; state is local and changed by the component itself, often passed down as props.
+- Lift state up to the nearest common parent when siblings need it.
+- State updates are asynchronous and batched; use functional updates (setCount(c => c + 1)).
+- Never mutate state directly; create new objects or arrays.
+? Why functional updates? :: They use the latest state when updates are batched.
+? Derived state? :: Compute it during render instead of storing it.
+
+@p7-5
+Q: The dependency array is the second argument of useEffect, useMemo and useCallback: the hook re-runs when any listed value changes (compared with Object.is). An empty array runs the effect once after the first render (and cleanup on unmount); no array runs it after every render.
+- In development StrictMode, effects run twice on mount to reveal missing cleanups.
+- The ESLint react-hooks/exhaustive-deps rule catches missing dependencies.
+- Objects created during render change every time, causing repeated effects.
+```tsx
+useEffect(() => {
+  const ctrl = new AbortController();
+  fetch(`/api/shipments/${id}`, { signal: ctrl.signal }).then(r => r.json()).then(setShipment);
+  return () => ctrl.abort();      // cleanup prevents race conditions
+}, [id]);
+```
+? Why does my effect run twice in development? :: StrictMode intentionally double-invokes to find bugs.
+? What's a stale closure? :: An effect using old values because dependencies were omitted.
+
+@p7-6
+Q: useMemo caches a computed value between renders until dependencies change; useCallback caches a function reference so memoised children (React.memo) don't re-render because of a new function prop. useCallback(fn, deps) equals useMemo(() => fn, deps).
+- Only use them when profiling shows a benefit or for referential stability in dependencies.
+- React Compiler can make most manual memoisation unnecessary.
+? Does useMemo guarantee caching? :: No, React may discard cached values; treat it as an optimisation.
+? When does useCallback help? :: When passing callbacks to memoised children or as effect dependencies.
+
+@p7-7
+Q: useRef returns a mutable object whose .current persists across renders without causing a re-render. It's used for DOM references (focusing an input) and for values like timers, previous values or abort controllers.
+- React 19 allows ref as a regular prop for function components (forwardRef no longer needed).
+- Don't read or write ref.current during render for values that affect output.
+```tsx
+const inputRef = useRef<HTMLInputElement>(null);
+useEffect(() => inputRef.current?.focus(), []);
+return <input ref={inputRef} />;
+```
+? useRef vs useState? :: Changing a ref doesn't re-render; changing state does.
+? What is forwardRef for? :: Passing refs to child components (unnecessary in React 19).
+
+@p7-8
+Q: Context passes values (theme, current user, locale) down the tree without prop drilling. It's fine for low-frequency global values; Redux Toolkit adds a predictable store, devtools and middleware for complex shared state, and libraries like Zustand are lighter alternatives. Server data is best handled by React Query.
+- Every consumer re-renders when the context value changes; split contexts and memoise values.
+- Redux Toolkit with RTK Query reduces boilerplate.
+? Is Context a state manager? :: It's a transport mechanism; state still lives in useState/useReducer.
+? When choose Redux? :: Large apps with complex shared client state and many updates.
+
+@p7-9
+Q: I use a typed API client (fetch or axios) with interceptors for tokens and errors, and React Query (TanStack Query) or a custom hook to fetch, cache and retry. The UI shows a loading indicator, an error message with retry, and an empty state, and maps ProblemDetails errors to user-friendly messages.
+- React Query handles caching, background refetch, deduplication and invalidation after mutations.
+- Abort requests on unmount or parameter change.
+- Suspense and error boundaries for declarative loading/error UI.
+```tsx
+const { data, isPending, error } = useQuery({ queryKey: ['shipments', siteId], queryFn: () => api.getShipments(siteId) });
+if (isPending) return <Spinner />;
+if (error) return <ErrorBanner error={error} />;
+```
+? Why React Query over useEffect fetching? :: It handles caching, races, retries and refetching for you.
+? How do you refresh after a mutation? :: Invalidate the related query keys.
+
+@p7-10
+Q: In a controlled component React state holds the input value (value + onChange), giving validation and formatting on every keystroke. In an uncontrolled component the DOM holds the value, read with a ref or form submission, which is simpler and faster for big forms; React Hook Form uses uncontrolled inputs for performance.
+- File inputs are always uncontrolled.
+- React 19 form actions work naturally with uncontrolled forms.
+? Which is better? :: Controlled for dynamic validation; uncontrolled for performance and simplicity.
+? Warning "changing an uncontrolled input to controlled"? :: The value went from undefined to defined; initialise state properly.
+
+@p7-11
+Q: Causes are a parent re-rendering (children re-render by default), new object, array or function props each render, context values that change often, and state kept too high in the tree. Fixes: move state down, React.memo with stable props (useMemo/useCallback), split contexts, virtualise long lists, and measure with React DevTools Profiler.
+- Re-renders aren't always bad; only fix measured problems.
+- Keys: changing keys remount components.
+? How do you find unnecessary renders? :: React DevTools Profiler "why did this render".
+? What does React.memo do? :: Skips re-rendering if props are shallowly equal.
+
+@p7-12
+Q: Login through the SSO/OIDC provider (Authorization Code with PKCE), keep tokens in memory or HttpOnly cookies (BFF), not localStorage; an auth context exposes the user and roles; protected route components redirect unauthenticated users and hide unauthorised UI, while the API always enforces authorization.
+- Silent token renewal; handle 401 by re-authenticating.
+- MSAL or oidc-client-ts libraries.
+```tsx
+function ProtectedRoute({ role, children }: { role?: string; children: ReactNode }) {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  if (role && !user.roles.includes(role)) return <Forbidden />;
+  return children;
+}
+```
+? Is hiding UI enough? :: No, the backend must enforce every permission.
+? Why not localStorage? :: Any XSS can read it.
+
+@p7-13
+Q: React Hook Form (or Formik) for state and performance, with a schema validator (Zod or Yup) whose types are shared with TypeScript; show field errors, disable submit while saving, and map server validation errors (ProblemDetails) back to fields.
+- zodResolver connects schema validation.
+- Server is still the source of truth for validation.
+```tsx
+const schema = z.object({ siteNumber: z.string().min(3), kitCount: z.number().int().positive() });
+const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(schema) });
+```
+? Why Zod? :: One schema gives runtime validation and TypeScript types.
+? How do you show server errors? :: setError on fields from the ProblemDetails errors dictionary.
+
+@p7-14
+Q: Feature-based folders (shipments/, sites/) with components, hooks, API calls and tests together; a shared library of reusable UI components; a typed API layer (generated from OpenAPI); routing with lazy-loaded routes; global state kept minimal; and lint, format and test standards.
+- Code splitting with React.lazy and Suspense.
+- Storybook for component documentation.
+- Absolute imports and barrel files used carefully.
+? Why feature folders? :: Related code changes together, making features easier to find and own.
+? How do you share components across apps? :: An internal package or monorepo library.
+
+@p7-15
+Q: React is a focused UI library: flexible, large ecosystem, easy to adopt piece by piece and a simpler learning curve. Angular is a full framework with DI, routing, forms and RxJS built in, offering strong conventions for large teams. IRT uses both: Angular modules for older areas and React components for newer work.
+- Angular's recent signals and standalone components simplify it.
+- Choice depends on team skills and existing code.
+? Which would you choose for a new project? :: Usually React with TypeScript, unless the team is strongly Angular.
+? What are Angular signals? :: Reactive primitives for fine-grained change detection.
+
+@p7-16
+Q: var is function-scoped, hoisted and initialised as undefined, and can be redeclared; let is block-scoped and reassignable; const is block-scoped and can't be reassigned (but objects it points to can be mutated). Use const by default, let when reassigning, never var.
+- let/const are in the temporal dead zone before declaration.
+- Classic bug: var in loops with closures shares one variable.
+? Is a const array immutable? :: No, you can push to it; use Object.freeze for shallow immutability.
+? Why avoid var? :: Function scoping and hoisting cause subtle bugs.
+
+@p7-17
+Q: Declarations are processed before code runs: function declarations are fully hoisted, var is hoisted as undefined, and let/const/class are hoisted but in the temporal dead zone, so accessing them early throws ReferenceError.
+- Function expressions and arrow functions assigned to variables follow variable rules.
+? What prints console.log(x); var x = 5? :: undefined.
+? And with let? :: ReferenceError.
+
+@p7-18
+Q: A closure is a function that remembers variables from the scope where it was created, even after that scope finished, for example a counter factory or a debounce function keeping its timer. React hooks rely heavily on closures.
+- Stale closures in React effects come from capturing old state.
+```ts
+function debounce<T extends (...a: any[]) => void>(fn: T, ms: number) {
+  let t: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+```
+? Memory risk? :: Closures keep captured objects alive as long as the function exists.
+? Same concept in C#? :: Yes, lambdas capturing variables.
+
+@p7-19
+Q: A Promise represents a future value: pending, then fulfilled or rejected, handled with then/catch. async/await is syntax over Promises that reads like synchronous code with try/catch. Promise.all runs in parallel and fails fast; Promise.allSettled waits for all; Promise.race and Promise.any return the first to settle or succeed.
+- Unhandled rejections crash Node by default (since Node 15).
+- Sequential awaits in loops can be slow; use Promise.all for independent calls.
+? Promise.all vs allSettled? :: all rejects on the first failure; allSettled reports every result.
+? Is await blocking? :: No, it yields to the event loop until the promise settles.
+
+@p7-20
+Q: Callback hell is deeply nested callbacks for sequential async steps, hard to read and to handle errors in; it's solved with Promises and async/await, or by splitting into named functions.
+- util.promisify converts Node callback APIs to Promises.
+- Error-first callbacks were the old Node convention.
+? Why is error handling hard with callbacks? :: Every level must check and pass errors manually.
+? Modern Node APIs? :: Promise-based versions like fs/promises.
+
+@p7-21
+Q: Optional chaining user?.address?.city returns undefined instead of throwing if something is null or undefined. Nullish coalescing count ?? 0 uses the default only for null or undefined, unlike || which also replaces 0, '' and false.
+- ??= assigns only if null/undefined.
+- Same operators exist in C# (?. and ??).
+? Why ?? instead of ||? :: So valid falsy values like 0 aren't replaced.
+? Does ?. work with function calls? :: Yes, fn?.() calls only if fn exists.
+
+@p7-22
+Q: any turns off type checking entirely; unknown accepts any value but forces you to narrow it (typeof, instanceof, type guards or schema validation) before use. Prefer unknown for untrusted data like API responses or caught errors.
+- catch (e) is unknown with useUnknownInCatchVariables (part of strict).
+- never represents impossible values (exhaustiveness checks).
+? How do you narrow unknown API data? :: Validate with Zod and get typed results.
+? What is never used for? :: Exhaustive switch checks and functions that never return.
+
+@p7-23
+Q: Generics are type parameters that make code reusable while keeping types, for example function first<T>(items: T[]): T or ApiResponse<Shipment>, with constraints using extends.
+- Utility types: Partial<T>, Pick<T, K>, Omit<T, K>, Record<K, V>.
+- keyof and conditional types for advanced typing.
+```ts
+async function get<T>(url: string): Promise<T> { const r = await fetch(url); return r.json() as Promise<T>; }
+const shipment = await get<Shipment>('/api/shipments/42');
+```
+? Generic constraint example? :: <T extends { id: number }> ensures T has an id.
+? Difference from C# generics? :: TypeScript generics are erased at runtime; C# generics exist at runtime.
+
+@p7-24
+Q: A union A | B means a value is one of several types, such as 'Pending' | 'Shipped'; an intersection A & B means a value has all members of both; narrowing is TypeScript refining a union inside checks (typeof, in, instanceof, discriminant properties).
+- Discriminated unions with a kind field give exhaustive switches.
+```ts
+type Result = { ok: true; data: Shipment } | { ok: false; error: string };
+function show(r: Result) { if (r.ok) console.log(r.data.id); else console.error(r.error); }
+```
+? What is a discriminated union? :: A union whose members share a literal property used to tell them apart.
+? Custom type guard? :: A function returning `x is Type`.
+
+@p7-25
+Q: In TypeScript, strict: true enables strict checks such as strictNullChecks, noImplicitAny and strictFunctionTypes, catching null and type bugs at compile time. In JavaScript, 'use strict' (and ES modules automatically) turns silent errors into exceptions and forbids some unsafe features.
+- Turn on strict for new projects; migrate old ones gradually.
+- noUncheckedIndexedAccess adds safety for arrays and records.
+? What does strictNullChecks do? :: Makes null and undefined separate types you must handle.
+? Are ES modules strict? :: Yes, always.
+
+@p7-26
+Q: Node runs JavaScript on one thread with an event loop; asynchronous I/O (via libuv) lets it serve many requests while waiting. Synchronous calls (fs.readFileSync, heavy CPU loops) block the event loop and stall every request, so CPU-heavy work goes to worker threads or other services.
+- Event loop phases: timers, pending callbacks, poll, check, close; microtasks (Promises) run between.
+- libuv thread pool handles fs, DNS and crypto.
+? How do you detect event loop blocking? :: Event loop lag metrics (perf_hooks monitorEventLoopDelay).
+? Worker threads vs cluster? :: Worker threads share a process for CPU tasks; cluster runs multiple processes for scaling.
+
+@p7-27
+Q: Express is a minimal web framework for Node.js providing routing, request/response helpers and middleware. Middleware are functions (req, res, next) that run in order for logging, auth, parsing and error handling; error middleware has four arguments (err, req, res, next).
+- Express 5 (2024) handles rejected promises in async handlers automatically.
+- Same concept as ASP.NET Core middleware.
+```ts
+app.use((req, res, next) => { req.headers['x-correlation-id'] ??= randomUUID(); next(); });
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => res.status(500).json({ title: 'Server error' }));
+```
+? What happens if middleware doesn't call next? :: The request hangs unless it sends a response.
+? Express vs Fastify? :: Fastify is faster with schema-based validation; Express is simpler and more widespread.
+
+@p7-28
+Q: Use try/catch around awaited calls, a central error-handling middleware returning consistent JSON (problem details), never swallow rejections, add process-level handlers for unhandledRejection and uncaughtException that log and exit so the orchestrator restarts cleanly, and log with correlation ids.
+- Operational errors (expected) vs programmer errors (bugs).
+- Don't keep running after uncaughtException; state may be corrupt.
+? Why exit on uncaughtException? :: The process may be in an unknown state; restart is safer.
+? How do you return errors consistently? :: One error middleware mapping error types to status codes.
+
+@p7-29
+Q: JWT/OAuth validation middleware, input validation (Zod or Joi), helmet for security headers, rate limiting, a CORS allow-list, parameterised queries, npm audit and dependency scanning, secrets from a vault, and running as a non-root user in containers.
+- Lockfiles and npm ci for reproducible installs.
+- Supply-chain attacks on npm (e.g. compromised packages in 2025) make pinning and scanning vital.
+? How do you validate JWTs in Node? :: Libraries like jose with JWKS from the identity provider.
+? What does helmet do? :: Sets security headers like CSP, HSTS and X-Content-Type-Options.
+
+@p7-30
+Q: .NET offers strong typing, high performance, good fit for CPU-heavy and complex domain services, and mature tooling (EF Core, built-in DI). Node.js is fast to build for I/O-bound glue and real-time work, with one language across front end and back end and a huge npm ecosystem. I choose by workload and team.
+- .NET multithreading uses all cores in one process; Node needs clustering or workers.
+- TypeScript narrows the type-safety gap.
+? Which for a CPU-heavy service? :: .NET.
+? Which for a small BFF for a React app? :: Node/TypeScript is a natural fit.
+
+@p7-31
+Q: For validation and scripting: Pydantic made vendor file schema checks quick and readable for the integration team, and Python with Shell is our release automation language alongside Ansible. Its libraries make data handling and automation fast to write.
+- [Vendor file pre-validation service] with FastAPI returns 422 with exact problems before the .NET import.
+- Ansible itself is Python-based.
+W: I pick the right tool for the job.
+? Why not do validation in .NET? :: We could; Python was faster for the integration team to maintain alongside their scripts.
+? Python version and tools? :: [Python 3.12], pytest, ruff, uv or pip-tools.
+
+@p7-32
+Q: app/ with routers per feature, Pydantic schemas, services for business logic, a data layer, core/ for config (pydantic-settings) and security, dependencies injected with Depends, and tests with pytest and TestClient (httpx).
+- Async endpoints for I/O; run with uvicorn (or gunicorn with uvicorn workers).
+- Automatic OpenAPI docs at /docs.
+```python
+router = APIRouter(prefix="/shipments", tags=["shipments"])
+@router.get("/{shipment_id}", response_model=ShipmentOut)
+async def get_shipment(shipment_id: int, svc: ShipmentService = Depends(get_service)):
+    return await svc.get(shipment_id)
+```
+? What is Depends? :: FastAPI's dependency injection for parameters, auth and resources.
+? sync vs async def? :: async for non-blocking I/O; sync functions run in a thread pool.
+
+@p7-33
+Q: OAuth2 bearer tokens: a dependency (HTTPBearer or OAuth2PasswordBearer) extracts the JWT, validates signature, issuer, audience and expiry against the identity provider's JWKS (e.g. with PyJWT), and returns the user; route dependencies check roles or scopes.
+- Cache JWKS keys; handle key rotation.
+- Security dependencies show in OpenAPI docs.
+```python
+def current_user(token: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> User:
+    claims = jwt.decode(token.credentials, key=jwks_client.get_signing_key_from_jwt(token.credentials).key,
+                        algorithms=["RS256"], audience="irt-api", issuer=ISSUER)
+    return User.from_claims(claims)
+```
+? How do you require a role? :: A dependency that checks claims and raises 403.
+? Why specify algorithms? :: To prevent algorithm confusion attacks.
+
+@p7-34
+Q: SFTP is file transfer over SSH (port 22): encrypted, a single connection, key or password authentication. FTP is unencrypted with separate control and data connections; FTPS is FTP over TLS with certificates, still using multiple connections that complicate firewalls.
+- SFTP is not FTP over SSH; it's a different protocol (SSH File Transfer Protocol).
+- SCP is older and being replaced by SFTP under the hood in OpenSSH 9.
+? Why do firewalls struggle with FTPS? :: Encrypted control channel hides dynamic data ports from inspection.
+? Which do vendors prefer? :: Most use SFTP with key authentication.
+
+@p7-35
+Q: The SSH handshake agrees algorithms (key exchange, ciphers, MACs), and the client verifies the server's host key fingerprint to prevent man-in-the-middle; then the user authenticates. Password auth is simple but weaker; private-key auth proves possession of a key whose public part is on the server, which is stronger, automatable and preferred.
+- Pin host key fingerprints per vendor in configuration.
+- Modern algorithms: ed25519 or rsa-sha2-256/512 keys, curve25519 key exchange.
+- Protect private keys in Secrets Manager.
+? What happens if a host key changes? :: Our client refuses to connect until the new fingerprint is verified and updated.
+? Why did ssh-rsa break? :: It uses SHA-1, which servers disabled as insecure.
+
+@p7-36
+Q: All three providers implement ISftpClient. A factory reads the provider name per vendor from configuration (e.g. Sftp:Vendors:DepotA:Provider = Rebex) and returns the matching implementation, so switching a vendor is a configuration change with no code deployment.
+- Options pattern with per-vendor named settings.
+- Keyed services (.NET 8) can replace the hand-written factory.
+- Rollback = flip config back.
+```json
+"Sftp": { "Vendors": { "DepotA": { "Provider": "Rebex", "Host": "sftp.depota.example", "HostKeySha256": "..." } } }
+```
+? Was a restart needed? :: [With IOptionsMonitor, the next job picks up the change without restart].
+? How did you test each provider? :: The same contract tests ran against all three.
+
+@p7-37
+Q: The base class wraps operations with Polly: [3] retries with exponential backoff and jitter for transient errors (timeouts, connection resets), a fresh connection per attempt, and no retry for auth or host key failures. After the last attempt the job is marked failed and an alert goes to the support channel; the next scheduled run picks it up again.
+- Classify exceptions: transient vs permanent.
+- Polly v8 ResiliencePipeline with retry and timeout strategies.
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new() { MaxRetryAttempts = 3, BackoffType = DelayBackoffType.Exponential, UseJitter = true,
+                      ShouldHandle = new PredicateBuilder().Handle<SftpTransientException>() })
+    .AddTimeout(TimeSpan.FromMinutes(10)).Build();
+await pipeline.ExecuteAsync(async ct => await UploadOnceAsync(file, ct), ct);
+```
+? Why not retry auth failures? :: They won't fix themselves and may lock the account.
+? Why a fresh connection per attempt? :: A broken session can't be reused safely.
+
+@p7-38
+Q: After upload I compare the remote file size with the local size and, where vendors support it, a SHA-256 checksum in a sidecar file. For partial transfers I upload under a temporary name (.part) and rename when complete so the vendor never picks up half a file; on download I only read complete files (stable size or a done marker) and verify before processing.
+- Atomic rename is supported on most SFTP servers.
+- Hash computed while streaming to avoid reading twice.
+? What if rename isn't allowed? :: Use a separate upload folder and move, or a done marker file.
+? How do you detect a still-uploading vendor file? :: Size stable across two checks or a marker file.
+
+@p7-39
+Q: Deterministic file names (vendor, type, timestamp, sequence), a processed-files table keyed by name and hash so the same file is never imported twice, and moving processed files to an archive folder.
+- Unique constraint on file hash.
+- Same file name with different content is flagged for review.
+? Why both name and hash? :: Name catches re-sends; hash catches renamed duplicates.
+? What about reprocessing intentionally? :: An audited admin action that marks the old record superseded.
+
+@p7-40
+Q: Private keys and passwords live in [AWS Secrets Manager], read at runtime by the service's role, never in config files or the repo; host key fingerprints are pinned in configuration; keys are rotated with vendors on a schedule; and access is logged.
+- Separate credentials per vendor and environment.
+- Keys never written to disk; loaded into memory streams.
+? How do you rotate keys with vendors? :: Add the new public key on their side, switch, then remove the old one.
+? Who can read the secrets? :: Only the service role and a small ops group, audited via CloudTrail.
+
+@p7-41
+Q: Vendor servers differ, so I kept transfers reliable through several problems: [a depot vendor disabled ssh-rsa with SHA-1], which broke ComponentPro and led us to Rebex; [a vendor moved their pickup folder] without telling our team, so we added post-upload checks and alerts; and [timeouts on large files over slow links], fixed with longer operation timeouts and resumable uploads. No failed transfers were caused by the switch, and diagnosis got faster.
+- Pattern: abstraction plus observability plus communication.
+- Per-vendor configuration for algorithms, timeouts and paths.
+W: I handle messy real-world integrations patiently and systematically.
+? Most annoying issue? :: Silent vendor changes; fixed with verification and a shared contact list.
+? What would you add next? :: Synthetic daily test transfers per vendor.
+
+@p7-42
+Q: Unit tests with a mocked ISftpClient for the business flow; integration tests against a containerised OpenSSH test server in CI (upload, download, list, rename, wrong key, wrong host key, timeouts, large files); and vendor test endpoints before production.
+- Testcontainers with atmoz/sftp image.
+- Contract tests run against every provider.
+```csharp
+var sftp = new ContainerBuilder().WithImage("atmoz/sftp").WithCommand("test:pass:::upload")
+    .WithPortBinding(22, true).Build();
+await sftp.StartAsync();
+```
+? How do you test host key mismatch? :: Configure a wrong fingerprint and assert the connection is refused.
+? Why vendor test endpoints too? :: Real servers have quirks a test container doesn't.

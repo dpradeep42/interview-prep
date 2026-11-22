@@ -1,0 +1,119 @@
+@p7-43
+Q: WCF is a .NET Framework framework for SOAP services over many transports (HTTP, TCP, named pipes, MSMQ) with WS-* security, reliable messaging and transactions, but heavy configuration. Web API (ASP.NET Core) is lightweight HTTP/REST with JSON, cross-platform and the modern standard; gRPC is the recommended replacement for WCF's binary, contract-first scenarios.
+- WCF server isn't part of modern .NET; CoreWCF is a community port for migration.
+- WCF clients (System.ServiceModel packages) work on modern .NET.
+? What replaces NetTcpBinding? :: gRPC for high-performance contract-based calls.
+? What is CoreWCF? :: An open-source port of WCF server to modern .NET, supported by Microsoft for migrations.
+
+@p7-44
+Q: SOAP (Simple Object Access Protocol) is an XML messaging protocol with an envelope, header and body, described by a WSDL contract, supporting standards like WS-Security and reliable messaging. It's strict and verbose but still common in enterprise and healthcare integrations.
+- SOAP faults for errors.
+- Tools generate clients from WSDL (dotnet-svcutil).
+? SOAP vs REST? :: SOAP is a protocol with strict contracts; REST is an architectural style using HTTP semantics.
+? How do you call SOAP from .NET 8? :: Generate a client with dotnet-svcutil or Connected Services.
+
+@p7-45
+Q: [ServiceContract] marks an interface as a WCF service; [OperationContract] marks a method in it as an exposed operation; [DataContract] and [DataMember] mark classes and properties to serialize with the DataContractSerializer. Together they define the WSDL contract.
+- [FaultContract] declares typed faults.
+- Versioning by adding optional DataMembers (IsRequired=false).
+? What is DataContractSerializer? :: WCF's opt-in XML serializer for data contracts.
+? Equivalent in gRPC? :: Service and message definitions in .proto files.
+
+@p7-46
+Q: Classic .NET Framework apps have no built-in container, so teams used Unity, Autofac, Ninject or Castle Windsor, wiring them into WCF with a custom instance provider or service host factory (and into MVC/Web API with dependency resolvers). Microsoft.Extensions.DependencyInjection can also be used in .NET Framework.
+- Composition root at application start (Global.asax).
+- Autofac has WCF integration packages.
+? Can you use MS DI in .NET Framework? :: Yes, the package targets .NET Standard.
+? Why was DI harder in WCF? :: WCF creates service instances itself, so you must hook its instance creation.
+
+@p7-47
+Q: Why migrate: WCF server isn't in modern .NET, it's Windows/IIS-bound with heavy configuration, and clients prefer REST/JSON; moving to .NET 8/10 gives performance, containers and support. Challenges: SOAP clients that can't change, WS-* features (security, transactions), duplex callbacks, binary bindings, and behaviour differences, so migrate incrementally (CoreWCF, a facade, or strangler pattern).
+- Contract tests to ensure compatibility.
+- Keep a SOAP facade while moving logic to new services.
+? What's the safest approach? :: Strangler fig: route operations to new services gradually.
+? Duplex replacement? :: SignalR or gRPC streaming.
+
+@p7-48
+Q: IRT means Interactive Response Technology: the system clinical trials use to randomise patients to treatment arms and manage drug supply, kit dispensing and shipments to sites. It was historically IVRS/IWRS (voice and web response systems), also called RTSM (Randomization and Trial Supply Management).
+- Core functions: subject registration, randomization, dispensing, resupply, unblinding, reporting.
+- Integrations with EDC, depots, couriers.
+? What is RTSM? :: Randomization and Trial Supply Management, another name for IRT.
+? What is unblinding? :: Revealing a subject's treatment, controlled and audited, e.g. for emergencies.
+
+@p7-49
+Q: GxP refers to "good practice" regulations (GCP, GMP, GLP and more) and related rules such as FDA 21 CFR Part 11 for electronic records and signatures and EU Annex 11. It matters because patient safety and trial data integrity depend on systems behaving correctly, and regulators can reject trial data or take action if systems aren't validated.
+- GAMP 5 guides risk-based validation of computerised systems.
+- Computer Software Assurance (FDA guidance finalised in 2025) encourages risk-based, less documentation-heavy testing.
+? What is 21 CFR Part 11? :: FDA rules for trustworthy electronic records and signatures.
+? What is GAMP 5? :: Industry guidance for risk-based validation of computerised systems.
+
+@p7-50
+Q: GxP means documented requirements traced to tests, formal validation (FV) and UAT with evidence, change control for every release, code review and approvals, audit trails, access controls and separation of duties, and controlled deployments; development is slower but more predictable and safe.
+- Risk-based testing focuses effort on high-impact functions.
+- Automation must itself be controlled (pipelines as code, validated tools).
+? Does GxP prevent agile? :: No, agile works with validation built into the definition of done.
+? Who signs off? :: QA/validation and business owners.
+
+@p7-51
+Q: Validation is documented evidence that the system does what it's intended to do, consistently; traceability links requirements to design, code, tests and releases; auditability means every change and action can be reconstructed (who, what, when, why) from records.
+- Traceability matrix maps requirements to test cases and results.
+- Azure DevOps links work items, commits, builds and releases.
+? How do you prove traceability? :: A matrix and tool links from requirement to test evidence and release.
+? What breaks auditability? :: Manual undocumented changes or shared accounts.
+
+@p7-52
+Q: Change control is a formal process where every change to a validated system is requested, assessed for impact and risk, approved, tested, documented and released in a controlled way, with the ability to roll back. Emergency changes follow an expedited but still documented path.
+- Change request includes scope, risk, test plan, rollback plan, approvals.
+- Post-implementation review.
+? What's an emergency change? :: An urgent fix with expedited approval and documentation completed promptly.
+? How do you speed up change control? :: Small changes, automation of evidence and standard pre-approved change types.
+
+@p7-53
+Q: FV (formal validation) is the validation team executing scripted tests against requirements and recording evidence; TechOps is the operations team that installs and verifies releases in controlled environments; UAT is user acceptance testing where business users confirm the release meets their needs before production.
+- Order: FV, TechOps, UAT, production in our pipeline.
+- Defects found lead to fixes and re-validation.
+? Who runs UAT? :: Business users or their representatives with test scripts.
+? What do you provide to FV? :: Release notes, test data, known issues and support during execution.
+
+@p7-54
+Q: Only approved, versioned artifacts from the pipeline go to production; change requests with approvals; deployment by TechOps or the controlled pipeline, never manual edits; separation of duties; audit logs; and post-deployment verification.
+- Read-only production access for developers; break-glass access audited.
+- Configuration changes follow the same process.
+? Can developers access production? :: Read-only logs and metrics; changes only through the process.
+? What is break-glass access? :: Emergency elevated access with approval, time limits and audit.
+
+@p7-55
+Q: Automated tests (unit, integration, Playwright end-to-end), SonarQube quality gates, mandatory reviews, a definition of done including validation documents, FV and UAT, root-cause analysis with CAPA for defects, and continuous improvement from retrospectives.
+- Shift-left: test and review early.
+- Metrics: escaped defects, change failure rate.
+? What's CAPA? :: Corrective and Preventive Action after an issue.
+? How do you avoid slowing down? :: Automate tests and evidence collection.
+
+@p7-56
+Q: SSO with role-based access and least privilege, blinding protection (only authorised roles see treatment assignments), encryption in transit and at rest, audit trails, secure coding and OWASP checks, vulnerability scanning, privacy rules for patient data (GDPR, HIPAA), and regular security reviews and penetration tests.
+- Pseudonymised subject identifiers; minimal PHI.
+- Security fixes: logout, SSO cookie, tabnabbing (Part 3 Q19).
+? Why is blinding a security issue? :: Leaking treatment assignments could bias trial results.
+? How do you protect patient data in logs? :: Never log PHI; redact and review log templates.
+
+@p7-57
+Q: IRT creates shipment orders and sends them to depot and courier vendors via SFTP files or APIs; vendors return status files or webhooks (dispatched, in transit, delivered); our integration services validate, deduplicate and process them idempotently, publish events to update shipments and notify sites, and alert on failures or delays.
+- [SFTP poller every 5 minutes] for status files.
+- Kafka events for shipment status consumed by several services.
+- Reconciliation reports catch missed updates.
+? How do you handle out-of-order statuses? :: Compare status timestamps and ignore older updates.
+? What if a vendor sends a bad file? :: Pre-validation rejects it with exact errors and alerts the integration team.
+
+@p7-58
+Q: Depot and courier vendors (SFTP files and APIs for shipments), EDC and clinical systems (subject data), the SSO identity provider, email and notification services, and sponsor reporting and data exports.
+- Each integration has contracts, monitoring and runbooks.
+- Anti-corruption layers translate external models.
+? Most fragile integration? :: Vendor file exchanges, because vendors change things independently.
+? How do you monitor integrations? :: Success/failure metrics per vendor, alerts and reconciliation.
+
+@p7-59
+Q: ALCOA+ principles (attributable, legible, contemporaneous, original, accurate, plus complete, consistent, enduring, available); database constraints and transactions; validation at the API; immutable audit trails; idempotent processing; backups with tested restores; and reconciliation between systems.
+- UTC timestamps from synchronised clocks for contemporaneous records.
+- No shared accounts so actions are attributable.
+? What does attributable mean? :: Every record shows who created or changed it.
+? How do you detect integrity problems? :: Reconciliation jobs and constraint violations alerts.
