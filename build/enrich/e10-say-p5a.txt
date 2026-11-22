@@ -1,0 +1,258 @@
++@p5-1
+Y: Entity Framework Core is Microsoft's ORM for .NET. It lets me work with the database using C# classes and LINQ, and it translates my queries into SQL, tracks changes to objects, and saves them back. It also handles migrations for schema changes. It supports SQL Server, PostgreSQL and others. Most of our IRT services use EF Core with SQL Server.
+K: ef core, entity framework, orm, database
++@p5-2
+Y: ADO.NET is the low-level way: I open connections, write SQL, and read rows manually, which gives full control and top speed but more code. EF Core sits on top of ADO.NET and does the mapping, change tracking and SQL generation for me, so I'm much more productive. I use EF Core by default, and Dapper or raw SQL for a few performance-critical or reporting queries.
+K: ef core, ado.net, dapper, orm, comparison
++@p5-3
+Y: DbContext is the main EF Core class. It represents a session with the database: it manages the connection, tracks changes, and saves them in a transaction. A DbSet is a property on the DbContext for one entity type, like Shipments, which I query with LINQ and add or remove from. DbContext is short-lived, one per request.
+K: dbcontext, dbset, ef core
++@p5-4
+Y: Include loads a related entity together with the main one, like shipments with their site. ThenInclude goes one level deeper from that related entity, like the site's country. Both turn into joins in a single query. I use them carefully, because including too much can load a lot of data. For read screens, I often use a Select projection instead.
+K: include, theninclude, eager loading, ef core
++@p5-5
+Y: I change my entity classes or configuration, then run dotnet ef migrations add with a clear name. EF Core compares the model with the last snapshot and generates a migration with Up and Down methods. I review the generated code. For deployment, we generate an idempotent SQL script, review it, and apply it as a controlled step in the release, not automatically at startup.
+K: ef core migrations, dotnet ef, schema changes, database
++@p5-6
+Y: Code First means I write the C# entity classes first and EF Core creates and updates the database with migrations. Database First means the database already exists and I generate the classes from it with scaffolding. For new services I use Code First, and for an existing database I scaffold once and can then continue with Code First.
+K: code first, database first, scaffolding, ef core
++@p5-7
+Y: LINQ to Entities is LINQ used against EF Core. Instead of running in memory, my LINQ query becomes an expression tree that EF Core translates into SQL and runs in the database. So Where, Select and OrderBy happen in SQL Server. I can see the generated SQL with ToQueryString, which helps when tuning.
+K: linq to entities, ef core, iqueryable, sql translation
++@p5-8
+Y: Client-side evaluation happens when part of a query can't be translated into SQL, like calling my own C# method inside a Where. Since EF Core 3, that throws an error instead of quietly loading all rows into memory, which was a big performance trap. Only the final Select can run in C#. I fix it by rewriting the query with translatable expressions.
+K: client-side evaluation, ef core, query translation, performance
++@p5-9
+Y: First I look at the generated SQL and the execution plan. Then the usual fixes: use AsNoTracking for read-only queries, project only the columns I need with Select, avoid N+1 queries, add paging, and make sure the right indexes exist. For big updates I use ExecuteUpdate and ExecuteDelete. That's how our shipment list went from [9 seconds to under 300 milliseconds].
+K: ef core performance, optimization, asnotracking, projection, n+1
++@p5-10
+Y: SaveChanges looks at all the tracked changes and writes them to the database as inserts, updates and deletes, inside one transaction by default. SaveChangesAsync does the same without blocking the thread while waiting for the database. In ASP.NET Core I always use SaveChangesAsync, so the server can handle other requests meanwhile.
+K: savechanges, savechangesasync, ef core, transactions
++@p5-11
+Y: For large updates or deletes, I use ExecuteUpdate and ExecuteDelete, which run one SQL statement without loading entities into memory. For large inserts, I batch them, or use SqlBulkCopy or a bulk extension library, which is much faster than adding thousands of entities one by one. Our CSV import saves rows in batches inside one transaction.
+K: bulk operations, executeupdate, executedelete, sqlbulkcopy, ef core
++@p5-12
+Y: A compiled query is a LINQ query that EF Core translates once and then reuses, using EF.CompileAsyncQuery. EF Core already caches query plans, so this only saves the small cost of processing the query each time. I'd use it only for very hot queries that run thousands of times per second, after measuring.
+K: compiled queries, ef core, performance
++@p5-13
+Y: I set the log level for the Microsoft.EntityFrameworkCore.Database.Command category to Information, and EF Core logs every SQL command it runs, with timings. For a single query, ToQueryString shows the SQL without running it. I never turn on sensitive data logging in production, because it would log parameter values.
+K: log sql, ef core logging, toquerystring, debugging
++@p5-14
+Y: In EF Core, I define relationships with navigation properties and configure them with the Fluent API. One-to-many is the most common, like a site with many shipments, using a foreign key on the shipment. One-to-one uses a foreign key with a unique constraint. Many-to-many can be automatic with a hidden join table, or an explicit join entity if it needs extra columns.
+K: relationships, one-to-many, many-to-many, one-to-one, ef core, fluent api
++@p5-15
+Y: A shadow property is a column that EF Core knows about but that isn't a property on my C# class. I access it through the change tracker or EF.Property. It's handy for things like audit columns, such as created date or updated by, which I set in SaveChanges without cluttering my domain classes.
+K: shadow properties, ef core, audit columns
++@p5-16
+Y: An owned entity is a type that has no identity of its own and belongs to its owner, like an Address inside a Site. By default its columns are stored in the owner's table, with prefixed names. It's a nice way to model value objects. In EF Core 8 there are also complex types for the same idea.
+K: owned entity, value object, ef core, complex types
++@p5-17
+Y: I configure indexes in OnModelCreating with HasIndex, or with the Index attribute on the class. I can make them unique, combine several columns, add a filter, and include extra columns for SQL Server. Then a migration creates them. For example, a unique index on study and site number stops duplicate sites.
+K: indexes, hasindex, ef core, unique index
++@p5-18
+Y: A primary key uniquely identifies each row in a table, it can't be null, and there's only one per table. A foreign key is a column that points to the primary key of another table, which keeps the relationship valid, so a shipment can't point to a site that doesn't exist.
+K: primary key, foreign key, relational database, constraints
++@p5-19
+Y: A unique constraint makes sure no two rows have the same value in a column or set of columns. Compared with a primary key, a table can have many unique keys but only one primary key, and a unique key allows a null in SQL Server. I use unique constraints for business rules, like no duplicate site numbers in a study.
+K: unique constraint, unique key, primary key, constraints
++@p5-20
+Y: A composite index covers more than one column. The order of columns matters: SQL Server can seek on the first column, or the first and second, but not the second alone. I put equality filters first and range or sort columns last. Our shipment list used an index on StudyId, Status, then ShipmentDate, with display columns included.
+K: composite index, multi-column index, column order, sql server
++@p5-21
+Y: A filtered index only covers rows that match a condition, like only active shipments. It's smaller, faster to maintain, and great when most queries look at a small part of the table. A common use is a unique index that ignores nulls. The query needs to match the filter, otherwise SQL Server can't use it.
+K: filtered index, partial index, sql server
++@p5-22
+Y: An index is like a book's index: SQL Server finds rows directly instead of scanning the whole table, which makes reads much faster. But every insert, update and delete must also update the indexes, and they take storage. So too many or unused indexes slow down writes. I add indexes for the main queries and remove ones that are never used.
+K: indexes, performance, write overhead, sql server
++@p5-23
+Y: An execution plan shows how SQL Server will run, or actually ran, a query: which indexes it uses, the join types, and the estimated versus actual row counts. It's the main tool for tuning. I look for scans on large tables, key lookups, and big gaps between estimated and actual rows. That's how I found the problems in our slow shipment query.
+K: execution plan, query plan, sql server, tuning
++@p5-24
+Y: A table scan reads every row of a table with no clustered index. An index scan reads the whole index, which is still a lot. An index seek jumps directly to the matching rows using the index, which is what we want for selective queries. When I see a scan on a big table, I check for a missing index or a non-SARGable condition.
+K: table scan, index scan, index seek, sql server, performance
++@p5-25
+Y: Cardinality is the number of rows SQL Server expects at each step of a query. Statistics are the data distribution information it uses to make that estimate. If statistics are outdated, the estimate is wrong, and SQL Server may choose a bad plan. So after big data loads, I make sure statistics are updated.
+K: cardinality, statistics, query optimizer, sql server
++@p5-26
+Y: Both combine the results of two queries. UNION removes duplicate rows, which needs extra sorting work. UNION ALL keeps all rows, including duplicates, so it's faster. I use UNION ALL by default, unless I actually need duplicates removed.
+K: union, union all, sql
++@p5-27
+Y: IN checks if a value is in a list or subquery, and EXISTS checks if a subquery returns any row. For most queries, SQL Server builds the same plan. The big difference is NOT IN: if the subquery contains a null, it returns nothing, which surprises people. So I use NOT EXISTS for that case.
+K: exists, in, not exists, not in, sql
++@p5-28
+Y: A CTE is a named query that exists only for one statement, which makes complex queries readable, and it can be recursive. A temporary table is stored in tempdb, lasts for the session, can have indexes and statistics, and can be reused across several statements. For large intermediate results used more than once, I use a temp table.
+K: cte, temporary table, temp table, sql
++@p5-29
+Y: All three number rows in order. ROW_NUMBER gives unique numbers, 1, 2, 3, even for ties. RANK gives ties the same number and then skips, like 1, 1, 3. DENSE_RANK gives ties the same number without gaps, like 1, 1, 2. I use ROW_NUMBER for paging and removing duplicates, and DENSE_RANK for nth highest.
+K: row_number, rank, dense_rank, window functions, sql
++@p5-30
+Y: I group by the columns that should be unique and use HAVING COUNT greater than one, which lists the duplicate values. To see or delete the extra rows, I use ROW_NUMBER partitioned by those columns and keep only row number one. After cleaning up, I add a unique constraint so it can't happen again.
+K: duplicate records, group by, having, row_number, sql
++@p5-31
+Y: The cleanest way is DENSE_RANK ordered by salary descending, then pick the rows where the rank equals N, which also handles ties correctly. Another option is OFFSET N minus 1 rows and fetch next one row on distinct salaries. For the second highest only, a simple MAX of salaries less than the overall max also works.
+K: nth highest salary, second highest, dense_rank, sql
++@p5-32
+Y: I use ROW_NUMBER partitioned by the group and ordered by the ranking column, inside a CTE, then keep rows where the number is less than or equal to N. For example, the latest three shipments per site. If an index supports it, CROSS APPLY with TOP N can be even faster.
+K: top n per group, row_number, partition by, cross apply, sql
++@p5-33
+Y: A dirty read is reading data another transaction hasn't committed yet, which might be rolled back. A non-repeatable read is reading the same row twice in a transaction and getting different values, because someone updated it. A phantom read is running the same query twice and getting new rows. Higher isolation levels prevent each of these.
+K: dirty read, non-repeatable read, phantom read, isolation levels
++@p5-34
+Y: ACID describes reliable transactions. Atomicity means all or nothing. Consistency means the data always follows the rules and constraints. Isolation means concurrent transactions don't interfere with each other. Durability means once committed, the data survives a crash. Our CSV import relies on atomicity: everything saves, or nothing does.
+K: acid, atomicity, consistency, isolation, durability, transactions
++@p5-35
+Y: Optimistic locking assumes conflicts are rare: there's no lock, but a version column is checked when saving, and if someone else changed the row, the save fails. Pessimistic locking locks the row while working on it, so others wait. I use optimistic locking with a rowversion column for user edits, and pessimistic locks only for short critical sections.
+K: optimistic locking, pessimistic locking, concurrency, rowversion
++@p5-36
+Y: First I measure, using Query Store to find the most expensive queries, wait statistics, and execution plans. Then I fix the biggest problems: missing or wrong indexes, non-SARGable queries, N+1 calls from the app, and loading too much data. I also keep transactions short and statistics updated. Measuring before and after proves the fix worked.
+K: database performance, optimization, query store, indexes, tuning
++@p5-37
+Y: I design indexes from the real queries. I list the main queries' WHERE, JOIN and ORDER BY columns, and build composite indexes with equality columns first and range columns last, adding INCLUDE columns to avoid lookups. I aim for the fewest indexes that cover the most important queries, then check the plans and usage over time.
+K: index design, composite index, covering index, sql server
++@p5-38
+Y: Microservices is an architecture where the system is split into small, independent services, each owning one business area and its own data, deployed on its own and talking over APIs or messages. In IRT, we have separate services for things like randomization, supply and shipments.
+K: microservices, architecture, distributed systems
++@p5-39
+Y: The advantages are independent deployments, scaling each service separately, fault isolation, and teams owning their own services. The disadvantages are the complexity of a distributed system: network failures, keeping data consistent across services, and much more work on monitoring, testing and deployment. So the benefits must be worth that cost.
+K: microservices advantages, disadvantages, trade-offs
++@p5-40
+Y: I wouldn't use microservices for a small team, an early product, or a domain that isn't well understood yet, because the overhead is high and the boundaries will likely be wrong. If services always have to be deployed together, it's just a distributed monolith. In those cases, a well-structured modular monolith is better, and you split later where needed.
+K: when not to use microservices, monolith, modular monolith
++@p5-41
+Y: I find service boundaries around business capabilities, not technical layers. A bounded context, from domain-driven design, is an area where terms have one clear meaning and one team owns the data. For example, a shipment means something specific in the shipment context. Talking with domain experts, through event storming, helps find where these boundaries are.
+K: service boundaries, bounded context, ddd, domain driven design
++@p5-42
+Y: They should use synchronous calls, like REST or gRPC, when the caller needs an immediate answer, like fetching data for a screen. They should use asynchronous messaging, like Kafka or RabbitMQ, when other services just need to react to something that happened, like a shipment status change. Async messaging keeps services more independent and resilient.
+K: microservices communication, rest, grpc, messaging, async
++@p5-43
+Y: With REST, which is synchronous, the caller waits for the answer, which is simple but couples availability: if the other service is down, the call fails. With messaging, which is asynchronous, the sender publishes and moves on, so services stay independent and can absorb spikes. But then we need idempotency and must accept eventual consistency.
+K: rest vs messaging, synchronous, asynchronous, communication
++@p5-44
+Y: Service discovery is how a service finds the network address of another service, since instances come and go. On Kubernetes, services get DNS names. On ECS, we use Cloud Map, Service Connect, or a load balancer as a stable address. That way services call a name, and the platform routes to healthy instances.
+K: service discovery, dns, cloud map, service connect, kubernetes
++@p5-45
+Y: Retrying everything can make things worse. Retrying a non-idempotent call, like creating a payment, can create duplicates. Retrying permanent errors, like a 400 or a bad password, never helps. And many clients retrying at once can overload a struggling service. So I retry only temporary errors on safe operations, with backoff, jitter and a limit.
+K: retries, retry storm, idempotency, backoff, resilience
++@p5-46
+Y: Bulkhead isolation is like the compartments in a ship: if one floods, the ship still floats. In software, I limit the resources, like concurrent calls or threads, given to each dependency, so one slow dependency can't use up everything and bring down the whole service. Polly has a concurrency limiter for this.
+K: bulkhead, isolation, resilience, concurrency limiter
++@p5-47
+Y: Distributed tracing follows one request as it moves through many services. Each service adds a span with its timing, and they're linked by a trace id passed in headers. So I can see the whole journey and exactly where it was slow or failed. We use OpenTelemetry for this, together with our correlation ids in logs.
+K: distributed tracing, opentelemetry, trace id, spans, observability
++@p5-48
+Y: Eventual consistency means that after a change, different services may briefly show different data, but they all catch up after a short time. It's the trade-off for decoupled services that talk through events. The user interface should show something sensible meanwhile, like a processing status, and we use reconciliation to catch anything missed.
+K: eventual consistency, distributed systems, events
++@p5-49
+Y: I assume calls will fail. Every call has a timeout, temporary errors are retried with backoff, and a circuit breaker stops calling a service that's down. I provide fallbacks where possible. For async work, messages that keep failing go to a dead-letter queue, and consumers are idempotent so retries are safe.
+K: failure handling, resilience, timeout, retry, circuit breaker, dlq
++@p5-50
+Y: I version the contracts, both APIs and events. I prefer backward-compatible changes, like adding optional fields, so consumers don't break. For breaking changes, I add a new version, like v2 in the URL or a new event version, run both for a while, and remove the old one after consumers move. Each service is deployed independently with its own version.
+K: microservices versioning, api versioning, backward compatibility
++@p5-51
+Y: Each service has its own pipeline that builds, tests and produces a versioned Docker image. We deploy it to ECS with rolling updates and health checks, so traffic only goes to healthy tasks, and a deployment circuit breaker rolls back automatically if it fails. The same image is promoted through all environments.
+K: microservices deployment, ci/cd, ecs, rolling deployment
++@p5-52
+Y: I monitor each service with metrics for the golden signals, structured logs with correlation ids, and distributed traces. Dashboards in Grafana show health in one place, and alerts fire on user impact, like error rate or latency. The correlation id lets me follow one request through all services.
+K: microservices monitoring, observability, metrics, logs, tracing
++@p5-53
+Y: All traffic is encrypted with TLS. Each service has its own identity, using IAM roles on AWS or OAuth client credentials tokens for app-level calls, and the receiving service checks permissions. Network rules, like security groups, only allow the traffic that's needed. Secrets are kept in Secrets Manager, never in code.
+K: service-to-service security, mtls, client credentials, iam, zero trust
++@p5-54
+Y: A cascading failure is when one slow service makes its callers slow, and it spreads. I prevent it with timeouts that are shorter than the caller's, circuit breakers, bulkheads to limit resources per dependency, and rejecting extra load early with a 429. I also avoid retry storms with backoff and jitter.
+K: cascading failure, circuit breaker, timeout, bulkhead, resilience
++@p5-55
+Y: I test at several levels: unit tests for logic, integration tests for each service with real dependencies in containers, and contract tests so a service doesn't break its consumers. Then a few end-to-end tests for the critical journeys. Monitoring after release is part of testing too.
+K: microservices testing, contract testing, integration tests
++@p5-56
+Y: Each service reads configuration from appsettings files plus environment-specific values from Parameter Store, and secrets from Secrets Manager. The values are injected into the containers at startup and bound with the Options pattern. Options are validated on start, so a missing value stops the deployment instead of breaking at runtime.
+K: configuration management, parameter store, secrets manager, options pattern
++@p5-57
+Y: All services write structured JSON logs with the same fields: service name, environment and correlation id. They're shipped to CloudWatch Logs, and we query them with Logs Insights. Because the fields are consistent, one query can follow a request across all services. We never log sensitive data.
+K: centralized logging, cloudwatch, structured logging, correlation id
++@p5-58
+Y: I'd keep services stateless behind load balancers so they can scale out, with autoscaling on CPU or queue depth. Each service owns its database, with caching for hot reads, and heavy or spiky work goes through queues. I'd add resilience patterns, observability from day one, and an API gateway in front.
+K: scalable architecture, microservices design, system design
++@p5-59
+Y: We chose REST for the React UI and for queries that need an immediate answer, because it's simple, well understood, and has great tooling like OpenAPI. For things like shipment status changes, where the caller doesn't need to wait, we used messaging instead. So REST for request and response, events for reacting to changes.
+K: why rest, api choice, design decision
++@p5-60
+Y: For shipment status events, several services needed the same events: supply, notifications and reporting. With REST, the sender would have to call each one and handle each failure. With Kafka, the sender publishes once, each service reads at its own pace, events are kept so we can replay them, and order per shipment is preserved by the key.
+K: kafka vs rest, event streaming, design decision
++@p5-61
+Y: Producers buffer and retry for a while, but if Kafka stays down, the app must not lose events. That's why we use the outbox pattern: events are saved in the database with the business change, and published when Kafka is back. Consumers simply pause and continue from their last committed offset when Kafka recovers.
+K: kafka unavailable, outbox, resilience, failure handling
++@p5-62
+Y: True exactly-once across systems is very hard. Kafka has transactions and idempotent producers for exactly-once inside Kafka. But when the consumer writes to a database or sends an email, I use at-least-once delivery with an idempotent consumer: a processed-messages table with a unique message id, so duplicates are skipped. That gives an exactly-once effect.
+K: exactly-once, idempotent consumer, kafka transactions, deduplication
++@p5-63
+Y: Our services run as Docker containers on ECS Fargate in private subnets across two availability zones, behind an Application Load Balancer, with API Gateway and SSO in front. Data is in SQL Server on RDS with Multi-AZ, plus DynamoDB for some cases and ElastiCache Redis for caching. Secrets are in Secrets Manager, and we monitor with CloudWatch and Grafana. Deployments go through Azure DevOps.
+K: aws architecture, ecs, rds, alb, system overview
++@p5-64
+Y: AWS was the company standard, and its managed services fit a small team: ECS Fargate means no servers to patch, RDS handles database backups and failover, and ElastiCache, Secrets Manager and CloudWatch cover caching, secrets and monitoring. That let us focus on building the product.
+K: why aws, cloud choice, managed services
++@p5-65
+Y: ECS is AWS's own container service. It's simpler, tightly integrated with AWS, and has no control plane cost. EKS is managed Kubernetes. It's more powerful and portable, with a huge ecosystem, but more complex to run. For a team focused on AWS, ECS is often enough, and that's what we use.
+K: ecs, eks, kubernetes, container orchestration, comparison
++@p5-66
+Y: Fargate is the serverless way to run containers on ECS or EKS. I just define the CPU and memory for a task, and AWS runs it without me managing any EC2 servers or patching. I pay per second for what the task uses. All our ECS services run on Fargate.
+K: fargate, serverless containers, ecs
++@p5-67
+Y: API Gateway is a managed API front door with features like authentication, throttling, request validation, usage plans and API keys, and it's great with Lambda. An ALB is a load balancer that routes HTTP traffic by path or host to containers or servers, and is cheaper at high volumes. Often we use API Gateway for public APIs, and an ALB in front of ECS services.
+K: api gateway, alb, application load balancer, comparison
++@p5-68
+Y: Lambda is AWS's serverless compute. I upload a function, and AWS runs it in response to events, like an HTTP request, a file in S3, or a message in a queue, scaling automatically. I pay only for the time it runs. It's best for short, event-driven tasks. We used one for [shipment notifications].
+K: lambda, serverless, aws, event driven
++@p5-69
+Y: Concurrency is the number of Lambda instances running at the same time, and each one handles one request at a time. Accounts have a regional limit. Reserved concurrency guarantees and also caps the number for one function, which protects downstream things like databases. Provisioned concurrency keeps instances warm to avoid cold starts.
+K: lambda concurrency, reserved concurrency, provisioned concurrency
++@p5-70
+Y: A Lambda timeout is the maximum time a function can run, from 3 seconds by default up to 15 minutes. If it runs longer, it's stopped. I set it a bit above the normal run time, put timeouts on downstream calls, and remember that API Gateway has its own, shorter timeout. For long jobs, I use a different service, like ECS.
+K: lambda timeout, aws lambda, limits
++@p5-71
+Y: DynamoDB is AWS's fully managed NoSQL key-value and document database. It gives very fast, predictable performance at any scale, with no servers to manage. I design it around access patterns, using partition and sort keys. It's great for simple, high-volume lookups, but not for complex joins or ad-hoc queries.
+K: dynamodb, nosql, key-value, aws
++@p5-72
+Y: A GSI, global secondary index, lets me query by a completely different partition key, and I can add it any time. It's eventually consistent. An LSI, local secondary index, keeps the same partition key with a different sort key, must be created with the table, and can be strongly consistent. I use GSIs for most extra access patterns.
+K: gsi, lsi, secondary index, dynamodb
++@p5-73
+Y: RDS is AWS's managed relational database service for engines like SQL Server and PostgreSQL. AWS handles backups, patching, Multi-AZ failover and monitoring. Running a database on EC2 gives full control of the operating system and settings, but then we do all that work ourselves. For most cases, RDS is the better choice, and we use it for SQL Server.
+K: rds, ec2 database, managed database, aws
++@p5-74
+Y: Redis keeps data in memory, so it's extremely fast, often under a millisecond, but it's best for temporary data like caches, sessions and counters. A database stores data durably and supports complex queries and transactions, but is slower. So the database is the source of truth, and Redis speeds up hot reads. Our logout denylist uses Redis with an expiry.
+K: redis, database, cache, elasticache, comparison
++@p5-75
+Y: I keep buckets private with Block Public Access, and grant access through IAM roles and bucket policies with least privilege. Data is encrypted at rest with KMS and in transit with HTTPS only. I use presigned URLs for temporary access, turn on versioning for important data, and log access with CloudTrail.
+K: s3 security, bucket policy, encryption, block public access
++@p5-76
+Y: IAM is AWS's identity and access management: it controls who can do what on which resources. A user is a long-term identity, a person or app with permanent credentials. A role is an identity that's assumed temporarily, with short-lived credentials. I prefer roles everywhere, like ECS task roles, because there are no long-lived keys to leak.
+K: iam, iam role, iam user, aws security
++@p5-77
+Y: CloudWatch Logs stores the detailed text or JSON log events from our services, which I search with Logs Insights to see what exactly happened. CloudWatch Metrics are numbers over time, like CPU, request count or errors, which are cheap to keep and great for dashboards and alarms. I can also turn log patterns into metrics with metric filters.
+K: cloudwatch logs, cloudwatch metrics, monitoring, aws
++@p5-78
+Y: A CloudWatch alarm watches a metric and changes state when it crosses a threshold for a set time, like error rate above two percent for five minutes. It can send a notification through SNS to email or chat, or trigger actions like autoscaling. We have alarms on errors, latency and queue depth for our services.
+K: cloudwatch alarms, alerting, sns, monitoring
++@p5-79
+Y: I start with the dashboards to see what's affected and since when, and check if it matches a recent deployment or a change. Then I look at CloudWatch Logs Insights and traces with the correlation id, and check the health of dependencies like RDS or the message broker. I mitigate first, often with a rollback, then fix the root cause.
+K: aws troubleshooting, production issue, cloudwatch, incident
++@p5-80
+Y: First I agree two numbers with the business: RPO, how much data we can lose, and RTO, how fast we must recover. Then I pick a strategy: backup and restore for relaxed targets, pilot light or warm standby for faster recovery, or active-active across regions for near zero. Infrastructure as code helps rebuild quickly, and we regularly test the recovery.
+K: disaster recovery, rpo, rto, backup, multi-region
++@p5-81
+Y: Autoscaling adds or removes capacity automatically based on demand. In ECS, I use target tracking, for example keep average CPU around 60 percent or a set number of requests per task. It scales out quickly when load rises and scales in slowly to avoid flapping. The service must be stateless and shut down gracefully.
+K: autoscaling, target tracking, ecs, scaling
++@p5-82
+Y: A security group is a firewall on each resource, like an ECS task or a database. It's stateful, so return traffic is allowed automatically, and it has only allow rules. A NACL is a firewall on the whole subnet. It's stateless, so I need rules both ways, and it supports deny rules. We mostly rely on security groups.
+K: security group, nacl, network acl, aws networking
++@p5-83
+Y: A NAT Gateway lets resources in private subnets reach the internet for outbound calls, like downloading packages or calling external APIs, while nothing from the internet can connect in. It's charged per hour and per gigabyte, so for AWS services like S3, I use VPC endpoints instead to save cost.
+K: nat gateway, private subnet, vpc, aws networking
++@p5-84
+Y: Each ECS task gets an IAM task role. The AWS SDK inside the container automatically picks up temporary credentials for that role, so there are no keys in code or config. The role allows only what that service needs, like reading one secret or one bucket. Traffic to AWS services can go through VPC endpoints.
+K: ecs task role, iam role, container security, aws credentials
++@p5-85
+Y: Secrets Manager is built for secrets: it supports automatic rotation, for example of database passwords, and cross-account sharing, but costs per secret. Parameter Store is great for configuration and can store encrypted values too, with a free standard tier, but no built-in rotation. We use Secrets Manager for database credentials and Parameter Store for configuration.
+K: secrets manager, parameter store, secrets, configuration
++@p5-86
+Y: First I find where the money goes using Cost Explorer and tags. Then I right-size over-sized resources, use Savings Plans for steady workloads, scale down non-production environments at night, and move to Graviton where possible. I also clean up unused resources and old snapshots, and use VPC endpoints to cut NAT costs.
+K: aws cost, cost optimization, savings plans, rightsizing
