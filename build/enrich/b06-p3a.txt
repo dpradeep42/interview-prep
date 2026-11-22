@@ -1,0 +1,432 @@
+@p3-1
+Q: I'm a backend-focused full-stack engineer with about 5.5 years of experience, the last 4+ at IQVIA building C#/.NET microservices and APIs for IRT, a regulated clinical-trial platform for randomization, drug supply and shipments, on AWS with Docker and Azure DevOps CI/CD. My highlight is the CIRT MCP server I designed and built alone: about 77 tools that let AI agents run our builds and multi-node deployments, cutting deployments from 6 hours to 2 and from 6 people to 1. I'm now looking for a senior backend role where I own design and delivery.
+- Structure: present (role and domain), proof (one or two numbers), past (DXC start), future (why this role); keep it under 2 minutes.
+- Pick three proof points to plant hooks for follow-ups: MCP server (6h to 2h), RabbitMQ outage RCA, CSV bulk import live in production.
+- Mention the regulated (GxP) angle: it signals quality, testing discipline and audit awareness.
+- Tailor the last line to the job description (cloud, APIs, AI tooling, scale).
+- Avoid reading the resume line by line or personal life history.
+W: I can summarise complex work clearly and lead with impact.
+W: I know what I want next and why I am ready for it.
+? What are you most proud of? :: The MCP server: I spotted the problem, built it alone and got the team to adopt it, with measurable results.
+? Why backend-focused if you also do front end? :: My depth is in APIs, data and distributed systems; I do front-end work to own features end to end.
+
+@p3-2
+Q: I finished my B.Tech in Computer Science in 2020, joined DXC Technology in March 2021 building C#/.NET Framework solutions on SharePoint with production support, and moved to IQVIA in July 2022 as Software Development Engineer 2, where I build .NET Core microservices, Node and Python services, React and Angular UI on AWS, own release integration, do production RCA and built the MCP deployment server. Each move added scope: features, then services, then releases and platform tooling.
+- Tell it as a story of growing ownership, not a list of employers.
+- One concrete highlight per stage: DXC (SharePoint workflow automation, ITIL support), IQVIA (CSV import, RabbitMQ RCA, MCP server, .NET 10 upgrade [early 2026]).
+- Be ready to explain the gap between graduation (2020) and DXC (March 2021) honestly and briefly [e.g. job search, certifications and personal projects during the pandemic hiring freeze].
+- Finish with the bridge to this role.
+W: I grow steadily in scope and responsibility.
+? Which role taught you the most? :: IQVIA: distributed systems, cloud and regulated release discipline.
+? What did DXC give you that still helps? :: Production support discipline and working within client processes.
+
+@p3-3
+Q: When a new medicine is tested, patients at hospitals worldwide are randomly assigned to receive it or a comparison treatment. IRT is the system that makes that assignment fairly and secretly, tells the hospital which numbered drug kit to give, and makes sure every hospital always has enough stock by triggering shipments from depots, while tracking those shipments. Because it affects patient safety and trial results, every change is validated and every action is audited.
+- Analogy: a fair lottery plus an automatic stock manager for a global pharmacy chain, where nobody knows who got what.
+- Blinding: doctors and patients don't know the treatment; kit numbers hide it.
+- Interactive Response Technology used to mean phone systems (IVRS); now it's web-based.
+- Regulation: GxP, 21 CFR Part 11 (electronic records and signatures), audit trails.
+- Shows you understand the business, not just the code.
+W: I can explain technical work to non-technical people.
+? What happens if IRT is down? :: Sites can't randomize or dispense, which can delay patient treatment, so availability and support matter.
+? What is eConsent? :: Electronic informed consent: patients review and sign trial consent digitally with an audit trail.
+
+@p3-4
+Q: I'm a Software Development Engineer 2 in a roughly 100-member engineering organisation. I design and build .NET services and APIs, fix production issues, own release integration and verification (merging, tagging and running automated multi-node installs through FV, TechOps, UAT and production), built and own the CIRT MCP deployment server, and review code, mentor developers and take part in PI planning, grooming and demos.
+- Use "I" for your own work and "we" for team outcomes; interviewers listen for your part.
+- Typical week: [feature work on a service, a couple of PR reviews a day, a release verification, refinement and a demo].
+- Ownership areas: SFTP integration component, CSV bulk import, study-transfer guard, security fixes, MCP server.
+- Mentoring: onboarded [two graduate developers in 2024].
+W: I own outcomes across development, release and production, not just tickets.
+? Who do you report to? :: [An engineering manager, with a tech lead for day-to-day technical direction].
+? How big is your scrum team? :: [About 8 people: developers, QA and a BA] within the ~100-member organisation.
+
+@p3-5
+Q: At DXC I learned enterprise .NET and client processes, but the work was mostly SharePoint customisation and support. I wanted to build modern cloud-based microservices on a product used globally, and IQVIA IRT gave me .NET Core, AWS, messaging and a regulated domain where quality really matters.
+- Keep it positive: moving towards growth, never complaining about the old employer.
+- Connect the move to what you then achieved (services, releases, MCP server).
+- Shows a pattern of deliberate career choices.
+W: I make deliberate choices to grow my skills.
+? Would you go back to SharePoint work? :: I value what I learned, but my focus now is backend services and cloud.
+? What did you learn in the switch? :: Moving from .NET Framework to .NET Core, containers and AWS quickly by building real features.
+
+@p3-6
+Q: SDE 2 is IQVIA's internal level; my headline describes the scope I actually work at: designing services, solely building the MCP platform, owning release integration across application, APIs, database and UI, mentoring, and leading production RCAs. I'm targeting a senior role because I already do much of that work.
+- Let evidence carry it: specific ownership examples, not titles.
+- Different companies map levels differently; IQVIA's SDE 2 [covers 3 to 6 years of experience].
+- Never claim a title you didn't hold on official records; explain scope instead.
+- Turn it into a strength: "I'm ready for the title because I already do the job".
+W: I'm honest about titles and confident about scope.
+? What senior behaviours do you show today? :: Designing solutions, mentoring, owning incidents and releases, and driving adoption across the team.
+? What would you need to grow into staff level? :: Broader cross-team architecture ownership and influence across several teams.
+
+@p3-7
+Q: Users reach the IRT web UI (Angular modules and React components) and vendors connect through integrations; traffic enters through API Gateway and load balancers with SSO-based authentication; .NET Core microservices for randomization, supply and shipments (plus Node and Python services and some legacy WCF) run on ECS; data lives in SQL Server/RDS and DynamoDB, events flow through Kafka and RabbitMQ, vendor files arrive over SFTP, and CloudWatch and Grafana provide monitoring.
+- Draw it left to right: clients, edge, services, data and messaging, integrations, observability.
+- Mention cross-cutting concerns: correlation ids, audit trail, secrets in Secrets Manager, CI/CD via Azure DevOps.
+- Pick one flow to walk through end to end: randomize subject, assign kit, publish event, notify site.
+- Describe only what you can defend in detail; say "I worked mainly on X" for areas you know less.
+- Show trade-offs: Kafka for shipment events with several consumers, RabbitMQ for work queues.
+W: I understand the whole system, not just my own service.
+? Where are the bottlenecks? :: Database-heavy reporting queries and vendor file bursts; we addressed them with indexes, queues and scaling.
+? How do services communicate? :: REST for queries and commands that need an answer, events for state changes.
+
+@p3-8
+Q: Deployments on our on-prem Azure DevOps Server were manual and multi-node, took about 6 hours and needed about 6 people. I built the CIRT MCP server: about 77 typed tools for builds, releases and multi-node deployments, wrapping Azure DevOps APIs and our install scripts, with status polling, structured outputs and human approval for risky steps, packaged as a .NET tool. Deployment time fell from 6 hours to 2 and people per deployment from 6 to 1.
+- Why MCP: one server works across Cursor, Claude Code and Copilot; engineers describe intent in plain language.
+- How: C# MCP SDK, stdio transport, tools grouped by domain, long operations return ids plus status tools.
+- Safety: each user's own PAT, read vs write tools, confirmations, approvals unchanged, audit log of every call.
+- Adoption: demo, README with [10] prompts, pairing, feature requests turned into tools.
+- Measured on [8 vs 8] comparable deployments from release history.
+W: I find high-leverage problems and solve them end to end.
+W: I measure impact instead of claiming it.
+? What would you do differently? :: Involve QA and TechOps earlier and add a central audit store from day one.
+? Is it still in use? :: Yes, most of our team's release deployments run through it.
+
+@p3-9
+Q: My lead wanted evidence, so I compared [8] deployments from the [two release cycles] before the tool with [8] similar deployments from the [next two cycles] using it, on the same environments and node counts, using Azure DevOps release start and end timestamps and deployment-call attendee lists. Average time fell from about 6 hours to about 2, and people from 6 to 1; approvals and validation still need humans.
+- Like-for-like comparison: same environments and [4 to 6] nodes, similar release size.
+- Data source was the system of record, not memory or estimates.
+- Be honest about limits: small sample, some improvement from better scripts too.
+- Business translation: [about 20 person-hours to 2 per deployment].
+W: I back claims with data and state limitations honestly.
+? Could other factors explain the gain? :: Some, like script fixes, but the person count dropped because the agent runs the steps one person used to coordinate.
+? How would you measure it better now? :: Log every deployment's start, end and operator automatically through the tool.
+
+@p3-10
+Q: The hardest part was designing tool boundaries so the model reliably chose the right one among about 77: naming, descriptions and schemas mattered more than code. Next were long-running deployments (start returns an id, status tools poll), differences and authentication quirks of on-prem Azure DevOps Server APIs, and keeping humans in control of production steps.
+- Fix for wrong tool choices: verb_noun naming, "use when" in descriptions, enums for environments, removing overlapping tools.
+- Context budget: summarised outputs instead of raw JSON logs.
+- On-prem API versions differ from Azure DevOps Services docs; I tested each call against our server.
+- Safety design: read-only tools first, write tools with confirmation, production via existing approvals.
+W: I solve ambiguous design problems by iterating with real users.
+? How did you test tool selection? :: Ran real prompts from teammates and logged which tools the agent called, then adjusted descriptions.
+? What failed in early versions? :: The agent sometimes polled too aggressively; I added recommended wait times in tool outputs.
+
+@p3-11
+Q: The first version ran from my clone and teammates' copies drifted, so I packaged the CIRT MCP server as a .NET global tool published to our internal Azure Artifacts feed by its own pipeline on every tag. Teammates run dotnet tool install -g and add one entry to their Cursor or Claude Code MCP config; the server URL and each person's PAT come from environment variables. Setup went from [about an hour] to [about 10 minutes], with everyone on the same version.
+- PackAsTool and ToolCommandName in the csproj; semantic versions and release notes.
+- dotnet tool update -g for upgrades; health_check tool confirms connectivity and permissions.
+- No secrets in config files or the repo.
+```xml
+<PropertyGroup>
+  <PackAsTool>true</PackAsTool>
+  <ToolCommandName>cirt-mcp</ToolCommandName>
+  <Version>1.6.0</Version>
+</PropertyGroup>
+```
+```json
+{ "mcpServers": { "cirt": { "command": "cirt-mcp", "env": { "ADO_URL": "https://ado.internal/tfs" } } } }
+```
+W: I think about the user experience of internal tools, not just features.
+? Why not a Docker image? :: A global tool is simpler for developers' machines and starts instantly over stdio.
+? How do you ship a breaking change? :: New major version with release notes, and keep old tool names working for a release.
+
+@p3-12
+Q: IRT exchanges data files with external vendors over SFTP. I owned a component that supports three providers, ComponentPro, SSH.NET and Rebex, behind one ISftpClient abstraction (connect, upload, download, list, delete); a factory picks the provider from per-vendor configuration so callers never change, and a base class holds shared retry, logging and error mapping. I released the Rebex provider to production.
+- Patterns: strategy + factory + template method; adapter per library.
+- Error mapping turns library-specific exceptions into our own (AuthFailed, HostKeyMismatch, Timeout).
+- Host key pinning per vendor; keys and passwords from Secrets Manager.
+- Atomic upload: write to a temp name then rename so vendors never pick up partial files.
+- Integration tests against [a containerised OpenSSH server] in CI.
+```csharp
+public interface ISftpClient : IAsyncDisposable
+{
+    Task ConnectAsync(CancellationToken ct);
+    Task UploadAsync(Stream content, string remotePath, CancellationToken ct);
+    Task<IReadOnlyList<RemoteFile>> ListAsync(string path, CancellationToken ct);
+}
+var client = factory.Create(vendorOptions.Provider);  // "Rebex" | "SshNet" | "ComponentPro"
+```
+W: I design for change so new requirements don't ripple through callers.
+? Why not just pick one library? :: Vendors differ and libraries evolve; the abstraction let us switch per vendor safely (next question has the story).
+? How do you handle large files? :: Stream them without loading into memory, with resumable transfers where supported.
+
+@p3-13
+Q: ComponentPro was the original library, but its updates had slowed and in [2024] a depot vendor disabled older algorithms like ssh-rsa with SHA-1, breaking our connection; SSH.NET was free but we wanted commercial support for a regulated product. I compared all three on modern algorithm support, support and patching, licence cost and behaviour against each vendor's test server, built a Rebex provider behind the existing interface, and we moved vendors to it one at a time by configuration.
+- Algorithm terms worth knowing: rsa-sha2-256/512 host keys, curve25519-sha256 key exchange, aes256-gcm ciphers.
+- Evaluation matrix made the decision objective and reviewable.
+- Keeping other providers as fallback reduced risk during migration.
+- Lesson: abstraction paid off; no caller code changed.
+W: I make technical decisions with clear criteria and evidence.
+? Isn't three libraries over-engineering? :: Temporarily, for migration and fallback; the plan was to retire ComponentPro once all vendors moved.
+? What did Rebex cost? :: [A commercial licence], justified by support and regulated-product needs.
+
+@p3-14
+Q: I implemented Rebex behind the existing interface with unit tests and integration tests against [a containerised OpenSSH server] in CI (key exchange, host keys, a [500 MB] file, timeouts, reconnects), took it through FV, TechOps and UAT with evidence, then enabled it in production by configuration for [one low-volume vendor] for [two weeks] while watching logs and alerts before switching the rest. No failed transfers were caused by the switch.
+- Canary by configuration: a per-vendor Provider setting, no redeploy needed to switch or roll back.
+- Observability: transfer success and duration metrics per provider, alerts on failures.
+- Rollback plan: flip config back to the previous provider.
+- Same pattern as feature flags: deploy dark, enable gradually.
+W: I release risky changes gradually with a rollback ready.
+? What would make you roll back? :: Any failed transfer or auth error attributable to the new provider.
+? How did you get evidence for GxP? :: Test reports from FV and UAT with transfer logs attached to the change record.
+
+@p3-15
+Q: Study setup teams typed [300+] site records by hand over [two to three days]. I built a CSV import (up to [5 MB, ~10,000 rows]) that streams with CsvHelper, validates in stages (headers, types, mandatory fields, duplicates in file and database, business rules), shows a preview of every error, then saves all-or-nothing in batches inside one transaction with an audit entry per record and a file hash to block re-imports. It is live in production and a [300-site] setup takes [under an hour].
+- Staged validation fails fast on structural errors before expensive database checks.
+- Duplicate checks with one set-based query instead of per-row lookups.
+- Error report downloadable as CSV with row, column and reason.
+- [Concurrency limit 2 per user] and request size limits protect the system.
+- Tests: unit test per rule, Playwright end-to-end for upload, preview and confirm.
+```csharp
+using var reader = new StreamReader(file.OpenReadStream());
+using var csv = new CsvReader(reader, CultureInfo.InvariantCulture);
+await foreach (var row in csv.GetRecordsAsync<SiteRow>(ct))
+    errors.AddRange(validator.Validate(row, csv.Parser.Row));
+```
+W: I deliver features end to end, from requirements to production.
+? Why InvariantCulture? :: So numbers and dates parse the same on every server regardless of locale.
+? How did you handle a 10,000-row transaction? :: Batched inserts inside one transaction with a reasonable timeout; tested at maximum size.
+
+@p3-16
+Q: In [2024] a manual check caught a study transfer about to overwrite a target study that already had randomized subjects. I replaced the checklist with a backend guard that runs five checks before any transfer: target study status (block if live with subjects or dispensed kits), version compatibility, allowed direction, no transfer already in progress (lock), and user role plus a change request reference; each failure returns a clear reason and every attempt is audited.
+- Fail-closed: if any check can't be evaluated, block.
+- Lock with sp_getapplock or a unique "transfer in progress" row to prevent races.
+- Specific error codes help users fix the issue instead of raising tickets.
+- Released in [2025]; blocked [a handful of] unsafe attempts in its first months.
+```csharp
+var failures = await Task.WhenAll(_checks.Select(c => c.EvaluateAsync(request, ct)));
+var blocked = failures.Where(r => !r.Passed).ToList();
+if (blocked.Count > 0) return TransferResult.Blocked(blocked);   // audited either way
+```
+W: I turn near-misses into system-enforced safeguards.
+? Why check in the backend, not just the UI? :: The UI can be bypassed; the API is the real boundary.
+? Can an admin override it? :: [Only with a documented emergency process and dual approval], audited.
+
+@p3-17
+Q: I merge the features committed for the release, resolve conflicts and tag the version across application, APIs, database and UI; build once and produce artifacts; run automated multi-node installs with Ansible, Python and Shell; and promote the same artifact through FV, TechOps, UAT and production, verifying versions, health and smoke tests at each step, with evidence and approvals recorded for the regulated process.
+- Release checklist per team item: status, validation evidence, config changes, DB scripts.
+- Verification: version endpoint on every node, health checks, key business smoke tests.
+- Config and database changes reviewed separately (the ValidateOnStart lesson).
+- Since [2025] the CIRT MCP server runs most steps; humans approve and decide on failures.
+W: I bring order and traceability to complex, multi-team releases.
+? What's the most common release problem? :: Environment configuration differences, which is why we validate options at startup and use checklists.
+? How do you handle a late feature? :: Agree with the product owner to move it to the next release rather than risk validation.
+
+@p3-18
+Q: In [mid-2024] a RabbitMQ node hit its memory high watermark during a [large vendor shipment-status file], blocked publishers and dropped connections, and for [about 40 minutes] status updates silently never reached the shipment service. On support, I confirmed it through CloudWatch, Grafana and the management UI, drained the backlog, replayed the missed window from vendor files (safe because consumers upsert), then fixed the root cause with publisher confirms, retries, memory tuning and alerts. All [about 1,200] updates were recovered that evening, with no silent loss since.
+- Root cause vs trigger: the file was the trigger; publishing without confirms was the root cause.
+- Prevention: confirms with async tracking, alarms on memory, blocked connections and zero incoming rate, consumer scaling on queue depth.
+- Blameless post-mortem shared with the team.
+- Code for confirms is in Part 2, Q40.
+W: I stay calm under pressure and restore service first.
+W: I fix causes, not just symptoms, and share lessons.
+? Why didn't anyone notice sooner? :: There were no errors to alert on; we added a rate-drop alert.
+? Did patients get affected? :: No; randomization and dispensing were unaffected, only shipment status display was delayed.
+
+@p3-19
+Q: I delivered three security fixes in [2024]: real token-based logout (shorter access tokens, refresh-token revocation and a jti denylist in ElastiCache), SSO "request header too long" failures (auth ticket moved to a server-side ITicketStore, cookie from [about 13 KB to under 1 KB]) and reverse tabnabbing ([about 40] links fixed with rel=noopener noreferrer plus an ESLint rule). Each had tests and went through review and the regulated release process.
+- Pattern: fix the root cause and add a guard so it cannot come back (tests, lint rule).
+- Map to OWASP: broken authentication/session management, security misconfiguration, client-side risks.
+- Performance impact measured: denylist check about [1 ms] per request.
+- Detailed stories: Part 2 Q48–50.
+W: I take security seriously and verify fixes with automation.
+? Which was hardest? :: The SSO cookie issue, because it only affected some users and needed a pattern to reproduce.
+? How do you find security issues proactively? :: SonarQube, dependency scanning, security reviews and reading OWASP guidance.
+
+@p3-20
+Q: At DXC I built C#/.NET Framework solutions on SharePoint: custom web parts, lists and workflows that automated client processes such as approvals, plus integrations between SharePoint and other enterprise apps, and I handled production support (incidents, data fixes, change requests) under ITIL-style processes. It taught me enterprise discipline and debugging in production.
+- Examples: [an approval workflow for procurement requests replacing email chains], [a web part showing data from another system].
+- SharePoint Server Object Model and CSOM/REST APIs; PowerShell for administration.
+- Support skills: reading logs (ULS), reproducing issues, careful data fixes with approvals.
+- Bridge: moved from .NET Framework to .NET Core at IQVIA.
+W: I learned production responsibility early.
+? Would SharePoint experience help here? :: The core C#, debugging and enterprise process skills transfer directly.
+? What is CSOM? :: Client-Side Object Model, an API to work with SharePoint from remote code.
+
+@p3-21
+Q: I pick the language by fit: Node.js/TypeScript for I/O-heavy glue such as [a build-log summariser for the MCP platform], Python FastAPI for [a vendor file pre-validation service using Pydantic schemas] and Flask for [a small release-status endpoint], and .NET for core domain services. All follow the same standards: REST contracts, structured logs to CloudWatch, Jest or pytest tests, Docker images and the same Azure DevOps pipeline template.
+- Shared standards make polyglot services operable: same health endpoints, logging fields, correlation id header.
+- FastAPI returns 422 with field-level problems automatically from Pydantic validation.
+- Node async I/O suits log fetching and parsing.
+- Avoid polyglot sprawl: only where a language is a clear fit.
+```python
+class ShipmentRow(BaseModel):
+    shipment_id: str
+    status: Literal["Shipped", "InTransit", "Delivered"]
+    status_at: datetime
+@app.post("/validate")
+def validate(rows: list[ShipmentRow]): return {"ok": True, "count": len(rows)}
+```
+W: I'm pragmatic with technology choices and consistent with standards.
+? Why not write everything in .NET? :: We could; for small tools the Node and Python ecosystems were faster to build with, and the team knew them.
+? How do they share auth? :: All validate the same JWTs from the identity provider.
+
+@p3-22
+Q: I build responsive, reusable React/TypeScript components and work on Angular modules in the IRT UI, fixed UI security issues such as reverse tabnabbing, and write Playwright and Cucumber end-to-end tests for user flows, connected to APIs I built, so I understand the full request path.
+- Example components: [the CSV import preview and error grid], [shipment status timeline].
+- Practices: typed props, hooks, accessibility (labels, keyboard), memoisation only when measured.
+- Data fetching with loading and error states; API errors mapped from ProblemDetails.
+- Playwright tests use stable selectors (data-testid, roles).
+W: I can own a feature from database to UI.
+? React or Angular? :: Both in IRT; I'm stronger in React for new components and maintain Angular modules.
+? How do you test React components? :: React Testing Library for components, Playwright for flows.
+
+@p3-23
+Q: I check scope and timing on dashboards (one endpoint or all, since when, release or traffic change), then latency by dependency, then traces and logs by correlation id to find the slow step, mitigate, fix the cause and add an alert. In [March 2025] the shipments API p95 jumped from [about 200 ms to about 3 s] with no release; Query Store showed a plan change after a statistics update (parameter sniffing). I forced the good plan to restore service, then fixed the query and index permanently.
+- Immediate mitigation: Query Store plan forcing or sp_recompile, then a durable fix (OPTION (RECOMPILE) or OPTIMIZE FOR, better index, or .NET-side query shape).
+- Check thread pool starvation (sync over async), connection pool exhaustion and GC as other causes.
+- Tools: Grafana, CloudWatch Logs Insights, X-Ray/OpenTelemetry traces, dotnet-counters.
+- Add a p95 latency alert per endpoint and a Query Store regression review.
+W: I diagnose systematically from symptoms to cause instead of guessing.
+? What is parameter sniffing? :: SQL Server compiles a plan for the first parameter values and reuses it, which can be bad for very different values.
+? How do you spot thread pool starvation? :: dotnet-counters shows thread pool queue length growing and thread count climbing slowly.
+
+@p3-24
+Q: An ECS worker grew [about 150 MB a day] and was OOM-killed every [about 3 days]. I took dotnet-gcdump snapshots hours apart, found a static ConcurrentDictionary caching study configuration per version with no eviction, replaced it with a size-limited IMemoryCache with a [30-minute] sliding expiry, and load tested overnight; memory now stays flat.
+- Tools: dotnet-counters (GC heap size, gen 2 count), dotnet-gcdump for managed heap diff, dotnet-dump for full analysis with SOS (gcroot to find what holds objects).
+- Common leaks: unbounded static caches, event handlers not unsubscribed, timers, captured closures, singletons holding scoped services, new HttpClient per call (socket exhaustion).
+- IMemoryCache with SizeLimit requires Size on every entry.
+- Alert on memory trend, not just the limit.
+```csharp
+services.AddMemoryCache(o => o.SizeLimit = 1_000);
+cache.Set(key, config, new MemoryCacheEntryOptions { Size = 1, SlidingExpiration = TimeSpan.FromMinutes(30) });
+```
+W: I use the right diagnostic tools instead of guessing.
+? Server GC vs workstation GC? :: Server GC uses more memory per core for throughput; containers with limits may prefer DOTNET_GCHeapHardLimit or workstation/DATAS settings.
+? What is DATAS? :: Dynamic adaptation to application sizes, on by default for Server GC since .NET 9, adjusting heap count to reduce memory.
+
+@p3-25
+Q: Decide fast: if impact is high, roll back to the previous tagged release, then find the cause from logs and the change list and fix forward. After a [UAT] release, 5xx rose to [about 8 percent] because a new required setting was missing from UAT parameters; I rolled back in [15 minutes], added the setting, and switched the options to ValidateOnStart so missing config now fails at startup and stops the deployment instead of failing live requests.
+- Rollback first, investigate second, when users are affected.
+- ValidateDataAnnotations plus ValidateOnStart (IOptions validation) turns config errors into deploy-time failures.
+- Readiness checks stop traffic to an instance that fails to start.
+- Added a configuration item to the release checklist.
+```csharp
+builder.Services.AddOptions<ShipmentOptions>().BindConfiguration("Shipments")
+    .ValidateDataAnnotations().ValidateOnStart();
+```
+W: I reduce impact first, then make the failure impossible next time.
+? Why not fix forward immediately? :: Rollback is faster and safer when the cause isn't yet certain.
+? How would canary deploys help? :: A small share of traffic would show the errors before full rollout.
+
+@p3-26
+Q: I trace one message by id through each hop: published, confirmed, queued, delivered, acked, processed. In [validation], kit-assignment notifications occasionally vanished; they were delivered, but the consumer used autoAck=true, so when processing hit a transient database timeout the message was already gone. I switched to manual ack after commit, added [3] retries with backoff and a DLQ with an alert.
+- Ack after the side effect commits, never before.
+- Prefetch (BasicQos) limits unacked messages per consumer.
+- DLQ alert and replay tool for poison or exhausted messages.
+- Idempotent handler because redelivery can now happen.
+```csharp
+await channel.BasicQosAsync(0, prefetchCount: 20, global: false);
+consumer.ReceivedAsync += async (_, ea) =>
+{
+    try { await handler.HandleAsync(ea.Body, ct); await channel.BasicAckAsync(ea.DeliveryTag, false); }
+    catch (TransientException) { await channel.BasicNackAsync(ea.DeliveryTag, false, requeue: false); } // to retry/DLX
+};
+await channel.BasicConsumeAsync("kit-notifications", autoAck: false, consumer);
+```
+W: I follow evidence hop by hop rather than assuming where data is lost.
+? Why requeue false? :: Requeue true can loop forever; dead-lettering to a retry queue with delay is controlled.
+? What does prefetch do? :: Limits how many unacked messages the broker pushes to a consumer.
+
+@p3-27
+Q: Stop the rollout so nodes don't drift, compare the failing node (logs, disk, permissions, service state, config), fix, rerun the idempotent step on that node and verify all nodes report the same version. A UAT deployment failed on node [3 of 5] because the disk was [98 percent] full from old releases and logs; I cleaned up (keeping the last [2] releases), reran, verified versions and added a prerequisite-check tool to the CIRT MCP server (disk space, service account, ports) that runs before every deployment.
+- Idempotent steps make reruns safe.
+- Log rotation and release retention added to the playbook.
+- Pre-checks shift failures left, before any node changes.
+W: I fix the incident and then automate the check that would have caught it.
+? Why stop the rollout? :: Mixed versions across nodes can break behaviour and complicate rollback.
+? How do you verify versions? :: A version endpoint or file on each node, checked by a tool.
+
+@p3-28
+Q: I capture deadlock graphs from the system_health Extended Events session, find the queries and resources, and fix access order, missing indexes and long transactions. After a release, kit assignment updated Inventory then Shipment while the resupply job did Shipment then Inventory, and a missing index on Inventory (SiteId, Status) caused scans; I aligned the order, added the index, shortened transactions and added retry for error 1205. Deadlocks fell from [about 20 a day] to [about one a week or fewer].
+- Deadlock = cycle of locks; SQL Server kills the cheapest victim (error 1205).
+- Fixes: consistent access order, covering indexes to reduce lock footprint, short transactions, RCSI to stop readers blocking writers.
+- EF Core EnableRetryOnFailure retries transient errors including deadlocks; needs execution strategy for user transactions.
+```sql
+SELECT XEvent.query('(event/data/value/deadlock)[1]') AS DeadlockGraph
+FROM (SELECT CAST(target_data AS XML) td FROM sys.dm_xe_session_targets t
+      JOIN sys.dm_xe_sessions s ON s.address = t.event_session_address
+      WHERE s.name = 'system_health' AND t.target_name = 'ring_buffer') d
+CROSS APPLY td.nodes('RingBufferTarget/event[@name="xml_deadlock_report"]') AS x(XEvent);
+```
+W: I read the evidence (deadlock graphs) and fix design causes, not just add retries.
+? Deadlock vs blocking? :: Blocking waits until the lock is released; a deadlock is a cycle that never resolves without a victim.
+? What is RCSI? :: Read Committed Snapshot Isolation: readers see the last committed version instead of waiting on writers.
+
+@p3-29
+Q: I check our job logs, verify on the server (file, size, path, permissions, keys), re-send safely and confirm with the vendor. [One Monday] a depot vendor said our order file hadn't arrived; logs showed a successful upload, but the vendor had moved their pickup folder to [/inbound/irt], announced to another team. I re-sent to the new path with the same name (they dedupe by name), then added a post-upload remote listing check, failed-transfer alerts and [a shared integration contact list] so changes reach us.
+- Evidence first: our logs proved the upload, avoiding blame.
+- Idempotent naming makes re-sends safe.
+- Post-upload verification closes the loop.
+- Communication fix as important as the technical one.
+W: I solve the people-and-process part, not just the code.
+? What if the logs showed a failure? :: Check credentials, host key changes and network, fix, re-send and alert.
+? How do vendors confirm receipt? :: [Some send acknowledgement files, which we now monitor].
+
+@p3-30
+Q: I run kubectl describe pod for events (image pull, OOMKilled, probe failures) and kubectl logs --previous for the crash, then check config, secrets, limits and probes. A new Node.js tooling service in [dev] crash-looped because warm-up took [about 40 seconds] while liveness started after [10 seconds] and killed it; I added a startupProbe allowing [60 seconds], made part of the warm-up lazy and updated the service template so all services get a startup probe.
+- CrashLoopBackOff = container keeps exiting; Kubernetes backs off restarts up to 5 minutes.
+- Exit code 137 = killed (often OOM); 1 = app error; check `lastState.terminated.reason`.
+- Ephemeral debug containers (kubectl debug) help with minimal images.
+```yaml
+startupProbe:
+  httpGet: { path: /health/live, port: 8080 }
+  periodSeconds: 5
+  failureThreshold: 12      # up to 60 s to start
+```
+W: I fix the template so the whole team benefits.
+? What does --previous show? :: Logs of the last terminated container instance, where the crash happened.
+? ImagePullBackOff? :: The image or tag is wrong or registry credentials are missing.
+
+@p3-31
+Q: I check whether timeouts happen always or on cold starts and find the slow call. A DynamoDB-stream Lambda for [shipment notifications] timed out at [30 s] as volume grew: an HttpClient was created per invocation and a slow downstream API had no timeout. I moved the client outside the handler, set a [5-second] timeout with retry, cut batch size from [100 to 25], enabled ReportBatchItemFailures so only failed records retry, and raised memory from [512 MB to 1 GB].
+- Partial batch responses avoid reprocessing whole batches and endless retries.
+- Bisect on error and maximum retry attempts plus an on-failure destination prevent stuck shards.
+- More memory also gives more CPU.
+- Long work belongs in queues or ECS, not one Lambda call.
+```csharp
+public async Task<StreamsEventResponse> Handler(DynamoDBEvent evt)
+{
+    var failures = new List<StreamsEventResponse.BatchItemFailure>();
+    foreach (var r in evt.Records)
+        try { await Notify(r); }
+        catch { failures.Add(new() { ItemIdentifier = r.Dynamodb.SequenceNumber }); }
+    return new StreamsEventResponse { BatchItemFailures = failures };
+}
+```
+W: I tune systematically and protect against data loss while fixing performance.
+? Why is a per-invocation HttpClient bad? :: Each creates new connections and TLS handshakes, slowing calls and exhausting sockets.
+? What happens on a stream batch failure without partial responses? :: The whole batch is retried, blocking the shard until success or expiry.
+
+@p3-32
+Q: I look for the pattern (which users, browsers, apps, times) and inspect cookies, header sizes, token expiry, clock skew and domain conflicts. In [2024], [about 30] tickets in [two weeks] came mostly from study managers in many groups getting 400 after SSO; the chunked auth cookie held every claim ([about 13 KB]) and with other cookies passed the [16 KB] limit. Moving the ticket to a server-side ITicketStore with cached per-request permissions shrank it to under 1 KB and stopped the tickets.
+- "Random" issues usually have a hidden common factor; find it in the data.
+- Other causes of random logout: clock skew on token validation, cookies scoped to the wrong domain, data protection keys not shared across instances.
+- Data protection keys must be persisted and shared (e.g. Redis or S3) when running several instances, or cookies fail to decrypt.
+W: I find patterns in messy support data.
+? Why would logins fail after scaling out? :: Each instance had its own data protection keys, so cookies from one couldn't be read by another.
+? How do you handle clock skew? :: Sync clocks and allow a small ClockSkew in token validation (default 5 minutes).
+
+@p3-33
+Q: I look at exactly what failed, fix real issues, add missing tests, and never mark true issues as false positives. [Two days] before code freeze, coverage on new code was [68 percent] against [80 percent] and a hard-coded test connection string was flagged; I moved it to user secrets and a pipeline variable, wrote the missing validator tests in [about half a day] and told the release owner that morning. The gate was green next day with no date slip.
+- "Clean as you code": the gate focuses on new code quality.
+- False positives are documented and reviewed, not silently suppressed.
+- Communicate early when dates are at risk.
+W: I hold quality standards even under deadline pressure.
+? Is 80 percent coverage meaningful? :: It's a guard, not a goal; meaningful assertions on important branches matter more.
+? Who can change the gate? :: [The quality owner, through a reviewed change], not individual developers.
+
+@p3-34
+Q: I look for environment differences (culture, time zone, paths, OS, variables), test order and shared state, and timing assumptions. A date-format test passed on my Windows laptop but failed on the Linux agent because the code used the current culture implicitly; I formatted with an explicit culture, set culture in the test, and verified in the same .NET SDK container the agent uses.
+- Linux is case-sensitive for paths; use Path.Combine.
+- xUnit runs test classes in parallel; shared static state causes flaky tests.
+- Time: inject TimeProvider instead of DateTime.Now.
+- Invariant globalization mode in containers can change culture behaviour.
+W: I make tests deterministic instead of retrying flaky ones.
+? How do you find order-dependent tests? :: Run them in random order or individually and see which fail.
+? What is InvariantGlobalization? :: A setting that removes culture data (ICU) from the app, so all cultures behave as invariant.
+
+@p3-35
+Q: I read it critically, check APIs against docs, build, test and add tests, run scans, and never merge code I can't explain. Copilot once suggested a retry policy that retried every failure, including the POST that creates a release; retrying a non-idempotent POST after a timeout could create duplicate releases, so I limited retries to GETs and transient codes (408, 429, 5xx) with exponential backoff and added a unit test proving POSTs aren't retried.
+- Idempotency matters for retries: GET, PUT, DELETE are idempotent; POST isn't unless it uses an idempotency key.
+- .NET 8 resilience handler can disable retries for unsafe methods (DisableForUnsafeHttpMethods).
+- Shared the example with the team as a review reminder.
+```csharp
+builder.Services.AddHttpClient<AdoClient>().AddStandardResilienceHandler(o =>
+    o.Retry.DisableForUnsafeHttpMethods());
+```
+W: I use AI as a helper and stay accountable for correctness.
+? How do you make a POST safe to retry? :: Send an idempotency key the server deduplicates on.
+? What does the standard resilience handler include? :: Rate limiter, total timeout, retry, circuit breaker and attempt timeout.

@@ -1,0 +1,267 @@
+@p3-36
+Q: I use STAR: Situation in one or two lines of context, Task saying what I was responsible for, Action in first person with technical detail as the longest part, and Result with real numbers plus what I learned. I keep each story to about two minutes and prepare a bank of stories I can adapt to different questions.
+- Ratio: roughly 10 percent situation, 10 percent task, 60 percent action, 20 percent result.
+- Say "I" for your actions; credit the team where due.
+- Quantify: time saved, error rate, tickets, latency.
+- End with a lesson or what changed afterwards (STAR-L).
+- Story bank: MCP server, RabbitMQ outage, CSV import, security fixes, mistake (time-zone bug), disagreement (all-or-nothing), mentoring.
+W: I communicate clearly and stay concise.
+? What if you don't have numbers? :: Use concrete before/after facts (tickets stopped, release on time) and be honest.
+? How many stories should you prepare? :: Eight to ten strong ones that cover leadership, conflict, failure, delivery and technical depth.
+
+@p3-37
+Q: Each deployment across [4 to 6] nodes needed about 6 people for about 6 hours. Nobody asked me to fix it, but I saw that MCP agents could run these steps, agreed [part of two sprints] with my lead for a prototype, started with [10] read-only tools, demoed, then added write tools with confirmations, growing it to about 77 tools as the CIRT MCP server. Deployments went from 6 hours to 2 and from 6 people to 1.
+- Got buy-in before spending time: initiative with alignment, not going rogue.
+- Low-risk start (read-only) built trust.
+- Incremental demos kept stakeholders involved.
+- Measured results afterwards.
+W: I act like an owner and look for leverage beyond my tickets.
+W: I align initiative with my lead's priorities.
+? How did you balance it with sprint work? :: Agreed capacity with my lead and kept sprint commitments.
+? What if it had failed? :: The prototype was small; we'd have lost little and learned about the deployment process.
+
+@p3-38
+Q: In [mid-2024] a RabbitMQ memory alarm silently stopped shipment-status updates for [about 40 minutes]. On support, I used CloudWatch and Grafana to see publishing looked normal while the queue received nothing, found the memory alarm and blocked connections, realised publishes had no confirms, drained the backlog, replayed missed updates from vendor files with idempotent upserts, then added publisher confirms, retries and alerts. All [about 1,200] updates were recovered that evening, with no silent loss in the [12 months] since.
+- Show the investigation path: symptom, hypothesis, evidence, cause.
+- Mitigation and permanent fix as separate steps.
+- Post-mortem actions: confirms, rate-drop alert, memory alarms, consumer scaling.
+- Technical depth on request: Part 2 Q40.
+W: I own incidents calmly and turn them into lasting improvements.
+? What was the hardest part? :: No errors anywhere; I had to reason from metrics that something was missing.
+? What did the team change afterwards? :: A checklist for messaging guarantees in design reviews.
+
+@p3-39
+Q: [A quarterly release in 2024] carried changes from [5] scrum teams with a fixed production date for [a study go-live]; [two days] before FV a shared database script conflicted and an integration test failed. As release integrator I tracked every item daily, resolved the conflict with both owners in a [one-hour] session, got the test fixed, ran the FV install overnight, and agreed with the product owner to move one under-validated low-priority feature. We hit the date with full FV and UAT evidence.
+- Prioritise: protect the date by cutting scope, not quality.
+- Early, transparent communication with the release manager.
+- Bring the right people together quickly instead of long threads.
+W: I deliver under pressure by prioritising and communicating early.
+? How do you avoid this next time? :: Integrate earlier with release branches and daily builds, and freeze shared scripts sooner.
+? Did anyone push back on dropping the feature? :: The team was disappointed, but it shipped safely in the next release.
+
+@p3-40
+Q: In [2023] I changed a shipment report date filter and tested only in IST; FV found shipments near midnight UTC appearing on the wrong day for [US sites]. I owned it in stand-up, fixed it to store and compare in UTC DateTimeOffset and convert to each site's time zone only for display, added unit tests for several zones using a fake TimeProvider, and added a time-zone item to my PR checklist. It was fixed within [a day], caught before UAT.
+- Pick a real mistake with low but real impact; show ownership and learning.
+- Technical lesson: never compare local DateTime values across zones; use TimeZoneInfo for site display.
+- Testing lesson: inject TimeProvider; test edge times around midnight and DST changes.
+```csharp
+var fake = new FakeTimeProvider(new DateTimeOffset(2023, 3, 12, 23, 30, 0, TimeSpan.Zero));
+var siteZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+var siteDay = TimeZoneInfo.ConvertTime(fake.GetUtcNow(), siteZone).Date;
+```
+W: I own my mistakes openly and build habits so they don't repeat.
+? Why DateTimeOffset? :: It carries the offset, so the exact instant is unambiguous.
+? Why did testing in IST miss it? :: IST is UTC+5:30, so the midnight UTC edge falls mid-morning locally and looked normal.
+
+@p3-41
+Q: While designing the CSV import, a senior colleague wanted partial imports and I preferred all-or-nothing. I listed the trade-offs (partial is friendlier but leaves studies half-configured and complicates audit and rollback in GxP), proposed a validate-only preview followed by an all-or-nothing save, and we took both views to the BA and QA lead. The team chose preview plus all-or-nothing; my colleague's real concern, user frustration, was solved by the preview.
+- Disagree on ideas, not people; find the underlying concern.
+- Use data and stakeholders (BA, QA) to decide, not seniority.
+- A creative third option often beats either extreme.
+W: I resolve disagreements through trade-offs and shared goals.
+W: I listen for the concern behind a position.
+? What if the decision had gone against you? :: I'd commit fully and make it work, recording the risks.
+? How is your relationship with that colleague? :: Good; we now review designs together early.
+
+@p3-42
+Q: In [2024] [two graduate developers] joined and were overwhelmed. I gave a [one-hour] architecture walkthrough, picked small real stories, paired for [two sprints], then moved to reviews explaining the why behind comments, showed safe Copilot and Cursor use for tests, and held a [30-minute] weekly check-in. Their first PRs merged in [week two], they worked independently within [about two months], and one joined the release verification rotation.
+- Gradual release of responsibility: I do, we do, you do.
+- Explain reasoning in reviews so they learn principles, not just fixes.
+- Psychological safety: questions are welcome.
+W: I invest in others and multiply the team's capacity.
+? How do you mentor someone more experienced in another area? :: Swap knowledge; I learn from them too.
+? How do you give hard feedback? :: Privately, specifically, about behaviour and impact, with a suggestion.
+
+@p3-43
+Q: In [2024] a security review and tickets surfaced tokens valid after logout, SSO "header too long" failures and reverse tabnabbing. I owned all three: [15-minute] access tokens, refresh revocation and an ElastiCache jti denylist; a server-side auth ticket shrinking the cookie from [about 13 KB to under 1 KB]; and rel=noopener noreferrer on [about 40] links plus the ESLint rule. Each had tests and passed review, the SonarQube gate and regulated release; all passed retest with no regressions.
+- Theme: fix plus guardrail (tests, lint rule) so issues stay fixed.
+- Prioritised by risk: logout first.
+- Performance measured, not assumed.
+W: I raise the security bar and make improvements stick.
+? How did you prioritise the three? :: By risk: session misuse first, then user-blocking SSO failures, then tabnabbing.
+? How do you keep security knowledge current? :: OWASP updates, security review findings and vendor advisories.
+
+@p3-44
+Q: Study setup teams typed [site records] one by one, [two to three days] for a [300-site] study. Over [three sprints] I agreed validation rules with the BA, built the API (streamed parsing, staged validation, all-or-nothing save with audit), the preview and error-report UI, unit tests per rule and Playwright tests, and supported FV and UAT. It's live in production: [under an hour] for a [300-site] setup, with errors caught before saving.
+- End to end means requirements, design, backend, UI, tests, validation support and release.
+- Collaboration: BA for rules, QA for test data, release team for deployment.
+- Hand-off: documentation and support runbook.
+W: I deliver complete, production-ready features.
+? What would you improve? :: Async processing with progress for much larger files.
+? How did users react? :: [Setup teams asked for the same import for depot settings next].
+
+@p3-45
+Q: In [2024] a manual check caught a transfer about to overwrite a study with randomized subjects. I built a backend guard with five checks (target status, version compatibility, direction, no concurrent transfer, role plus change request), clear reasons and audit of every attempt. Released in [2025], it blocked [a handful of] unsafe attempts in its first months; the risky path now depends on the system, not memory.
+- Prevent, don't just detect: turn checklists into code.
+- Fail closed and explain why.
+- Audit supports GxP and investigations.
+W: I think ahead about risk and build safeguards.
+? How did you get it prioritised? :: Explained the patient-data and compliance impact of the near-miss to the product owner.
+? Any false blocks? :: [Two early ones from stale version metadata], fixed quickly.
+
+@p3-46
+Q: In [early 2025] MCP was new and nobody on my team had built a server. I read the specification and C# SDK samples over [about a week], built a three-tool prototype (list builds, build status, logs) in [two days] against a test Azure DevOps project, tried it from Cursor and Claude Code, got a colleague's review of the tool design and iterated. That prototype became the CIRT MCP server with about 77 tools.
+- Learning approach: official spec first, then samples, then a tiny real use case.
+- Validate early with real users.
+- Same approach for the [.NET 10 upgrade in early 2026].
+W: I learn fast by building something real quickly.
+? How do you keep up with new tech? :: Release notes, official docs, small prototypes and sharing in team sessions.
+? What did you get wrong first? :: Returning raw API JSON, which overloaded the agent's context.
+
+@p3-47
+Q: The MCP server started with no spec, just a slow manual process. I interviewed the [5] people who usually ran deployments, listed [about 30] manual steps ranked by time and error risk, and planned three increments: read-only status and logs, then build and release creation, then node deployments with confirmations, demoing after each. The ambiguity became a clear roadmap and the tool grew to about 77 tools the team uses.
+- Turn ambiguity into data: interview, list, rank.
+- Small increments with feedback reduce risk of building the wrong thing.
+- Make assumptions explicit and confirm them.
+W: I create structure and direction when there is none.
+? How did you decide what not to build? :: Steps that were rare or needed human judgement stayed manual.
+? Who did you check priorities with? :: My lead and the release manager.
+
+@p3-48
+Q: Teammates kept the manual process and I had no authority to mandate the CIRT MCP server, so I won adoption on merit: a [30-minute] live demo on a real UAT deployment, a one-command install, [10] example prompts, pairing with the first [4] engineers and adding tools they asked for. Within [about two months] most deployments used it, with 1 person instead of 6.
+- Influence = make it easy, safe and visibly valuable.
+- Addressed concerns directly (permissions, approvals, logs).
+- Early adopters became advocates.
+W: I lead through credibility and empathy, not authority.
+? What if someone still refused? :: Fine; I'd understand why and fix it if it's a real gap.
+? How did leadership respond? :: [My manager presented the results in the department review].
+
+@p3-49
+Q: In [2023] my lead said my PRs ([1,500+ lines]) were too big and slow to review. I asked for examples, split work into PRs under [400] lines with clear descriptions, used feature flags where needed, and checked with reviewers after a few weeks. Review turnaround dropped from [two to three days] to [usually the same day], and my lead noted it in my appraisal.
+- Receive feedback without defending; ask for specifics.
+- Act quickly and visibly, then close the loop.
+- Small PRs also reduce defects and merge conflicts.
+W: I welcome feedback and change my behaviour quickly.
+? How do you give feedback to others? :: Specific, timely, kind and actionable, in private for anything sensitive.
+? Have you received feedback you disagreed with? :: Yes; I ask for examples, share my view, and look for the part that's true.
+
+@p3-50
+Q: In SAFe PI planning, teams plan the next program increment (several sprints), align objectives and map dependencies; refinement (grooming) clarifies stories, acceptance criteria and estimates; and each sprint has planning, daily stand-ups, a review/demo and a retrospective. I take part in all of these in our ~100-member engineering organisation.
+- PI planning outputs: team PI objectives, a program board with dependencies, risks ROAMed (resolved, owned, accepted, mitigated).
+- Refinement with BA and QA ensures testable acceptance criteria (important in GxP).
+- Demos: I demoed the MCP server increments in sprint demos.
+- Retros: one concrete improvement action per sprint.
+W: I work well in structured agile processes at scale.
+? What is ROAM? :: Resolved, Owned, Accepted, Mitigated: how PI risks are categorised.
+? What makes a good retro? :: Safe discussion and one or two actions that actually get done.
+
+@p3-51
+Q: I break stories into tasks and estimate relatively in story points, including testing, reviews, validation evidence and release work, not just coding; I call out unknowns and add spikes, and check commitments against past velocity.
+- Planning poker exposes different assumptions; discuss the high and low estimates.
+- Spikes timebox research to reduce uncertainty.
+- In GxP, validation documentation can be a big share of effort.
+- Re-estimate or split if a story grows.
+W: I give realistic estimates and flag risk early.
+? Points vs hours? :: Points measure relative complexity and avoid false precision; hours suit task-level tracking.
+? What if you're behind? :: Say so early with options: cut scope, get help or move the date.
+
+@p3-52
+Q: I clarify impact and deadlines with the product owner or lead, handle production and patient-safety issues first, then committed sprint goals, then improvements, communicate trade-offs openly and early, and automate repeated work so it stops being urgent.
+- Frameworks: impact vs effort, Eisenhower matrix.
+- Make the trade-off visible: "If I do X now, Y slips by two days".
+- Automation example: MCP server ended many urgent deployment calls.
+W: I make priorities explicit and keep stakeholders informed.
+? Two managers give conflicting priorities? :: Bring them together or escalate to the person who owns priorities.
+? How do you protect focus time? :: Block time for deep work and batch interruptions.
+
+@p3-53
+Q: I involve QA and validation early in refinement to agree testable acceptance criteria, provide test data, automated tests (Playwright, Cucumber) and clear release notes, fix defects quickly with root-cause explanations, and treat their sign-off as part of done, because in GxP it is.
+- Shared understanding: walk through features with QA before they test.
+- Traceability: requirements linked to tests and evidence.
+- Respect: QA findings are help, not criticism.
+W: I see QA as partners in quality.
+? How do you handle a defect found late? :: Assess risk with QA and the product owner, fix or document a deviation.
+? Do developers write automated tests? :: Yes, unit and integration, and contribute to end-to-end suites.
+
+@p3-54
+Q: Done means code reviewed and merged, unit and integration tests passing, SonarQube gate green, documentation and release notes updated, deployed and verified in the test environment with acceptance criteria met, and, in regulated work, validation evidence captured.
+- A shared DoD prevents "done but not really" work.
+- Includes non-functionals: logging, metrics, security checks.
+- Feature flags: done can mean deployed dark.
+W: I care about finished, shippable work, not just coded work.
+? DoD vs acceptance criteria? :: DoD applies to every story; acceptance criteria are specific to one story.
+? Who owns the DoD? :: The team, agreed with the product owner and quality.
+
+@p3-55
+Q: My strengths are strong .NET backend and API engineering across the full lifecycle including releases, ownership (I solve problems end to end, like the MCP server and production RCAs), and using AI tools responsibly to multiply team productivity.
+- Give one example per strength: CSV import (lifecycle), RabbitMQ RCA (ownership), MCP adoption (AI multiplier).
+- Choose strengths that match the job description.
+- Keep it factual, not boastful.
+W: I know my strengths and can prove them.
+? Which strength matters most for this role? :: [Link to the JD, e.g. API design and ownership of production services].
+? What do colleagues say about you? :: [That I'm the person they go to for release and deployment problems].
+
+@p3-56
+Q: I used to take on too much myself, for example solely authoring the MCP server for a long time; now I share designs early, write things down and delegate parts so the work isn't dependent on me. It improves both speed and the team's ownership.
+- Real, non-fatal weakness with a concrete improvement and evidence.
+- Evidence: teammates now contribute tools; [two contributors added features in 2025].
+- Alternative: speaking in large forums, improving through sprint demos.
+W: I'm self-aware and actively improving.
+? How do you know it's improving? :: Others now contribute and maintain parts of the tool.
+? Why is it a problem? :: It creates a single point of failure and limits others' growth.
+
+@p3-57
+Q: I've grown a lot in 4+ years at IQVIA and now want a senior backend role with bigger design ownership, larger-scale systems and continued AI-assisted engineering, which is what this role offers.
+- Positive, forward-looking; never criticise the current employer.
+- Link specifically to the new company's product and scale.
+W: I'm motivated by growth and impact.
+? Is it about money? :: Compensation matters, but scope and growth are the main reasons.
+? Would a counter-offer keep you? :: I'm looking for scope that my current role can't provide right now.
+
+@p3-58
+Q: I bring 5.5 years of .NET backend experience in a regulated, quality-first environment, I work across .NET, Node, Python, React and AWS so I can own services end to end, and I've proven automation impact: deployments from 6 hours to 2 and 6 people to 1. [Then match two or three points to their job description.]
+- Structure: skills match, proof, attitude.
+- Mention reliability under pressure (production RCAs) and team multiplier (mentoring, adoption).
+W: I connect my experience directly to their needs.
+? What would you do in the first 90 days? :: Learn the system and people, fix something small, then take ownership of a service or improvement.
+? What's the gap you'd need to close? :: [Their specific domain or a tech I haven't used], which I learn fast.
+
+@p3-59
+Q: In five years I see myself leading the design of backend systems as a senior or staff/lead engineer, mentoring a team, shaping engineering practices including AI-assisted development, and growing with the company's platform.
+- Ambitious but realistic, aligned with the company's career paths.
+- Show you plan to stay and grow.
+W: I have a clear growth direction.
+? Management or technical track? :: Technical leadership first; open to people leadership later.
+? What skills will you build? :: System design at scale, architecture influence and mentoring.
+
+@p3-60
+Q: I research the market range for senior backend roles in Bengaluru, give a range based on my current CTC, experience and the role's scope, say I'm flexible for the right role, and ask about the full package. I use real numbers and never invent offers.
+- Let them share the band first if possible.
+- Anchor slightly above target; know your walk-away number.
+- Consider total compensation: fixed, variable, ESOPs, benefits, learning budget.
+W: I negotiate professionally and honestly.
+? What if they ask for current CTC? :: Share honestly or say you'd prefer to discuss the role's range.
+? Can you accept lower? :: For the right scope, within reason.
+
+@p3-61
+Q: I state my real notice period, mention whether buyout or early release is possible, and commit to a clean handover.
+- Never promise an early date you can't guarantee.
+- Handover plan: documentation, knowledge transfer for the MCP server and release duties.
+W: I'm honest and responsible to both employers.
+? Can you join in 30 days? :: [Answer honestly based on your contract].
+? What will you hand over? :: My services, the MCP server and release integration duties with docs.
+
+@p3-62
+Q: [Research their product, stack and engineering blog, then] link my experience (.NET microservices, AWS, messaging, regulated quality, AI tooling) to what they build, mention one specific thing I admire, and show long-term interest.
+- Specific beats generic: name a product, talk, blog post or tech choice.
+- Connect to their challenges (scale, reliability, compliance).
+W: I do my homework and think about fit.
+? What do you know about our stack? :: [Prepare two or three facts from their site or job description].
+? What would you contribute first? :: [A matching strength, e.g. reliability and deployment automation].
+
+@p3-63
+Q: My B.Tech aggregate is 67.7 percent. I focus on what I've built since: production services, the MCP platform and release ownership over 5.5 years, plus continuous learning.
+- State it plainly without apology or excuses.
+- Move quickly to evidence of ability.
+W: I'm comfortable with facts and focus on results.
+? Why wasn't it higher? :: [One honest sentence, e.g. I focused more on projects than exams], then move on.
+? What have you learned since? :: Cloud, distributed systems, AI tooling and regulated delivery.
+
+@p3-64
+Q: I ask what success looks like in the first 90 days, how services are deployed and monitored and what on-call looks like, how the team uses AI coding tools, and the biggest technical challenges in the next year.
+- Also: team structure, code review culture, how decisions are made, growth path to senior/staff.
+- Avoid asking about things easily found online.
+- Questions show interest and help you judge fit.
+W: I'm evaluating fit thoughtfully, not just seeking any job.
+? Should you ask about salary in the first round? :: Usually let HR raise it.
+? How many questions? :: Two or three good ones.
