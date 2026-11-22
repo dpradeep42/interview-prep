@@ -1,6 +1,6 @@
-// Offline cache for Interview Prep. Version 6b12b93e58
+// Offline cache for Interview Prep. Version 35425dd23f
 var CACHE = 'ip-__V__';
-var FILES = ["./","index.html","app.css?v=6b12b93e58","app.js?v=6b12b93e58","data/core.json?v=6b12b93e58","data/d-p1.json?v=6b12b93e58","data/d-p2.json?v=6b12b93e58","data/d-p3.json?v=6b12b93e58","data/d-p4.json?v=6b12b93e58","data/d-p5.json?v=6b12b93e58","data/d-p6.json?v=6b12b93e58","data/d-p7.json?v=6b12b93e58","data/d-p8.json?v=6b12b93e58","data/d-p9.json?v=6b12b93e58","data/d-p10.json?v=6b12b93e58"];
+var FILES = ["./","index.html","app.css?v=35425dd23f","app.js?v=35425dd23f","data/index.json?v=35425dd23f","data/answers.json?v=35425dd23f"];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); })); });
 self.addEventListener('activate', function (e) { e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== CACHE && k.indexOf('ip-') === 0; }).map(function (k) { return caches.delete(k); })); }).then(function () { return self.clients.claim(); })); });
 self.addEventListener('fetch', function (e) {

@@ -1,0 +1,682 @@
+# Invented details (private notes)
+
+Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.
+
+Facts that come from the resume (not invented): deployments 6 hours to 2, 6 people to 1, about 77 MCP tools, the CIRT MCP server, the ~100-member engineering organisation.
+
+## By answer
+
+- **p1-1** What is the difference between .NET Framework, .NET Core and .NET 6/8/10?
+  - early 2026
+  - 3
+  - 10-15%
+- **p1-16** What did .NET 8/10 bring that matters for backend services?
+  - early 2026
+  - 3
+  - 10-15%
+  - about six weeks
+  - Trivy
+- **p1-17** Explain the ASP.NET Core middleware pipeline.
+  - 4
+- **p1-21** Filters vs middleware?
+  - 4
+- **p1-22** How do model binding and validation work?
+  - around 10,000
+- **p1-27** How do you do logging and tracing in APIs?
+  - 2024
+  - 4
+  - about an hour
+  - a few minutes
+- **p1-28** How do you improve the performance of an ASP.NET Core API?
+  - about 9 seconds
+  - 400,000
+  - under 300 ms
+  - about 2,000
+  - 10-15%
+- **p1-42** Walk me through how you upgraded services to .NET 10.
+  - early 2026
+  - 6
+  - 3
+  - one release cycle
+  - a version conflict in Microsoft.Extensions packages
+  - Trivy
+  - about six weeks
+  - no functional defects
+  - 10 to 15 percent
+- **p1-44** Clustered vs non-clustered index?
+  - about 9 seconds to under 300 ms
+- **p1-45** How did you optimize a slow SQL query?
+  - about 300
+  - 8 to 12 seconds
+  - millions
+  - about 400,000 to 2,000
+  - about 9 seconds to under 300 ms
+- **p1-46** What does SARGable mean?
+  - from about 9 seconds to under 300 ms
+- **p1-64** What do you look for in a code review?
+  - two graduate developers in 2024
+- **p1-73** What front-end security issues do you watch for?
+  - about 40
+- **p2-17** How do you write a production Dockerfile for a .NET service?
+  - Trivy
+- **p2-25** Describe your Azure DevOps pipeline and release flow.
+  - about 5
+- **p2-27** What branching and tagging strategy do you follow?
+  - about 5
+- **p2-31** How is release management different in a regulated GxP environment?
+  - about 5
+- **p2-35** How do you do root-cause analysis for a production issue?
+  - mid-2024
+- **p2-36** What makes a good alert?
+  - mid-2024
+- **p2-37** Kafka vs RabbitMQ?
+  - mid-2024
+- **p2-40** What are publisher confirms and how did they fix the RabbitMQ outage?
+  - mid-2024
+  - about 40 minutes
+  - about 1,200
+  - 5 percent
+- **p2-42** How do you make a consumer idempotent?
+  - mid-2024
+- **p2-46** What is a JWT and how is it validated?
+  - 15 minutes
+- **p2-48** Why is logout hard with tokens, and how did you fix token-based logout?
+  - 2024
+  - 60 minutes
+  - 15 minutes
+  - 1 ms
+- **p2-49** What causes 'request header too long' with SSO cookies, and how did you fix it?
+  - about 30
+  - 16 KB
+  - about 13 KB
+  - ElastiCache Redis
+  - about 13 KB to under 1 KB
+- **p2-50** What is reverse tabnabbing?
+  - about 40
+- **p2-55** How did you design your MCP server with about 77 tools?
+  - roughly 15
+  - 20
+  - 25
+  - 17
+  - FV, TechOps, UAT and Prod
+- **p2-60** What prompt engineering techniques do you use?
+  - 10
+- **p2-65** How did you get the team to adopt AI tools?
+  - 30-minute
+  - 10
+  - 4
+  - 8 deployments with it and 8 without
+  - about two months
+- **p2-66** Monolith vs microservices?
+  - about 5
+- **p2-68** Design drug supply and shipment tracking.
+  - mid-2024
+- **p2-69** Design a scalable CSV bulk import for clinical study data.
+  - 5 MB, about 10,000 rows
+  - 2
+- **p2-74** How would you design rate limiting?
+  - 2
+- **p2-75** Design the deployment orchestration platform you built (as a system design question).
+  - over stdio
+- **p3-4** What is your exact role in the IRT team?
+  - ~8 people
+- **p3-8** Tell me about the MCP server you built. Why, what, how and impact?
+  - 8 vs 8
+- **p3-9** How did you measure the 6-hours-to-2 improvement?
+  - 8
+  - two release cycles
+  - next two cycles
+  - 4 to 6
+  - 20 person-hours down to 2
+- **p3-11** How did you package the MCP server so teammates could use it?
+  - about an hour
+  - about 10 minutes
+- **p3-13** Why support three SFTP libraries instead of one?
+  - 2024
+- **p3-14** How did you release the Rebex provider safely to production?
+  - containerised OpenSSH server
+  - 500 MB
+  - one low-volume vendor
+  - two weeks
+- **p3-15** Describe the CSV bulk-import feature you delivered.
+  - 300+
+  - two to three days
+  - 5 MB, about 10,000 rows
+  - 2
+  - 300-site
+  - under an hour
+- **p3-16** What is the study-transfer safety guard you built?
+  - 2024
+  - 2025
+  - a handful of
+- **p3-17** Walk me through your release integration and verification process.
+  - about 5
+  - 2025
+- **p3-18** Tell me about the RabbitMQ outage you root-caused.
+  - mid-2024
+  - large vendor shipment-status file
+  - about 40 minutes
+  - about 1,200
+  - 5 percent
+- **p3-19** Which security fixes have you delivered?
+  - 2024
+  - 60 minutes
+  - 15 minutes
+  - 1 ms
+  - about 13 KB to under 1 KB
+  - about 30
+  - about 40
+- **p3-20** What did you build at DXC on SharePoint?
+  - an approval workflow for procurement requests
+  - web parts that showed data from other systems
+- **p3-21** How did you build Node.js and Python services alongside .NET?
+  - a build-log summariser for the MCP platform
+  - a vendor file pre-validation service
+  - a small release-status endpoint
+- **p3-22** What front-end work have you done in IRT?
+  - the CSV import preview and error grid
+  - a shipment status timeline
+  - about 40
+- **p3-23** An API is suddenly slow in production. What do you do?
+  - March 2025
+  - about 200 milliseconds to about 3 seconds
+- **p3-24** Memory keeps growing in a .NET service until it restarts. How do you investigate?
+  - about 150 MB a day
+  - about 3 days
+  - 30-minute
+- **p3-25** After a release, 500 errors spike. What do you do?
+  - UAT
+  - about 8 percent
+  - 15 minutes
+- **p3-26** Messages seem to be missing between two services. How do you debug it?
+  - validation
+  - 3
+- **p3-27** A multi-node deployment fails on one node only. What do you do?
+  - 3 of 5
+  - 98 percent
+  - 2
+- **p3-28** Database deadlocks suddenly increase. How do you respond?
+  - about 20 a day
+  - about one a week or fewer
+- **p3-29** A vendor says they did not receive a file over SFTP. How do you handle it?
+  - one Monday
+  - /inbound/irt
+  - a shared integration contact list
+- **p3-30** A Kubernetes pod is in CrashLoopBackOff. What do you check?
+  - dev
+  - about 40 seconds
+  - 10 seconds
+  - 60 seconds
+- **p3-31** A Lambda function is timing out. How do you fix it?
+  - shipment notifications
+  - 30-second
+  - 100
+  - 5-second
+  - 100 to 25
+  - 512 MB to 1 GB
+- **p3-32** Users report they are logged out randomly or SSO fails for some users. How do you approach it?
+  - 2024
+  - about 30
+  - two weeks
+  - about 13 KB
+  - 16 KB
+  - under 1 KB
+- **p3-33** Your SonarQube quality gate fails just before a release. What do you do?
+  - two days
+  - 68 percent
+  - 80 percent
+  - about half a day
+- **p3-37** Tell me about a time you took initiative beyond your assigned work.
+  - 4 to 6
+  - part of two sprints
+  - 10
+- **p3-38** Tell me about a difficult production issue you solved.
+  - mid-2024
+  - about 40 minutes
+  - about 1,200
+  - 12 months
+- **p3-39** Tell me about a time you worked under a tight deadline.
+  - A quarterly release in 2024
+  - 5
+  - study go-live
+  - Two days
+  - one-hour
+- **p3-40** Tell me about a mistake you made.
+  - 2023
+  - US sites
+  - a day
+- **p3-42** Tell me about a time you mentored someone.
+  - 2024
+  - two graduate developers
+  - one-hour
+  - two sprints
+  - 30-minute
+  - week two
+  - about two months
+- **p3-43** Tell me about a time you improved quality or security.
+  - 2024
+  - 15 minutes
+  - 1 ms
+  - about 13 KB
+  - under 1 KB
+  - about 40
+- **p3-44** Tell me about delivering a feature end to end.
+  - 300-site
+  - two to three days
+  - three sprints
+  - about 10,000
+  - under an hour
+- **p3-45** Tell me about a time you prevented a risk before it happened.
+  - 2024
+  - 2025
+  - a handful of
+- **p3-46** Tell me about learning a new technology quickly.
+  - early 2025
+  - about a week
+  - two days
+  - early 2026
+- **p3-47** Tell me about handling ambiguity.
+  - 5
+  - about 30
+- **p3-48** Tell me about a time you had to influence without authority.
+  - 30-minute
+  - 10
+  - 4
+  - about two months
+- **p3-49** How do you handle feedback?
+  - 2023
+  - 1,500 lines or more
+  - 400
+  - two to three days
+  - usually the same day
+- **p3-50** What happens in PI planning, grooming and sprint demos?
+  - about 5
+- **p4-1** What percentage of your work is backend vs frontend?
+  - 70 percent
+  - 15 percent
+- **p4-2** What is your strongest technology?
+  - early 2026
+  - 3
+  - 10-15%
+  - 9 seconds to under 300 milliseconds
+- **p4-4** What was the most challenging project you worked on?
+  - about 30
+- **p4-6** Tell me about a time you improved an existing system.
+  - 2024
+  - no failed transfers caused by the switch
+- **p4-9** Why did you choose .NET?
+  - early 2026
+  - 10-15%
+- **p4-12** Which technology are you strongest in?
+  - 9 seconds to under 300 milliseconds
+- **p4-13** Which technology are you weakest in?
+  - a couple of weeks
+- **p4-15** If we remove AI from your profile, what is your core strength?
+  - 9 seconds to under 300 milliseconds
+  - ~13 KB to under 1 KB
+- **p4-16** How much of your resume work was individual vs team-based?
+  - 3
+  - 5
+- **p4-66** What is ASP.NET Core?
+  - .NET 10 in early 2026
+  - 10 to 15 percent
+  - 3
+- **p4-68** What happens if middleware is registered in the wrong order?
+  - 2024
+- **p4-90** How do you secure an API?
+  - 15-minute
+  - 1 ms
+- **p4-91** Access token vs refresh token?
+  - 15 minutes
+  - 1 ms
+- **p4-94** How do you handle large request payloads?
+  - 5 MB, roughly 10,000 rows
+  - 2
+- **p4-95** How do you handle file uploads?
+  - 5 MB
+- **p4-96** How do you design a production-ready API?
+  - 4
+- **p5-9** How do you optimize EF Core queries and performance?
+  - about 9 seconds to under 300 ms
+- **p5-11** How do you handle bulk operations?
+  - about 10,000
+- **p5-24** Table scan vs index scan vs index seek?
+  - about 400,000 to 2,000
+- **p5-25** What is query cardinality, and what are statistics?
+  - one query became slow until we updated statistics
+- **p5-36** How do you optimize database performance?
+  - about 9 seconds to under 300 ms
+  - about 400,000 to 2,000
+- **p5-38** What are microservices?
+  - about 5
+- **p5-47** What is distributed tracing?
+  - 2024
+  - 4
+- **p5-49** How do you handle failures between services?
+  - mid-2024
+  - about 1,200
+  - about 40 minutes
+- **p5-51** How do you deploy microservices?
+  - about 5
+- **p5-52** How do you monitor microservices?
+  - 2024
+  - 4
+  - a few minutes
+  - about an hour
+- **p5-57** How do you handle centralized logging?
+  - 2024
+  - 4
+  - about an hour to a few minutes
+- **p5-61** What happens if Kafka is unavailable?
+  - mid-2024
+  - about 1,200
+- **p5-63** Explain your AWS architecture.
+  - about 5
+- **p5-74** Redis vs database?
+  - 1 ms
+- **p5-79** How do you troubleshoot an AWS production issue?
+  - mid-2024
+  - about 40 minutes
+  - about 1,200
+- **p6-13** How do you secure and scan Docker images?
+  - Trivy
+  - early 2026
+- **p6-14** How do you troubleshoot a container?
+  - dev
+  - about 40 seconds
+- **p6-17** What is Kubernetes?
+  - dev
+- **p6-21** What happens if a Pod crashes?
+  - dev
+  - about 40 seconds
+- **p6-23** How do you secure Kubernetes?
+  - Trivy
+- **p6-25** How do you run unit tests in CI?
+  - 68 percent
+  - 80 percent
+  - half a day
+- **p6-26** What is SonarQube?
+  - 80 percent
+  - 68 percent
+  - half a day
+- **p6-27** How do you prevent bad code from reaching production?
+  - 1,500 lines or more
+  - under 400
+  - 2 to 3 days
+- **p6-29** How do you build Docker images in a pipeline?
+  - Trivy
+- **p6-45** What is acknowledgement, and publisher confirm vs consumer acknowledgement?
+  - mid-2024
+  - 40-minute
+  - about 1,200
+  - 5 percent
+  - 12 months
+- **p6-46** What are message durability and persistent messaging?
+  - about 1,200
+  - mid-2024
+- **p6-47** What happens if RabbitMQ goes down?
+  - mid-2024
+  - 40-minute
+  - about 1,200
+- **p6-48** How do you implement retries in RabbitMQ?
+  - 3
+- **p6-49** How do you prevent message loss?
+  - mid-2024
+  - about 1,200
+  - 40 minutes
+  - 5 percent
+- **p6-51** How do you identify whether an issue is application, database or infrastructure related?
+  - 200 milliseconds to 3 seconds
+- **p6-52** How do you trace a request across microservices?
+  - 2024
+  - 4
+  - about an hour
+  - a few minutes
+- **p6-53** What logs do you check first?
+  - a few minutes
+  - about an hour
+- **p6-54** How do you distinguish symptoms from root cause?
+  - 150 MB a day
+  - 3 days
+  - 30-minute
+- **p6-55** How do you handle production incidents and prevent recurrence?
+  - 8 percent
+  - 15 minutes
+- **p6-56** Tell me about the reverse-tabnabbing issue and how you fixed it.
+  - 2024
+  - about 40
+- **p6-62** What is a flaky test, and how do you handle it?
+  - 2023
+- **p6-63** What is test coverage, and is 100 percent coverage desirable?
+  - 80 percent
+  - 68 percent
+  - half a day
+- **p7-15** Why React over Angular?
+  - about 40
+- **p7-31** Why did you use Python?
+  - vendor file pre-validation service
+- **p7-32** How do you structure a FastAPI application?
+  - vendor file pre-validation service
+- **p7-35** How does SFTP authentication work, and password vs private-key authentication?
+  - AWS Secrets Manager
+- **p7-36** How did you switch between providers?
+  - 2024
+  - one low-volume vendor
+  - two weeks
+- **p7-37** How did you handle connection failures and retries?
+  - 3
+- **p7-40** How did you secure SFTP credentials?
+  - AWS Secrets Manager
+- **p7-41** What problems did you face with SFTP?
+  - 2024
+  - 500 MB
+  - one Monday
+  - /inbound/irt
+- **p7-42** How would you test an SFTP integration?
+  - 500 MB
+  - one low-volume vendor
+- **p7-53** What are UAT, FV and TechOps?
+  - 4 to 6
+- **p7-55** How do you maintain software quality in a regulated environment?
+  - 80 percent
+  - 1,500 lines or more
+  - under 400
+  - two graduates in 2024
+- **p7-56** How do you handle security in clinical-trial software?
+  - about 40
+  - about 13 KB
+  - under 1 KB
+- **p7-57** How does shipment tracking integrate with external systems?
+  - mid-2024
+  - about 1,200
+- **p7-58** What external integrations does your system have?
+  - 2 to 3 days
+- **p7-59** How do you ensure data integrity?
+  - mid-2024
+  - about 1,200
+  - 12 months
+- **p8-12** What technology did you use, and why?
+  - 10 minutes
+- **p8-13** Explain the ~77 tools and how they are categorized.
+  - about 15 tools
+  - about 20 tools
+  - about 25 tools
+  - about 17 tools
+- **p8-15** How does MCP perform multi-node deployments?
+  - 4 to 6
+- **p8-16** How did you handle deployment failures and rollback?
+  - 3 of 5
+  - 98 percent
+- **p8-17** How did you reduce people from 6 to 1, and why was that possible?
+  - 8 vs 8
+- **p8-28** What is multi-agent architecture, and how have you used AutoGen?
+  - an internal experiment
+- **p8-38** How would you design an agent for multiple environments?
+  - 4 to 6
+- **p8-42** How would you design a multi-agent architecture?
+  - an internal experiment
+- **p8-44** What is SSO, and how does it work?
+  - about 13 KB
+  - under 1 KB
+- **p8-49** How do you perform dependency vulnerability scanning?
+  - Trivy
+- **p8-50** How do you handle security vulnerabilities found in production?
+  - 60 minutes
+  - 15-minute
+  - about 1 ms
+- **p8-55** Design a file upload service.
+  - 5 MB, about 10,000 rows
+  - 2 to 3 days
+  - under an hour
+- **p8-59** Design an event-driven microservices system.
+  - about 1,200
+  - mid-2024
+- **p8-60** Design a scalable authentication system.
+  - 15 minutes
+  - 60 minutes
+  - about 1 ms
+- **p8-63** How would you scale the architecture, and handle database scaling?
+  - 8 to 12 seconds
+  - under 300 milliseconds
+- **p8-65** How would you handle failures?
+  - about 1,200
+- **p8-66** How would you monitor and secure the system?
+  - 2024
+  - 4
+  - about an hour
+  - a few minutes
+- **p9-1** Did you process the CSV import synchronously or asynchronously?
+  - 2 to 3 days
+  - 5 MB, about 10,000 rows
+  - a few seconds
+  - 2 imports per user
+  - under an hour
+- **p9-2** How did you secure uploaded files?
+  - 5 MB
+- **p9-3** How did you optimize large CSV processing?
+  - about 10,000 rows
+  - 5 MB
+  - a few seconds
+  - 2 to 3 days
+  - under an hour
+- **p9-4** How did you test the import?
+  - 300+
+- **p9-5** How did you handle concurrent imports?
+  - 2 imports per user
+  - 300+
+- **p9-8** How did you test the study transfer safety guard?
+  - five
+  - 2025
+- **p9-9** How did you audit blocked transfers?
+  - 2025
+- **p9-10** What is release integration?
+  - 5
+- **p9-14** How do you perform multi-node deployments and ensure all nodes run the same version?
+  - 4 to 6
+  - 98 percent
+- **p9-16** What is Agile, and Scrum vs Kanban?
+  - two-week
+- **p9-17** What happens during sprint planning, and what is a retrospective?
+  - 1,500 lines or more
+  - under 400
+  - 2 to 3 days
+- **p9-20** Tell me about a technical decision you influenced.
+  - about a week
+  - three
+  - two days
+  - 30-minute
+  - about two months
+  - 8 vs 8
+- **p9-21** How do you handle production pressure?
+  - 8 percent
+  - 15 minutes
+- **p9-22** How do you communicate technical problems to non-technical stakeholders?
+  - about 1,200
+  - mid-2024
+- **p9-32** Why this role?
+  - 5
+  - 2 to 3 days
+- **p9-33** What are your career goals?
+  - two graduates in 2024
+  - early 2026
+- **p9-34** Tell me about a difficult manager.
+  - 2023
+  - project lead
+  - morning
+- **p9-35** Tell me about a failure, and how do you deal with failure?
+  - 2023
+  - shipment reporting API
+  - mid-sprint
+- **p9-36** Tell me about a time you missed a deadline.
+  - 2023
+  - shipment reporting API
+  - mid-sprint
+- **p9-37** Tell me about a time you handled pressure.
+  - the quarterly release in 2024
+  - two days
+  - one hour
+- **p9-38** Tell me about a time you took ownership.
+  - about an hour
+  - about 10 minutes
+  - 8 vs 8
+- **p9-39** What would your manager and teammates say about you?
+  - 2024
+- **p9-40** What kind of team do you prefer, what motivates you and what frustrates you?
+  - 2 to 3 days
+  - under an hour
+- **p9-42** You wrote '.NET 6/8/10.' What changed between these versions?
+  - early 2026
+  - 3 of 6
+  - about six weeks
+  - 10 to 15 percent
+  - Trivy
+- **p9-44** You wrote 'Terraform and CloudFormation.' Why both?
+  - Our core platform stacks were already in CloudFormation, owned by the platform team.
+  - Newer, smaller pieces and tooling used Terraform modules.
+- **p9-45** You wrote 'Kubernetes.' What exactly did you deploy using Kubernetes?
+  - some internal workloads, like the Node.js build-log summariser and the FastAPI vendor file validator, in a shared non-production cluster
+  - about 40 seconds
+  - 10 seconds
+  - 60 seconds
+- **p9-46** You wrote 'Kafka and RabbitMQ.' Give me a real use case for each.
+  - mid-2024
+  - 40-minute
+  - about 1,200
+  - 5 percent
+  - 12 months
+- **p9-47** You wrote 'Agentic AI orchestration.' What exactly did you orchestrate?
+  - 4 to 6
+  - AutoGen experiment
+- **p9-48** You wrote 'RAG workflows.' Explain your RAG architecture.
+  - internal assistant over our release runbooks, deployment guides and past incident notes
+  - 30
+- **p9-49** You wrote 'React reusable components.' Give me an example.
+  - configurable data table component
+- **p9-50** You wrote 'Python FastAPI.' Why FastAPI?
+  - vendor file pre-validation service
+- **p9-51** You wrote 'Node.js microservices.' Why Node.js alongside .NET?
+  - build-log summariser
+- **p9-53** You wrote 'mentored developers.' How many and how?
+  - two graduate developers
+  - in 2024
+  - two sprints
+  - week two
+  - 3 to 4 teammates
+- **p9-54** You wrote '100-member engineering team.' What was your actual team's size?
+  - about 8 people: 5 developers, 2 QA engineers and a business analyst, with a shared scrum master
+  - two graduate developers in 2024
+  - 5
+- **p10-1** What is middleware in ASP.NET Core?
+  - 4
+- **p10-2** What is custom middleware, and how do you write one?
+  - 2024
+  - 4
+  - about an hour
+  - a few minutes
+- **p10-4** Real example: how did you implement correlation-id and audit logging middleware in IRT?
+  - 2024
+  - 4
+  - about an hour
+  - about an hour to a few minutes
+- **p10-9** What is rate limiting, and how do you implement it in ASP.NET Core?
+  - 2

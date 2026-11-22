@@ -1,11 +1,13 @@
-# Pradeep — Interview Q&A Bank
+# Pradeep — Interview answers
 
-A static, self-contained study site: 670 interview questions in ten parts (Part 10: 20 deep dives such as middleware and custom middleware) built from my resume and my own question list (.NET backend, IQVIA IRT, AWS, messaging, MCP and AI tooling), with a "Say this" script for every question (a short first-person answer to read out, shown first in large type), difficulty tags, memory hooks, a "Quick answer" for every question, an expandable "Impress the interviewer" section (4+ points, 182 code snippets with Copy buttons) and likely follow-ups, 142 diagrams and tables, and 44 stories with follow-up questions. The "Your list" tab shows all 982 questions from my list in the file's order, each with the answer that covers it.
+A minimal, phone-first site: type a question, tap it, read the answer out loud.
 
-- `index.html` is the site, also served by GitHub Pages if enabled.
-- `interview-prep.html` is the same site as one file you can open directly in a browser. Diagrams load Mermaid from the jsDelivr CDN.
-- `build/` holds the source data and the scripts that generate the HTML (`node build/build.mjs`).
+- **Search only.** One search box. Results update as you type, best match first. Every question from my own list (982 items) and every question in the bank finds its answer, including alternative wordings and abbreviations (DI, JWT, k8s, EF Core, MCP...).
+- **Answer only.** The question, then one complete first-person answer to say, about 60–120 seconds (150–290 words), in large type. A diagram appears below only where a picture genuinely helps (56 answers). No buttons, tags or extras. Back with the ← arrow, a right swipe, or the browser's back button.
+- **Self-contained answers.** Each answer repeats any background it needs (for example, the custom middleware answer first explains middleware and the pipeline), so no answer depends on another.
+- **Deep links:** `#q/<question-slug>`, e.g. `#q/what-is-custom-middleware-and-how-do-you-write`.
+- 669 answers. Works offline after the first visit (service worker). `interview-prep.html` is the same site as one file.
 
-Features: a Your list tab, nine parts plus an All view, search (question titles first, then related topics via per-question keywords; the Your list tab also lists matching question-bank questions; answer text only when "Also search answers" is ticked), topic and difficulty filters, "Only with pictures", "Only with stories", and Expand/Collapse all. Light and dark mode follow the device setting.
+Story details such as dates, team sizes and most numbers were **invented** to make the answers concrete; they are listed per answer in `NOTES-invented-details.md`. Figures from the resume (6 hours to 2, 6 people to 1, about 77 tools, the CIRT MCP server, the ~100-member organisation) are real.
 
-Numbers in [square brackets] are suggested story details to adjust; unbracketed figures come from the resume.
+Build: `cd build && node enrich.mjs && node build.mjs`. Tests: `node tsearch.mjs <url>` (search ranking) and `node tui.mjs <url>` (UI at 390 px and 1280 px, every answer, list coverage).

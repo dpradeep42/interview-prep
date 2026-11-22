@@ -1,85 +1,101 @@
-// v3 build: multi-file site (index.html, app.css, app.js, sw.js, data/*.json) + single-file offline bundle
+// v4 build: minimal "search -> read aloud" site. Writes index.html, app.css, app.js, sw.js, data/index.json, data/answers.json,
+// interview-prep.html (single-file offline copy) and NOTES-invented-details.md (private notes: every invented detail per answer).
 import fs from 'fs';
 import crypto from 'crypto';
 const J = f => JSON.parse(fs.readFileSync(f, 'utf8'));
 const d = J('data.json'), L = J('list.json');
 d.p10 = J('p10.json');
-const E = J('enrich.json');
-const AL = J('aliases.json');
+const E = J('enrich.json'), AL = J('aliases.json');
 const TITLES = fs.existsSync('titles.json') ? J('titles.json') : {};
 const DUPS = fs.existsSync('dups.json') ? J('dups.json') : {};
-const KIT = J('kit.json'), TOP = J('top50.json');
-const PARTS = [
- ['p1','Part 1: Core Technical','C#, .NET, ASP.NET Core, EF Core, WCF, SQL, testing, frontend and the Node/Python/Java stacks.'],
- ['p2','Part 2: Cloud, DevOps, Security, AI, Design','AWS, IaC, containers, CI/CD, observability, Kafka and RabbitMQ, security, MCP and AI tooling, and system design.'],
- ['p3','Part 3: Projects, Scenarios, HR','Your resume story, project deep-dives, production scenarios, STAR behavioural answers, Agile and HR.'],
- ['p4','Part 4: Resume, C#, DI, ASP.NET Core, Web API','Your list sections 1 to 5.'],
- ['p5','Part 5: EF Core, SQL, Microservices, AWS','Your list sections 6 to 9.'],
- ['p6','Part 6: IaC, Docker, K8s, CI/CD, Kafka, RabbitMQ, Testing','Your list sections 10 to 17.'],
- ['p7','Part 7: React, TS, Node/Python, SFTP, WCF, GxP','Your list sections 18 to 23.'],
- ['p8','Part 8: MCP, AI Design, Security, System Design','Your list sections 24 to 27.'],
- ['p9','Part 9: CSV, Releases, Agile, Java, HR, Verification','Your list sections 28 to 34.'],
- ['p10','Part 10: Deep dives (middleware and more)','Standalone deep answers: middleware, custom middleware, filters, options, hosted services, logging, rate limiting, caching, JWT, Span, channels and more.']];
+const KEYS = ['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10'];
 const nrm = t => (' ' + String(t).toLowerCase().replace(/c#/g,' csharp ').replace(/c\+\+/g,' cpp ').replace(/[^a-z0-9\u00c0-\uffff]+/g,' ') + ' ').replace(/\s+/g,' ');
 const words = s => (s.match(/[A-Za-z0-9][A-Za-z0-9'’.\-]*/g) || []).length;
-// list -> refs
+// list item -> canonical cards
 const map = {};
 const add = (id, ref) => { (map[id] = map[id] || []); if (!map[id].includes(ref)) map[id].push(ref); };
 fs.readFileSync('covered.txt','utf8').trim().split('\n').forEach(l => { const [a,b] = l.trim().split(/\s+/); add(a,b); });
 for (let p = 4; p <= 9; p++) d['p'+p].QS.forEach((q,i) => { if (q[7]) q[7].split(',').forEach(id => { if (!id.endsWith('x')) add(id.trim(), 'p'+p+'-'+(i+1)); }); });
 d.p10.QS.forEach((q,i) => { if (q[7]) q[7].split(',').forEach(id => { map[id.trim()] = ['p10-'+(i+1)]; }); });
-const LIST = L.map(s => ({ n: s.n, title: s.title, items: s.items.map(it => ({ id: it.id, text: it.text, refs: map[it.id] || [] })) }));
-const missing = LIST.flatMap(s => s.items).filter(i => !i.refs.length);
+const items = L.flatMap(s => s.items.map(it => ({ id: it.id, text: it.text, refs: map[it.id] || [] })));
+const missing = items.filter(i => !i.refs.length);
 if (missing.length) { console.error('MISSING', missing.map(i=>i.id).join(',')); process.exit(1); }
-const cards = [], detail = {}, parts = [];
-let noSay = [];
-for (const [key, label, sum] of PARTS) {
+// text clean-up: brackets mark invented details in the source; on screen they are plain words. Trailing "I can explain..." offers are dropped.
+const OFFER = /^(I can|I could|I'?d be happy|Happy to|If you'?d like|If useful|Let me know)\b/i;
+const unbr = s => s.replace(/\[([^\[\]]+)\]/g, '$1');
+function clean(paras) {
+  const out = paras.map(p => p.trim()).filter(Boolean);
+  for (;;) {
+    if (!out.length) break;
+    const last = out[out.length - 1], ss = last.split(/(?<=[.!?])\s+/);
+    if (!OFFER.test(ss[ss.length - 1])) break;
+    ss.pop(); if (ss.length) out[out.length - 1] = ss.join(' '); else out.pop();
+  }
+  return out.map(unbr);
+}
+const KEEPVIS = { Diagram: 1, Sequence: 1, Pyramid: 1, ColumnSeries: 1 };   // pictures only; tables/step lists would just be more to read
+const unbrDeep = v => typeof v === 'string' ? unbr(v) : Array.isArray(v) ? v.map(unbrDeep) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unbrDeep(x)])) : v;
+const topics = {}, cards = [], answers = {}, notes = [], slugs = {}, stats = [];
+const bad = [];
+for (const key of KEYS) {
   const P = d[key];
-  parts.push({ key, label, sum, topics: P.ORDER.map(t => ({ t, label: P.T[t] })) });
-  detail[key] = {};
+  P.ORDER.forEach(t => { topics[key + ':' + t] = P.T[t]; });
   P.QS.forEach((q, i) => {
     const id = key + '-' + (i + 1), e = E[id] || {};
     const title = TITLES[id] || q[2];
+    if (!e.x || !e.x.length) { bad.push(id + ' no spoken answer'); return; }
     const t = nrm(title), k = new Set((e.k || '').split(',').map(x => x.trim()).filter(Boolean));
     AL.forEach(g => { const trig = g.filter((m, j) => j === 0 || m[0] === '*'); if (trig.some(m => t.includes(' ' + nrm(m.replace(/^\*/, '')).trim() + ' '))) g.forEach(m => k.add(m.replace(/^\*/, ''))); });
-    const say = e.x ? e.x : (e.y ? [e.y] : []);
-    if (!e.x) noSay.push(id);
-    const w = say.reduce((a, s) => a + words(s), 0);
-    const c = { id, p: key, n: i + 1, t: q[0], d: q[1], q: title, h: q[4] || '', s: say, w };
+    let slug = title.toLowerCase().replace(/c#/g, 'csharp').replace(/\.net/g, 'dotnet').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').split('-').slice(0, 9).join('-') || id;
+    if (slugs[slug]) slug += '-' + id; slugs[slug] = id;
+    const c = { id, p: key, t: q[0], q: title, sl: slug };
     if (k.size) c.k = [...k].join(', ');
-    if (q[5]) c.v = 1;
-    if (q[6]) c.st = 1;
     if (DUPS[id]) c.dup = DUPS[id];
     cards.push(c);
+    const s = clean(e.x), w = s.reduce((a, x) => a + words(x), 0);
+    if (/\[|\]/.test(s.join(' '))) bad.push(id + ' bracket left');
+    if (/\bas (I )?mentioned\b|\bsee (part|section|question)\b|\bother answer\b/i.test(s.join(' '))) bad.push(id + ' cross-reference');
+    const a = { s };
     const vis = q[5] ? P.VIS[q[5]] : null;
-    detail[key][id] = { a: q[3] || '', fu: q[6] || '', vis, qa: e.q || '', i: e.i || [], c: e.c || [], f: e.f || [], wv: e.w || [] };
+    if (vis && KEEPVIS[vis.type]) a.v = unbrDeep(vis);
+    answers[id] = a;
+    if (!c.dup) stats.push({ id, w });
+    const inv = [];
+    e.x.forEach(p => { for (const m of p.matchAll(/\[([^\[\]]+)\]/g)) if (!inv.includes(m[1])) inv.push(m[1]); });
+    if (inv.length) notes.push('- **' + id + '** ' + title + '\n  - ' + inv.join('\n  - '));
   });
 }
-const core = { v: '', parts, cards, list: LIST, top: TOP, kit: KIT };
-const ids = new Set(cards.map(c => c.id));
-TOP.forEach(id => { if (!ids.has(id)) { console.error('TOP50 bad id', id); process.exit(1); } });
-Object.entries(DUPS).forEach(([a, b]) => { if (!ids.has(a) || !ids.has(b)) { console.error('DUP bad', a, b); process.exit(1); } });
+if (bad.length) { console.error('PROBLEMS', bad.join('; ')); process.exit(1); }
+// "also asked as": your list items + merged duplicates, so every wording is searchable
+const byId = {}; cards.forEach(c => byId[c.id] = c);
+const aka = {};
+items.forEach(it => it.refs.forEach(r => { const tgt = byId[r] && byId[r].dup ? byId[r].dup : r; (aka[tgt] = aka[tgt] || []).push(it.text); }));
+cards.forEach(c => { if (c.dup) (aka[c.dup] = aka[c.dup] || []).push(c.q); });
+cards.forEach(c => { const seen = new Set([nrm(c.q)]); const a = (aka[c.id] || []).filter(x => { const n = nrm(x); if (seen.has(n)) return false; seen.add(n); return true; }); if (a.length && !c.dup) c.a = a; });
+const index = { v: '', topics, cards, items: items.length };
+fs.writeFileSync('itemmap.json', JSON.stringify(items.map(it => [it.id, it.text, [...new Set(it.refs.map(r => byId[r] && byId[r].dup ? byId[r].dup : r))]])));
 // write
 const OUT = '..';
 fs.mkdirSync(OUT + '/data', { recursive: true });
-const files = {};
-files['data/core.json'] = JSON.stringify(core);
-for (const k in detail) files['data/d-' + k + '.json'] = JSON.stringify(detail[k]);
-const css = fs.readFileSync('web/app.css', 'utf8'), js = fs.readFileSync('web/app.js', 'utf8');
-const hash = crypto.createHash('sha1').update(css + js + Object.values(files).join('')).digest('hex').slice(0, 10);
-core.v = hash; files['data/core.json'] = JSON.stringify(core);
+['core.json', ...KEYS.map(k => 'd-' + k + '.json')].forEach(f => { try { fs.unlinkSync(OUT + '/data/' + f); } catch (e) {} });
+const css = fs.readFileSync('web/app.css', 'utf8'), js = fs.readFileSync('web/app.js', 'utf8'), shell = fs.readFileSync('web/index.html', 'utf8');
+const ansJ = JSON.stringify(answers);
+const hash = crypto.createHash('sha1').update(css + js + shell + JSON.stringify(index) + ansJ).digest('hex').slice(0, 10);
+index.v = hash;
+const files = { 'data/index.json': JSON.stringify(index), 'data/answers.json': ansJ };
 for (const f in files) fs.writeFileSync(OUT + '/' + f, files[f]);
 fs.writeFileSync(OUT + '/app.css', css);
 fs.writeFileSync(OUT + '/app.js', js);
-const sw = fs.readFileSync('web/sw.js', 'utf8').replace('__V__', hash).replace('__FILES__', JSON.stringify(['./', 'index.html', 'app.css?v=' + hash, 'app.js?v=' + hash, ...Object.keys(files).map(f => f + '?v=' + hash)]));
-fs.writeFileSync(OUT + '/sw.js', sw);
-const shell = fs.readFileSync('web/index.html', 'utf8');
+fs.writeFileSync(OUT + '/sw.js', fs.readFileSync('web/sw.js', 'utf8').replace('__V__', hash).replace('__FILES__', JSON.stringify(['./', 'index.html', 'app.css?v=' + hash, 'app.js?v=' + hash, ...Object.keys(files).map(f => f + '?v=' + hash)])));
 fs.writeFileSync(OUT + '/index.html', shell.replace(/__V__/g, hash).replace('<!--CSS-->', '<link rel="stylesheet" href="app.css?v=' + hash + '">').replace('<!--JS-->', '<script>window.__V="' + hash + '";</script><script src="app.js?v=' + hash + '" defer></script>'));
-// single-file offline bundle
 const inline = {}; for (const f in files) inline[f] = JSON.parse(files[f]);
-const bundle = shell.replace(/__V__/g, hash).replace('<!--CSS-->', () => '<style>' + css + '</style>')
-  .replace('<!--JS-->', () => '<script>window.__V="' + hash + '";window.__SINGLE=1;window.__INLINE=' + JSON.stringify(inline).replace(/</g, '\\u003c') + ';</script><script>' + js.replace(/<\/script/gi, '<\\/script') + '</script>');
-fs.writeFileSync(OUT + '/interview-prep.html', bundle);
-const ws = cards.map(c => c.w).sort((a, b) => a - b);
-console.log('ok v', hash, 'cards', cards.length, 'list', LIST.flatMap(s => s.items).length, 'core KB', (files['data/core.json'].length / 1024).toFixed(0), 'bundle KB', (bundle.length / 1024).toFixed(0));
-console.log('say words min', ws[0], 'median', ws[ws.length >> 1], 'max', ws[ws.length - 1], 'still old (no X):', noSay.length);
+fs.writeFileSync(OUT + '/interview-prep.html', shell.replace(/__V__/g, hash).replace('<!--CSS-->', () => '<style>' + css + '</style>')
+  .replace('<!--JS-->', () => '<script>window.__V="' + hash + '";window.__SINGLE=1;window.__INLINE=' + JSON.stringify(inline).replace(/</g, '\\u003c') + ';</script><script>' + js.replace(/<\/script/gi, '<\\/script') + '</script>'));
+fs.writeFileSync(OUT + '/NOTES-invented-details.md', '# Invented details (private notes)\n\n' +
+  'Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. ' +
+  'On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.\n\n' +
+  'Facts that come from the resume (not invented): deployments 6 hours to 2, 6 people to 1, about 77 MCP tools, the CIRT MCP server, the ~100-member engineering organisation.\n\n' +
+  '## By answer\n\n' + notes.join('\n') + '\n');
+const ws = stats.map(x => x.w).sort((a, b) => a - b);
+console.log('ok v', hash, 'cards', cards.length, 'answers (canonical)', stats.length, 'list items', items.length, 'index KB', (files['data/index.json'].length / 1024).toFixed(0), 'answers KB', (ansJ.length / 1024).toFixed(0), 'vis', Object.values(answers).filter(a => a.v).length);
+console.log('words min', ws[0], 'median', ws[ws.length >> 1], 'max', ws[ws.length - 1], 'under150', stats.filter(x => x.w < 150).map(x => x.id + ':' + x.w).join(' '));

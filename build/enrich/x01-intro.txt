@@ -62,7 +62,7 @@ X: The situation was that all our vendor file transfers were tied to one SFTP li
 X: My task was to fix it, and to make sure a library change would never touch business code again.
 X: I introduced a common ISftpClient interface for connect, upload, download and list, with a factory that picks the provider for each vendor from configuration. I added a base class for the shared parts like retries, timeouts and logging. Then I implemented three providers behind it, ComponentPro, SSH.NET and Rebex, and moved vendors over one at a time by configuration, verifying each one in UAT first.
 X: The result was that Rebex went to production with [no failed transfers caused by the switch], no business code changed, and a future library change is now one class plus a config entry.
-X: It's a nice real example of the open-closed principle and the strategy pattern. I'm happy to explain how I tested it.
+X: It's a nice real example of the open-closed principle and the strategy pattern.
 +@p4-7
 X: I'm looking for a senior backend or API engineer role, mainly on .NET, where I own the design and delivery of services, not just individual tickets.
 X: Ideally it involves AWS or another cloud, and event-driven systems with something like Kafka or RabbitMQ, because that's where I've built most of my experience. I'd like a product with real scale and high quality standards, where things like testing, observability and reliability are taken seriously, because that's how I've worked in a regulated domain.
@@ -73,7 +73,7 @@ X: I'm mainly expecting three things.
 X: First, bigger ownership: being trusted with design decisions and with production systems, not only implementing tickets. I've already been doing that with releases and the MCP platform, so I'm ready for more.
 X: Second, a strong engineering culture. That means proper code reviews, CI/CD, good monitoring and observability, blameless post-mortems when things go wrong, and some time to learn. In my current team, for example, our post-incident reviews after the RabbitMQ outage led to real fixes, and I value that kind of honesty.
 X: Third, a modern stack that's open to AI tools and new ideas, and a clear growth path, from senior towards lead or architect, with honest feedback along the way.
-X: In return, I bring reliable delivery, ownership of production quality, and a habit of improving the team's tooling. I'd be curious to know how growth and ownership work in your team.
+X: In return, I bring reliable delivery, ownership of production quality, and a habit of improving the team's tooling. That's exactly what I'm looking for, and from what I've seen so far, this role offers it.
 +@p4-9
 X: Honestly, it started because my first job at DXC was in C# and .NET. But I stayed because I think it's one of the best platforms for enterprise backends.
 X: There are a few reasons. C# is strongly typed, which catches a lot of mistakes at compile time, and the tooling, Visual Studio, Rider and the debugger, is excellent. Since .NET Core it's cross-platform, so our services run in Linux containers on AWS. Performance is very good, with Kestrel among the fastest web servers, and features like async/await, dependency injection, configuration and logging are built into the framework instead of bolted on.

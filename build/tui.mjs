@@ -1,89 +1,76 @@
-// UI test: all views at 390 and 1280, open every card, mock flow, keyboard; screenshots
+// UI test for the minimal site: 390 px and 1280 px. 0 JS errors, every answer renders, no extra controls, list-item coverage, screenshots.
 import puppeteer from 'puppeteer-core';
-const URL0 = process.argv.slice(2).find(a => /^http/.test(a)) || 'http://localhost:8765/';
-const FULL = process.argv.includes('--full'), SHOTS = process.argv.includes('--shots');
+import fs from 'fs';
+const URL0 = process.argv[2] || 'http://localhost:8765/';
+const SHOTS = process.argv[3] || '/workspace';
 const b = await puppeteer.launch({executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox']});
-const errs = []; let fail = 0;
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-function check(ok, msg) { if (!ok) fail++; console.log((ok ? 'PASS ' : 'FAIL ') + msg); }
-for (const W of [390, 1280]) {
-  const pg = await b.newPage(); await pg.setViewport({width: W, height: W < 500 ? 844 : 900, deviceScaleFactor: SHOTS && W < 500 ? 2 : 1, isMobile: W < 500, hasTouch: W < 500});
-  pg.on('pageerror', e => errs.push(W + ' ' + e.message)); pg.on('console', m => { if (m.type() === 'error' && !/favicon/.test(m.text())) errs.push(W + ' ' + m.text()); });
-  await pg.evaluateOnNewDocument(() => localStorage.clear());
+let fail = 0; const log = (ok, m) => { if (!ok) fail++; console.log((ok ? 'PASS ' : 'FAIL ') + m); };
+for (const [w, h, mobile] of [[390, 844, true], [1280, 900, false]]) {
+  const pg = await b.newPage(); const errs = [];
+  pg.on('pageerror', e => errs.push(e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
+  pg.on('requestfailed', r => { if (!/jsdelivr/.test(r.url())) errs.push('requestfailed ' + r.url()); });
+  await pg.setViewport({width: w, height: h, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: mobile ? 3 : 1});
   await pg.goto(URL0, {waitUntil: 'networkidle0'}); await pg.waitForFunction(() => window.__QA);
-  const n0 = await pg.evaluate(() => document.querySelectorAll('#list details.card').length);
-  check(n0 === 982, W + ' list tab shows ' + n0 + ' list items');
-  check(await pg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), W + ' no horizontal page scroll');
-  // all cards: open every bank card in All tab
-  await pg.evaluate(() => document.querySelector('#tabs .chip[data-k="all"]').click());
-  const r = await pg.evaluate(async (FULL) => {
-    const ds = [...document.querySelectorAll('#list details.card[data-id]')];
-    const pick = FULL ? ds : ds.filter((d, i) => i % 7 === 0);
-    pick.forEach(d => d.open = true);
-    await new Promise(r => setTimeout(r, 1500));
-    for (let i = 0; i < 40; i++) { if (!document.querySelector('.mermaid-box[data-code]') && !document.querySelector('.body:not([data-done])') && ![...document.querySelectorAll('.mermaid-box')].some(b => !b.querySelector('svg,pre'))) break; await new Promise(r => setTimeout(r, 500)); }
-    const opened = pick.length;
-    return {cards: ds.length, opened, say: document.querySelectorAll('#list .say').length, sayText: [...document.querySelectorAll('#list .say p')].filter(p => p.textContent.trim().length > 30).length, rate: document.querySelectorAll('#list .rate').length, more: document.querySelectorAll('#list details.more').length, moreOpen: document.querySelectorAll('#list details.more[open]').length, boxes: document.querySelectorAll('.mermaid-box').length, svgs: document.querySelectorAll('.mermaid-box svg').length, fallback: document.querySelectorAll('.mermaid-box pre').length, overflow: document.documentElement.scrollWidth > innerWidth + 1};
-  }, FULL);
-  check(r.cards === 670, W + ' All tab has ' + r.cards + ' cards');
-  check(r.say === r.opened && r.rate === r.opened && r.more === r.opened && r.moreOpen === 0, W + ' opened ' + r.opened + ': say ' + r.say + ', rate ' + r.rate + ', more ' + r.more + ' (open ' + r.moreOpen + ')');
-  check(r.svgs === r.boxes && r.fallback === 0, W + ' diagrams drawn ' + r.svgs + '/' + r.boxes + ', fallbacks ' + r.fallback);
-  check(!r.overflow, W + ' no horizontal scroll with cards open');
-  await pg.evaluate(() => document.querySelector('#collapse').click());
-  // search + suggestions
-  await pg.evaluate(() => document.querySelector('#tabs .chip[data-k="list"]').click());
-  await pg.focus('#search'); await pg.type('#search', 'custom middleware', {delay: 10}); await sleep(500);
-  const s = await pg.evaluate(() => ({sugg: document.querySelectorAll('#sugg:not(.hidden) .si').length, first: document.querySelector('#list details.card').getAttribute('data-id')}));
-  check(s.sugg > 0 && s.first === 'p10-2', W + ' search custom middleware: ' + s.sugg + ' suggestions, first card ' + s.first);
-  if (SHOTS && W === 390) await pg.screenshot({path: '/workspace/shot-search-390.png'});
-  await pg.keyboard.press('Enter'); await sleep(900);
-  const o = await pg.evaluate(() => { const d = document.querySelector('#list details.card[open]'); return d && d.getAttribute('data-id'); });
-  check(o === 'p10-2', W + ' Enter opens the best card: ' + o);
-  if (SHOTS && W === 390) await pg.screenshot({path: '/workspace/shot-card-390.png'});
-  // rate from card
-  await pg.evaluate(() => document.querySelector('#list details.card[open] .rate button.s').click());
-  check(await pg.evaluate(() => JSON.parse(localStorage.getItem('ip.r'))['p10-2'] === 's'), W + ' rating saved to localStorage');
-  // weak filter
-  await pg.evaluate(() => { const s = document.querySelector('#search'); s.value = ''; s.dispatchEvent(new Event('input')); });
-  await sleep(300);
-  await pg.evaluate(() => { document.querySelector('#tabs .chip[data-k="all"]').click(); const st = document.querySelector('#status'); st.value = 'weak'; st.dispatchEvent(new Event('change')); });
-  const wk = await pg.evaluate(() => [...document.querySelectorAll('#list details.card')].map(d => d.getAttribute('data-id')));
-  check(wk.length === 1 && wk[0] === 'p10-2', W + ' "Revise weak ones" filter shows ' + wk.join(','));
-  await pg.evaluate(() => { const st = document.querySelector('#status'); st.value = 'all'; st.dispatchEvent(new Event('change')); });
-  // views
-  for (const v of ['top', 'revise', 'kit']) {
-    await pg.evaluate(v => document.querySelector('#nav button[data-v="' + v + '"]').click(), v); await sleep(300);
-    const t = await pg.evaluate(v => ({len: document.querySelector('#view-' + v).innerText.length, cards: document.querySelectorAll('#view-' + v + ' details.card').length, vis: !document.querySelector('#view-' + v).classList.contains('hidden'), ov: document.documentElement.scrollWidth > innerWidth + 1}), v);
-    check(t.vis && t.len > 500 && !t.ov, W + ' view ' + v + ' renders (' + t.len + ' chars, ' + t.cards + ' cards)');
-    if (SHOTS && W === 390 && v === 'kit') await pg.screenshot({path: '/workspace/shot-kit-390.png'});
+  // search view: only the title, the box, the hint and the results
+  const sv = await pg.evaluate(() => ({buttons: document.querySelectorAll('button,select,textarea,input:not(#q)').length, inputs: document.querySelectorAll('input').length,
+    visibleLinks: [...document.querySelectorAll('a')].filter(a => a.offsetParent).length, res: document.querySelectorAll('#res li').length, hint: document.querySelector('#hint').textContent}));
+  log(sv.buttons === 0 && sv.inputs === 1 && sv.visibleLinks === 0 && sv.res === 0, w + 'px empty search view: 1 input, 0 buttons, 0 links, 0 results, hint "' + sv.hint + '"');
+  await pg.type('#q', 'middleware', {delay: 10}); await new Promise(r => setTimeout(r, 200));
+  const rs = await pg.evaluate(() => [...document.querySelectorAll('#res a')].map(a => a.textContent));
+  log(rs.length >= 5 && /middleware/i.test(rs[0]), w + 'px typing "middleware": ' + rs.length + ' results, #1 "' + rs[0] + '"');
+  if (mobile) await pg.screenshot({path: SHOTS + '/shot-search-390.png'}); else await pg.screenshot({path: SHOTS + '/shot-search-1280.png'});
+  await pg.evaluate(() => { const s = document.querySelector('#q'); s.value = ''; s.dispatchEvent(new Event('input')); });
+  await pg.type('#q', 'custom middleware', {delay: 10}); await new Promise(r => setTimeout(r, 200));
+  await pg.click('#res a'); await pg.waitForFunction(() => !document.querySelector('#answer').hidden && document.querySelectorAll('#abody p').length > 1);
+  const av = await pg.evaluate(() => ({hash: location.hash, q: document.querySelector('#aq').textContent, controls: [...document.querySelectorAll('button,select,textarea,a,input')].filter(e => e.offsetParent).map(e => e.id || e.tagName)}));
+  log(/^#q\//.test(av.hash) && av.controls.length === 1 && av.controls[0] === 'back', w + 'px answer view ' + av.hash + ': visible controls ' + JSON.stringify(av.controls));
+  await new Promise(r => setTimeout(r, 1500));
+  if (mobile) { await pg.screenshot({path: SHOTS + '/shot-answer-390.png'}); await pg.screenshot({path: SHOTS + '/shot-answer-390-full.png', fullPage: true}); } else await pg.screenshot({path: SHOTS + '/shot-answer-1280.png'});
+  // browser back returns to the search with the query kept
+  await pg.goBack(); await pg.waitForFunction(() => !document.querySelector('#search').hidden);
+  const bk = await pg.evaluate(() => ({q: document.querySelector('#q').value, n: document.querySelectorAll('#res li').length}));
+  log(bk.q === 'custom middleware' && bk.n > 0, w + 'px browser back -> search with query kept ("' + bk.q + '", ' + bk.n + ' results)');
+  // back arrow + swipe
+  await pg.click('#res a'); await pg.waitForFunction(() => !document.querySelector('#answer').hidden);
+  await pg.click('#back'); await pg.waitForFunction(() => !document.querySelector('#search').hidden);
+  log(true, w + 'px back arrow -> search');
+  if (mobile) {
+    await pg.click('#res a'); await pg.waitForFunction(() => !document.querySelector('#answer').hidden && document.querySelectorAll('#abody p').length > 1);
+    await pg.evaluate(() => { const el = document.querySelector('#answer'); const mk = (t, x) => new TouchEvent(t, {bubbles: true, touches: t === 'touchend' ? [] : [new Touch({identifier: 1, target: el, clientX: x, clientY: 300})], changedTouches: [new Touch({identifier: 1, target: el, clientX: x, clientY: 300})]}); el.dispatchEvent(mk('touchstart', 20)); el.dispatchEvent(mk('touchend', 220)); });
+    await pg.waitForFunction(() => !document.querySelector('#search').hidden, {timeout: 3000}).then(() => log(true, '390px swipe right -> search'), () => log(false, '390px swipe right did not go back'));
   }
-  // mock flow
-  await pg.evaluate(() => document.querySelector('#nav button[data-v="mock"]').click()); await sleep(200);
-  await pg.select('#mcount', '5'); await pg.select('#msrc', 'top');
-  await pg.click('#mstart'); await sleep(300);
-  let q1 = await pg.evaluate(() => document.querySelector('#mq').textContent);
-  const noAns = await pg.evaluate(() => !document.querySelector('#mans .say'));
-  check(!!q1 && noAns, W + ' mock shows only the question: ' + q1.slice(0, 50));
-  if (SHOTS && W === 390) await pg.screenshot({path: '/workspace/shot-mock-q-390.png'});
-  await pg.keyboard.press('Space'); await sleep(200);
-  check(await pg.evaluate(() => !!document.querySelector('#mans .say')), W + ' Space reveals the answer');
-  if (SHOTS && W === 390) await pg.screenshot({path: '/workspace/shot-mock-a-390.png'});
-  await pg.keyboard.press('1'); await sleep(500);
-  const q2 = await pg.evaluate(() => document.querySelector('#mq') && document.querySelector('#mq').textContent);
-  check(q2 && q2 !== q1, W + ' rating 1 moves to next question');
-  // swipe on phone
-  if (W < 500) {
-    const box = await pg.evaluate(() => { const r = document.querySelector('#stage').getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + 120}; });
-    await pg.touchscreen.touchStart(box.x + 100, box.y); await pg.touchscreen.touchMove(box.x - 100, box.y); await pg.touchscreen.touchEnd(); await sleep(200);
-    check(await pg.evaluate(() => !!document.querySelector('#mans .say')), W + ' swipe left reveals');
-  } else { await pg.keyboard.press('ArrowRight'); await sleep(100); }
-  await pg.keyboard.press('2'); await sleep(450); await pg.keyboard.press('Space'); await pg.keyboard.press('3'); await sleep(450);
-  await pg.keyboard.press('Escape'); await sleep(200);
-  const sum = await pg.evaluate(() => document.querySelector('#msum') && document.querySelector('#msum').innerText.slice(0, 80));
-  check(!!sum, W + ' Esc ends with summary: ' + (sum || '').replace(/\s+/g, ' '));
-  const hist = await pg.evaluate(() => JSON.parse(localStorage.getItem('ip.mh') || '[]'));
-  check(hist.length === 1 && hist[0].g === 1 && hist[0].s === 1 && hist[0].m === 1, W + ' mock history saved ' + JSON.stringify(hist[0]));
+  // every answer renders via its deep link
+  const all = await pg.evaluate(() => window.__QA.titles().filter(t => !t.dup));
+  let bad = [], words = [];
+  for (const t of all) {
+    await pg.evaluate(sl => { location.hash = '#q/' + sl; }, t.sl);
+    const r = await pg.waitForFunction(id => { const p = document.querySelectorAll('#abody p'); return !document.querySelector('#answer').hidden && p.length > 1 && !document.querySelector('#abody .wait') && document.querySelector('#aq').textContent; }, {timeout: 5000}, t.id).then(() => pg.evaluate(q => {
+      const txt = document.querySelector('#abody').innerText; return {ok: document.querySelector('#aq').textContent === q, br: /[\[\]]/.test([...document.querySelectorAll('#abody p')].map(p => p.textContent).join(' ')), w: txt.split(/\s+/).length, offer: /\bI can (explain|show|walk you|talk about)\b/.test(txt)};
+    }, t.q), () => ({ok: false}));
+    if (!r.ok || r.br || r.offer) bad.push(t.id + (r.br ? ' bracket' : '') + (r.offer ? ' offer' : ''));
+    words.push(r.w || 0);
+  }
+  log(!bad.length, w + 'px all ' + all.length + ' answers render from #q/slug deep links' + (bad.length ? ' BAD ' + bad.slice(0, 10).join(', ') : ''));
+  // dup deep link goes to the canonical answer
+  const dups = await pg.evaluate(() => window.__QA.titles().filter(t => t.dup));
+  for (const d of dups) { await pg.evaluate(sl => { location.hash = '#q/' + sl; }, d.sl); await new Promise(r => setTimeout(r, 150)); const q = await pg.evaluate(() => document.querySelector('#aq').textContent); const exp = all.find(x => x.id === d.dup).q; log(q === exp, w + 'px duplicate ' + d.id + ' deep link opens ' + d.dup); }
+  // diagrams render (pick a few with pictures)
+  const withVis = await pg.evaluate(async () => { const out = []; for (const t of window.__QA.titles()) { if (t.dup) continue; const a = await window.__QA.answer(t.id); if (a && a.v) out.push(t.sl); } return out; });
+  let svgOk = 0;
+  for (const sl of withVis.slice(0, 6)) { await pg.evaluate(s => { location.hash = '#q/' + s; }, sl); await pg.waitForFunction(() => document.querySelector('#abody .vis svg') || !document.querySelector('#abody .vis'), {timeout: 15000}).catch(() => {}); if (await pg.evaluate(() => !!document.querySelector('#abody .vis svg'))) svgOk++; }
+  log(svgOk >= 5, w + 'px diagrams: ' + withVis.length + ' answers have one; ' + svgOk + '/6 sampled rendered as SVG');
+  log(errs.length === 0, w + 'px JS errors: ' + errs.length + (errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''));
   await pg.close();
 }
-console.log('FAIL', fail, 'JS ERRORS', errs.length, errs.slice(0, 5));
-await b.close(); process.exit(fail || errs.length ? 1 : 0);
+// coverage: every list item is searchable and finds its answer
+{
+  const pg = await b.newPage(); await pg.goto(URL0, {waitUntil: 'networkidle0'}); await pg.waitForFunction(() => window.__QA);
+  const M = JSON.parse(fs.readFileSync(new URL('./itemmap.json', import.meta.url)));
+  const miss = await pg.evaluate(M => M.filter(([id, text, refs]) => { const r = window.__QA.search(text).slice(0, 10).map(x => x.id); return !refs.some(x => r.includes(x)); }).map(([id, text, refs]) => id + ' "' + text.slice(0, 60) + '" -> ' + refs.join('|')), M);
+  log(!miss.length, 'all ' + M.length + ' list items: searching the item text finds its answer in the top 10' + (miss.length ? ' (' + miss.length + ' missing) ' + miss.slice(0, 8).join(' || ') : ''));
+  const t1 = await pg.evaluate(M => M.filter(([id, text, refs]) => refs.includes((window.__QA.search(text)[0] || {}).id)).length, M);
+  console.log('INFO list items whose answer is #1: ' + t1 + '/' + M.length);
+  await pg.close();
+}
+console.log('FAILS', fail);
+await b.close(); process.exit(fail ? 1 : 0);
