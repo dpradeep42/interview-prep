@@ -1,0 +1,177 @@
++@p7-1
+Y: React is a JavaScript library for building user interfaces from reusable components. I describe what the UI should look like for a given state, and React updates the page efficiently when the state changes. It's maintained by Meta and has a huge ecosystem. I build reusable React components with TypeScript for our IRT screens.
+K: react, frontend, ui library, components
++@p7-2
+Y: A component is a function that takes props and returns what should be shown. An element is the plain object that a component returns, describing one piece of UI, which is what JSX creates. So a component is like a blueprint, and elements are what it produces each time it renders.
+K: component, element, jsx, react
++@p7-3
+Y: Class components are the older way, with this.state and lifecycle methods like componentDidMount. Functional components are just functions, and with hooks like useState and useEffect, they can do everything classes did, with less code and easier reuse. Today I write only functional components. Error boundaries are the main thing that still needs a class.
+K: functional components, class components, hooks, react
++@p7-4
+Y: Props are inputs passed into a component from its parent, and the component can't change them. State is data the component owns and can change, using useState, which causes it to re-render. So props flow down from the parent, and state lives inside the component. When two components need the same state, I lift it up to their common parent.
+K: props, state, props vs state, react
++@p7-5
+Y: The dependency array in useEffect tells React when to run the effect again. With values in it, the effect runs whenever one of them changes. If it's empty, the effect runs only once, after the first render, which is good for initial data loading. If there's no array at all, it runs after every render. Missing a dependency causes stale-data bugs.
+K: dependency array, useeffect, react hooks
++@p7-6
+Y: useMemo remembers the result of a calculation and recalculates it only when its dependencies change. useCallback remembers a function itself, so the same function object is passed on each render, which matters when passing it to memoized child components. So useMemo is for values, useCallback is for functions. I use them only where profiling shows a benefit.
+K: usememo, usecallback, memoization, react performance
++@p7-7
+Y: useRef gives me a box that keeps a value across renders without causing a re-render when it changes. I use it mainly to access a DOM element directly, like focusing an input, and to store things like a timer id or the previous value of a prop.
+K: useref, react hooks, dom reference
++@p7-8
+Y: The Context API shares values, like the logged-in user or theme, with any component in the tree without passing props through every level. Redux, with Redux Toolkit, is a full state management library with a central store, actions, devtools and middleware. Context is fine for simple, rarely changing data, and Redux suits large, frequently updated shared state.
+K: context api, redux, state management, prop drilling
++@p7-9
+Y: I use a library like React Query, or RTK Query, which handles fetching, caching, loading and error states, retries and refetching for me. Each screen shows a loading indicator, a clear error message with a retry, and an empty state. All API calls go through one client that adds the auth token and handles common errors.
+K: api calls, loading state, error handling, react query
++@p7-10
+Y: In a controlled component, React state holds the input's value and updates it on every change, so React is the single source of truth. In an uncontrolled component, the browser keeps the value and I read it when needed with a ref. Controlled is simpler for validation, and libraries like React Hook Form use uncontrolled inputs for better performance.
+K: controlled components, uncontrolled components, forms, react
++@p7-11
+Y: Unnecessary re-renders happen when a parent re-renders and all its children follow, when new objects or functions are created on every render and passed as props, or when a context value changes. I first profile with React DevTools, then fix it by moving state closer to where it's used, and using memo, useMemo and useCallback where it actually helps.
+K: re-rendering, react performance, memo
++@p7-12
+Y: The user logs in through our SSO identity provider, and the app keeps the session, ideally in secure cookies. Protected routes check if the user is logged in and has the right role, and redirect to login otherwise. But that only hides screens. The real protection is on the API, which validates the token and permissions on every request.
+K: react authentication, protected routes, route guards, sso
++@p7-13
+Y: I use React Hook Form with a schema library like Zod for validation, which keeps forms fast and the rules in one place, and the same schema gives the TypeScript types. I show errors next to each field, disable submit while saving, and show server-side validation errors too, since the API validates again.
+K: forms, react hook form, zod, validation
++@p7-14
+Y: I organise by feature rather than by file type, so each feature, like shipments or imports, has its components, hooks and API calls together. Shared UI components and utilities live in a common folder. I use TypeScript everywhere, a clear routing structure, lazy loading for big screens, and consistent patterns for data fetching and state.
+K: react project structure, feature folders, architecture
++@p7-15
+Y: React is a flexible library focused on the UI, with a huge ecosystem, and you choose your own tools for routing and state. Angular is a complete framework with strong conventions built in. Both are good choices. We use React for new screens because of the team's experience, flexibility and the ecosystem.
+K: react vs angular, frontend framework, comparison
++@p7-16
+Y: var is function-scoped and can be used before it's declared, which leads to bugs. let and const are block-scoped, so they only exist inside their curly braces. const means the variable can't be reassigned, though an object it points to can still be changed. I use const by default, let when I need to reassign, and never var.
+K: var, let, const, javascript, scope
++@p7-17
+Y: Hoisting means JavaScript processes declarations before running the code, so they're known at the top of their scope. Function declarations are fully hoisted, so I can call them before they appear. var is hoisted but set to undefined. let and const are hoisted too, but using them before the declaration throws an error, which is called the temporal dead zone.
+K: hoisting, javascript, temporal dead zone, var
++@p7-18
+Y: A closure is when a function remembers the variables from where it was created, even after that outer function has finished. It's used for private data and factory functions. In React, every render's functions capture that render's state, which is why you can get a stale value in a timer if you're not careful.
+K: closure, javascript, scope, stale closure
++@p7-19
+Y: A Promise represents a value that will be available in the future, and it can be pending, fulfilled or rejected. I can chain then and catch on it. async and await are just a cleaner way to write the same thing, so asynchronous code reads like normal step-by-step code with try-catch. For parallel calls, I use Promise.all.
+K: promise, async await, javascript, asynchronous
++@p7-20
+Y: Callback hell is when asynchronous steps are nested inside each other's callbacks, again and again, so the code moves to the right like a pyramid and becomes hard to read and handle errors. The fix is using Promises and async-await, and breaking logic into small named functions.
+K: callback hell, callbacks, promises, javascript
++@p7-21
+Y: Optional chaining, the question mark dot, safely reads a nested property and returns undefined instead of throwing if something in the chain is null. Nullish coalescing, the double question mark, gives a default value only when the left side is null or undefined. Unlike the OR operator, it keeps valid values like zero or an empty string.
+K: optional chaining, nullish coalescing, javascript, typescript
++@p7-22
+Y: any turns off type checking completely, so TypeScript lets you do anything with it, and bugs slip through. unknown also accepts any value, but forces me to check its type before using it. So unknown is the safe choice for things like parsed JSON or caught errors, and I avoid any.
+K: any, unknown, typescript, type safety
++@p7-23
+Y: Generics let me write a function or type that works with many types while keeping type safety. For example, an apiGet function that takes a type parameter T and returns a Promise of T, so each call gets the right response type. It's the same idea as generics in C#.
+K: typescript generics, generics, type safety
++@p7-24
+Y: A union type means a value can be one of several types, like string or number, or a fixed set of values like the shipment status. An intersection type combines several types into one with all their properties. Type narrowing is when TypeScript figures out the exact type after a check, like typeof, or a status field in a discriminated union.
+K: union types, intersection types, type narrowing, typescript
++@p7-25
+Y: In JavaScript, use strict turns on stricter rules, like throwing errors for undeclared variables, and ES modules are strict automatically. In TypeScript, the strict setting turns on all the strict checks, like strict null checks and no implicit any. I always turn on strict mode in TypeScript projects, because it catches many bugs early.
+K: strict mode, use strict, typescript strict
++@p7-26
+Y: Node runs JavaScript on a single main thread. Synchronous code blocks that thread until it finishes, so a slow synchronous operation blocks every other request. Asynchronous code, like file or network calls with callbacks, Promises or async-await, lets Node handle other work while waiting. So in Node, I keep all input and output asynchronous.
+K: node.js, synchronous, asynchronous, event loop, blocking
++@p7-27
+Y: Express is the most popular minimal web framework for Node, for building APIs and web apps. Middleware in Express are functions that receive the request, the response and a next function. They run in order, can change the request or response, end it, or call next. Error middleware has an extra error parameter. It's the same idea as ASP.NET Core middleware.
+K: express, express middleware, node.js, middleware
++@p7-28
+Y: I use try-catch around awaited code, and send all errors to one central error middleware that logs them and returns a clean response. Express 5 passes errors from async handlers to that middleware automatically. I also handle unhandled rejections at the process level, log them, and restart cleanly instead of running in a broken state.
+K: node.js error handling, express, try catch, unhandled rejection
++@p7-29
+Y: I validate every input with a schema library like Zod, check JWTs and permissions, and add security headers with Helmet. I add rate limiting, use parameterized queries, keep secrets in a secret store, and run npm audit or similar in the pipeline to catch vulnerable packages.
+K: node.js security, express security, helmet, validation
++@p7-30
+Y: Node is great for input-output heavy services and lets the team use one language with the front end. .NET has stronger typing, higher raw performance for heavy work, and very mature tooling for large business systems. We use .NET for our core domain services, and Node for small tools where it fits better.
+K: node.js vs .net, backend comparison
++@p7-31
+Y: We used Python where it was the right tool. Pydantic made checking vendor file formats quick and easy to read, so I built a [vendor file pre-validation service] with FastAPI that returns exact errors before our .NET import runs. Python is also used with Shell and Ansible for our release automation. Our core services stay in .NET.
+K: why python, fastapi, pydantic, scripting
++@p7-32
+Y: I split a FastAPI app into routers per feature, Pydantic models for requests and responses, a service layer for business logic, and a data layer. Dependencies, like the database session or current user, come through FastAPI's Depends. Settings come from environment variables through Pydantic settings. It has tests with pytest and runs in Docker.
+K: fastapi structure, routers, pydantic, python
++@p7-33
+Y: In FastAPI, I add a dependency that reads the Bearer token from the header and validates the JWT from our identity provider: signature, issuer, audience and expiry. Endpoints that need a logged-in user declare that dependency, and I add role checks on top. FastAPI's OAuth2 helpers also show this in the docs page.
+K: fastapi authentication, jwt, oauth2, depends
++@p7-34
+Y: SFTP is secure file transfer over SSH, usually on port 22, with everything encrypted in one connection. FTP is the old protocol that sends data and even passwords in plain text. FTPS is FTP with TLS encryption added, but it uses separate data connections, which can be hard with firewalls. For vendor file exchange, we use SFTP.
+K: sftp, ftp, ftps, file transfer, comparison
++@p7-35
+Y: SFTP can log in with a password or with a key pair. With keys, the vendor's server has our public key, and we prove we hold the private key, so no secret is sent over the network. Key authentication is more secure and better for automation. We also check the server's host key fingerprint to avoid connecting to a fake server.
+K: sftp authentication, private key, password, host key
++@p7-36
+Y: All three libraries implement our ISftpClient interface. A factory reads which library to use for each vendor from configuration, for example DepotA uses Rebex, and returns that implementation. So switching a vendor to another library is just a configuration change, with no code deployment.
+K: provider switching, factory, configuration, sftp
++@p7-37
+Y: Our base class wraps every operation with Polly: [3] retries with exponential backoff and jitter for temporary errors like timeouts, using a fresh connection each time. Login and host key failures are not retried, because they won't fix themselves. After the last attempt, the job is marked failed and an alert goes to support, and the next scheduled run tries again.
+K: sftp retries, polly, connection failures, resilience
++@p7-38
+Y: After uploading, I compare the remote file size with the local one, and check a SHA-256 checksum where the vendor supports it. To avoid partial files, I upload with a temporary name and rename it when complete, so the vendor never picks up half a file. When downloading, I only read complete files and verify them before processing.
+K: file integrity, checksum, partial transfer, sftp
++@p7-39
+Y: Files have predictable names with vendor, type, timestamp and sequence. We keep a processed-files table keyed by name and hash, so the same file is never imported twice, even if it's sent again. Processed files are moved to an archive folder on the server.
+K: duplicate files, deduplication, file hash, sftp
++@p7-40
+Y: Private keys and passwords are stored in [AWS Secrets Manager] and read at runtime using the service's IAM role, never kept in config files or the code repository. Host key fingerprints are pinned in configuration. Keys are rotated with vendors on a schedule, through change control, and access is logged.
+K: sftp credentials, secrets manager, key rotation, security
++@p7-41
+Y: Vendor servers differ, so I faced a few problems. A depot vendor disabled old algorithms, which broke ComponentPro and led us to Rebex. Another vendor moved their pickup folder without telling our team, so we added post-upload checks and alerts. And large files timed out on slow links, which I fixed with longer timeouts and resumable uploads.
+K: sftp problems, challenges, vendors, story
++@p7-42
+Y: For unit tests, I use a fake ISftpClient to test our logic. For integration tests, I run a real SFTP server in a Docker container in CI and test uploads, downloads, large files, timeouts, wrong keys and reconnects. Every provider runs the same contract tests. Then we test against each vendor's test server before going live.
+K: sftp testing, integration test, testcontainers, contract tests
++@p7-43
+Y: WCF is the older .NET Framework technology for SOAP services, supporting many protocols and the WS-star standards, with a lot of configuration. Web API is the modern way to build HTTP REST APIs with JSON, simpler and lighter. WCF server isn't supported in modern .NET, so new services use ASP.NET Core Web API, or gRPC.
+K: wcf, web api, soap, rest, comparison
++@p7-44
+Y: SOAP is a protocol where messages are XML envelopes with a header and body, and the service is described in a WSDL contract, so clients can generate strongly typed proxies. It supports standards for security and transactions. It's verbose but still common in older enterprise and healthcare systems.
+K: soap, xml, wsdl, web services
++@p7-45
+Y: In WCF, a service contract is the interface marked with the ServiceContract attribute, which defines the service. Operation contracts are the methods in it, marked with OperationContract, that clients can call. Data contracts are the classes sent back and forth, marked with DataContract and DataMember. Together they produce the WSDL.
+K: service contract, operation contract, data contract, wcf
++@p7-46
+Y: .NET Framework had no built-in dependency injection container like .NET Core does. Teams used third-party containers like Unity, Autofac or Ninject, and plugged them into ASP.NET MVC or Web API. WCF needed extra custom code to inject dependencies into services. In modern .NET, DI is built in everywhere.
+K: dependency injection, .net framework, unity, autofac
++@p7-47
+Y: We migrate from WCF because WCF server isn't supported in modern .NET, it ties us to old Windows hosting, and REST or gRPC are easier to build, test and integrate with. The challenges are clients that still need SOAP, WS-Security features, and making sure behaviour stays exactly the same, so we migrate one service at a time with thorough testing.
+K: wcf migration, modernization, challenges
++@p7-48
+Y: IRT stands for Interactive Response Technology. It's the system clinical trials use to randomly assign patients to treatment groups and manage the drug supply, kit dispensing and shipments to sites. It was earlier called IVRS or IWRS, voice and web response systems, and is also known as RTSM.
+K: irt, interactive response technology, rtsm, clinical trials
++@p7-49
+Y: GxP means Good Practice regulations, like Good Clinical Practice and Good Manufacturing Practice, where the x stands for the area. They make sure products are safe and data is reliable. For software, rules like FDA 21 CFR Part 11 cover electronic records and signatures. It's important because errors can affect patient safety and trial results.
+K: gxp, regulated, compliance, 21 cfr part 11, good practice
++@p7-50
+Y: In GxP, every requirement must be documented, tested and traced, changes go through formal change control, releases are validated with evidence, and every data change has an audit trail. So we write more documentation and testing evidence, and we can't just deploy whenever we like. It makes us very careful about quality.
+K: gxp software development, validation, change control
++@p7-51
+Y: Validation is proving that the software does what it's supposed to, with documented testing. Traceability means every requirement is linked to the tests that verify it, and to the code change. Auditability means every action is recorded, who did what, when and why, so it can be reviewed later by auditors.
+K: validation, traceability, auditability, gxp
++@p7-52
+Y: Change control is the formal process for any change to a validated system. Each change has a request, an impact and risk assessment, approvals, testing evidence, and a record of when it was released. Even emergency fixes must be documented afterwards. Our releases always reference an approved change request.
+K: change control, change request, gxp, compliance
++@p7-53
+Y: FV is formal validation, where the validation team runs scripted tests against the requirements and records evidence. TechOps is the operations team that installs and checks releases in controlled environments. UAT is user acceptance testing, where business users confirm the release meets their needs before it goes to production.
+K: uat, fv, techops, environments, validation
++@p7-54
+Y: Every production change needs an approved change request. It goes through gated pipelines, with the same validated artifact promoted through FV and UAT, and production deployment needs named approvers. Only a few people have production access. Even our MCP deployment tools keep these approvals and log every action.
+K: controlled changes, production changes, change control, approvals
++@p7-55
+Y: I combine engineering practices with regulatory ones. On the engineering side, code reviews, automated tests, the SonarQube gate and security scans in CI. On the regulatory side, documented requirements, traceability to tests, formal validation and change control. Automated tests make validation faster and more reliable.
+K: software quality, regulated environment, gxp, testing
++@p7-56
+Y: We use role-based access so people see only their studies, and we protect blinding so treatment information is visible only to those allowed. Data is encrypted in transit and at rest, every change has an audit trail, and we do security testing for OWASP issues. Fixes like the reverse tabnabbing one on [about 40] links came from that testing.
+K: clinical trial security, blinding, access control, audit trail
++@p7-57
+Y: IRT creates shipment orders and sends them to depot and courier vendors through SFTP files or APIs. Vendors send back status updates, like dispatched, in transit and delivered. Our integration services validate, deduplicate and process them safely, publish events to update shipments and notify sites, and alert on failures. A reconciliation report catches anything missed.
+K: shipment tracking, integration, vendors, sftp, events
++@p7-58
+Y: Our system integrates with depots and couriers through SFTP files and APIs, with EDC systems for clinical data, with our identity provider for single sign-on, and with notification services for emails. Each integration has monitoring, alerts and reconciliation, so we know quickly when something goes wrong.
+K: external integrations, vendors, edc, sso, sftp
++@p7-59
+Y: I protect data integrity at every layer. The database has constraints, transactions and foreign keys. The application validates input at each boundary and uses idempotency keys so retries don't duplicate data. Every change is recorded in an audit trail, and reconciliation reports confirm nothing was lost or altered between systems.
+K: data integrity, constraints, transactions, audit trail, alcoa
