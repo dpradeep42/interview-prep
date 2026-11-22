@@ -1,0 +1,198 @@
++@p6-1
+Y: If the state file is lost, Terraform no longer knows which real resources it manages, so the next apply would try to create everything again and fail or duplicate things. The resources themselves still exist. To recover, I'd import them back into state, or restore a previous version from the versioned S3 bucket. That's why we keep state remote, versioned and locked.
+K: terraform state, lost state, terraform import, recovery
++@p6-2
+Y: A Terraform module is a reusable package of infrastructure code with inputs and outputs, like a function. For example, one module creates an ECS service with its load balancer rules, alarms and IAM role. Each service just calls the module with its own values. This keeps environments consistent and avoids copy-paste.
+K: terraform modules, reuse, infrastructure as code
++@p6-3
+Y: I keep the same modules for every environment, and change only the input values, like instance sizes, using a separate variables file per environment. Each environment has its own state file, often in a separate AWS account, so a mistake in dev can never touch production. Changes are promoted from dev to test to production through the pipeline.
+K: terraform environments, workspaces, tfvars, structure
++@p6-4
+Y: I never put secrets in Terraform code or variable files in Git. Terraform creates the secret in Secrets Manager, but the value is set separately or generated and rotated there. Services read secrets at runtime. Also, the state file can contain sensitive values, so it's encrypted in S3 with restricted access.
+K: terraform secrets, secrets manager, sensitive values, state encryption
++@p6-5
+Y: All changes go through a pull request, where the pipeline runs terraform plan and reviewers check exactly what will change, especially anything being destroyed or replaced. We apply to dev first, then test, then production, with approval for production. For risky resources, we use lifecycle settings to prevent accidental deletion.
+K: infrastructure deployment, terraform plan, safe changes, approvals
++@p6-6
+Y: Docker is a tool for packaging an application with everything it needs, its runtime, libraries and settings, into an image, and running it as a container. The container runs the same way on my laptop, in testing and in production. Containers share the host's kernel, so they're much lighter and faster to start than virtual machines.
+K: docker, containers, images, containerization
++@p6-7
+Y: Each instruction in a Dockerfile, like COPY or RUN, creates a layer, and an image is a stack of these read-only layers. Docker caches layers, so if nothing changed in a step, it reuses it. That's why I copy the project file and restore packages before copying the rest of the code, so code changes don't trigger a full restore every time.
+K: docker layer, layer caching, dockerfile, build cache
++@p6-8
+Y: Both copy files into the image. COPY just copies local files, which is clear and predictable. ADD can also download from a URL and automatically extract tar files, which can cause surprises. So I always use COPY, unless I specifically need ADD's extraction.
+K: copy, add, dockerfile
++@p6-9
+Y: ENTRYPOINT defines the main command the container always runs, like dotnet MyApi.dll. CMD gives default arguments, or a default command, which can be easily overridden when starting the container. I use the exec form, with square brackets, so the app runs as the main process and receives the stop signal for graceful shutdown.
+K: cmd, entrypoint, dockerfile
++@p6-10
+Y: I use multi-stage builds, so the final image has only the runtime and the published app, not the SDK. I start from small base images, like the ASP.NET runtime or chiseled images, add a dockerignore file, and combine commands to avoid extra layers. Smaller images are faster to pull and have fewer vulnerabilities.
+K: image size, multi-stage build, chiseled image, dockerignore
++@p6-11
+Y: Docker Compose lets me define and run several containers together with one YAML file, like an API, a SQL Server and RabbitMQ, with their networks, ports and environment variables. One command starts the whole set. I use it for local development and testing, not for production.
+K: docker compose, local development, multi-container
++@p6-12
+Y: Containers on the same Docker network can reach each other by container name, and I publish ports to reach them from outside. Volumes store data outside the container's filesystem, so it survives when the container is removed, like a database's data folder. Containers themselves should be stateless and easy to replace.
+K: container networking, volumes, docker network, persistence
++@p6-13
+Y: I start from small, official, regularly updated base images, run as a non-root user, and never put secrets in the image. In the pipeline, I scan images for vulnerabilities, using tools like Trivy or ECR scanning, and fail the build on critical issues. I also pin versions and rebuild regularly to pick up security patches.
+K: image security, vulnerability scanning, non-root, trivy, ecr
++@p6-14
+Y: First I check the logs with docker logs, and use docker inspect to see the exit code and whether it was killed for out of memory. If it's running, I can exec into it to look around. Then I check environment variables, configuration, and connectivity to dependencies. On ECS, I check the stopped task reason and CloudWatch logs.
+K: container troubleshooting, docker logs, docker inspect, debugging
++@p6-15
+Y: The container process exits, with an exit code that explains why, for example 137 means it was killed, often for running out of memory. Depending on the restart policy, Docker may restart it. On ECS, the service scheduler starts a new task to replace it, and on Kubernetes, the pod is restarted. Repeated crashes show up as events and alerts.
+K: container crash, exit code, oom, restart policy
++@p6-16
+Y: Normal configuration goes in as environment variables, which .NET reads automatically through its configuration system. Secrets don't go in the image or plain variables in code. On ECS, the task definition references Secrets Manager or Parameter Store, and the values are injected securely when the container starts.
+K: environment variables, secrets, containers, configuration
++@p6-17
+Y: Kubernetes is an open-source platform for running containers across a cluster of machines. I describe the desired state, like run three copies of this image, and Kubernetes keeps it that way: it schedules containers, restarts failed ones, scales them, does rolling updates and handles service discovery and load balancing.
+K: kubernetes, k8s, container orchestration
++@p6-18
+Y: ClusterIP gives a service an internal IP that only works inside the cluster, and it's the default. NodePort opens a port on every node so the service can be reached from outside on that port. LoadBalancer asks the cloud provider to create a real load balancer in front of the service. In practice, we use ClusterIP with an Ingress for HTTP traffic.
+K: clusterip, nodeport, loadbalancer, kubernetes services
++@p6-19
+Y: A ReplicaSet makes sure a set number of identical pods are always running, and replaces any that die. I almost never create ReplicaSets directly. A Deployment manages them for me, creating a new ReplicaSet for each new version during a rolling update, which also makes rollback easy.
+K: replicaset, deployment, kubernetes, pods
++@p6-20
+Y: A rolling deployment replaces old instances with new ones a few at a time, checking health as it goes, so there's no downtime. A rollback means going back to the previous version if something is wrong. In Kubernetes I use kubectl rollout undo, and in ECS the deployment circuit breaker can roll back automatically.
+K: rolling deployment, rollback, kubernetes, ecs
++@p6-21
+Y: If a container in a pod crashes, the kubelet restarts it based on the restart policy, with increasing delays, which shows as CrashLoopBackOff if it keeps failing. If the whole pod or node is lost, the Deployment creates a new pod elsewhere. To debug, I use kubectl describe and kubectl logs with the previous flag.
+K: pod crash, crashloopbackoff, kubernetes, restart
++@p6-22
+Y: Each Kubernetes Service gets a stable DNS name from CoreDNS, like orders dot default dot svc. Pods call that name, and Kubernetes routes the traffic to the healthy pods behind the service, which it tracks through labels. So pods can come and go, but the name stays the same.
+K: service discovery, kubernetes dns, coredns, services
++@p6-23
+Y: I use RBAC with least privilege for people and service accounts, network policies to allow only needed traffic between pods, and pod security standards so containers run as non-root without extra privileges. Secrets are encrypted or come from an external vault, and images are scanned. And I keep the cluster updated.
+K: kubernetes security, rbac, network policies, pod security
++@p6-24
+Y: I build a Docker image of the .NET app in the pipeline and push it to a registry. Then I deploy it with a Deployment YAML or a Helm chart, setting replicas, resources, environment variables from ConfigMaps and Secrets, and readiness and liveness probes mapped to the app's health checks. A Service and Ingress expose it. The app handles SIGTERM for graceful shutdown.
+K: deploy .net to kubernetes, helm, deployment yaml, docker
++@p6-25
+Y: In Azure DevOps, the pipeline runs dotnet test after the build on every pull request and merge. It collects test results and code coverage and publishes them to the pipeline. If any test fails, the build fails and the pull request can't be merged. Integration tests use containers for real dependencies.
+K: unit tests in ci, dotnet test, pipeline, code coverage
++@p6-26
+Y: SonarQube is a static code analysis tool. It scans the code for bugs, security vulnerabilities, code smells, duplication and test coverage. It runs in our pipeline, and a quality gate decides if new code is good enough to merge. It helps keep code quality from slowly getting worse.
+K: sonarqube, static analysis, code quality, quality gate
++@p6-27
+Y: I use several gates. Branch protection needs reviewed pull requests and passing builds. The pipeline runs tests, the SonarQube quality gate and security scans. Then the build goes through test environments, FV and UAT, with approvals before production. And after release, monitoring and quick rollback catch anything that slipped through.
+K: quality gates, code review, branch protection, approvals, ci/cd
++@p6-28
+Y: An artifact is the output of a build that gets deployed, like a zip of the published app or a Docker image. I version it with a unique version, usually semantic version plus build number, and tag the Git commit. Then the same artifact is promoted through every environment, never rebuilt, so what we tested is exactly what we release.
+K: artifact, versioning, build once, semantic versioning
++@p6-29
+Y: The pipeline builds the image using the Dockerfile, tags it with the build version and commit, scans it for vulnerabilities, and pushes it to the registry, like ECR. Docker layer caching makes builds faster. The deployment stages then use that exact image tag.
+K: docker build pipeline, ecr, image tagging, ci/cd
++@p6-30
+Y: Azure DevOps connects to AWS through a service connection, ideally using short-lived credentials with OIDC instead of stored keys. The pipeline pushes the image to ECR, then updates the ECS task definition with the new image and updates the service, which does a rolling deployment. Infrastructure changes go through Terraform or CloudFormation steps.
+K: azure devops aws, ecs deployment, service connection, ci/cd
++@p6-31
+Y: Non-secret settings go in pipeline variables or variable groups per environment. Secrets go in secret variables or linked from a vault, and they're masked in logs. Even better, the app reads secrets at runtime from Secrets Manager, so the pipeline doesn't need to handle them at all. Nothing sensitive is committed to Git.
+K: ci/cd secrets, pipeline variables, variable groups, secrets
++@p6-32
+Y: In Azure DevOps, I set approvals and checks on environments or release stages, so production deployment waits until named approvers say yes. Approvals are recorded with who and when, which is important for our GxP audit. Our MCP release tools never bypass these: the agent can only check if an approval is pending.
+K: deployment approvals, azure devops, environments, gates
++@p6-33
+Y: Kafka is a distributed event streaming platform. A broker is a Kafka server. A topic is a named stream of events, split into partitions for parallelism. An offset is the position of a message in a partition. A producer writes events to topics, and a consumer reads them, keeping track of its offset so it can continue where it left off.
+K: kafka, broker, topic, partition, offset, producer, consumer
++@p6-34
+Y: Kafka scales by splitting topics into partitions spread across brokers, so many producers and consumers can work in parallel. For fault tolerance, each partition is copied to several brokers. If a broker fails, a copy takes over as leader. With acks set to all and min in-sync replicas, no acknowledged data is lost.
+K: kafka scalability, fault tolerance, partitions, replication
++@p6-35
+Y: Replication factor is how many copies of each partition exist, usually three in production. One copy is the leader, which handles all reads and writes, and the others are followers that copy its data. If the leader's broker fails, one of the in-sync followers is elected as the new leader, so the partition stays available.
+K: replication factor, leader, follower, isr, kafka
++@p6-36
+Y: Kafka guarantees order only within a single partition, not across the whole topic. So to keep related events in order, I give them the same key, like the shipment id, and they all go to the same partition. That's how our shipment status events stay in the right order for each shipment.
+K: kafka ordering, partition key, message ordering
++@p6-37
+Y: Retention is how long Kafka keeps messages, by time or size, whether or not they've been read, which allows replay. Log compaction is a different mode where Kafka keeps at least the latest message for each key and removes older ones. It's useful for topics that hold the current state, like the latest status per shipment.
+K: retention, log compaction, kafka
++@p6-38
+Y: If a consumer crashes, the group coordinator notices and rebalances, giving its partitions to the other consumers in the group. They continue from the last committed offset. Because I commit offsets only after processing, a few messages might be processed again, so my consumers are idempotent.
+K: consumer crash, rebalance, committed offset, kafka
++@p6-39
+Y: Consumer lag is how far behind a consumer group is, the difference between the latest offset and the committed offset. Growing lag means consumers can't keep up. I check if processing got slower, for example a slow database, if a poison message is stuck, or if traffic spiked. Then I fix the slow step or add consumers, up to the partition count.
+K: consumer lag, kafka monitoring, troubleshooting
++@p6-40
+Y: I scale by adding consumers to the same group, and Kafka spreads the partitions between them. But each partition goes to only one consumer in a group, so if there are more consumers than partitions, the extra ones sit idle. To scale further, I add partitions, or process messages in parallel inside each consumer while keeping order per key.
+K: scaling consumers, consumer group, partitions, kafka
++@p6-41
+Y: I usually create one topic per event type or business entity, with clear names, like shipment status changed. I choose a key that keeps related events in order, like shipment id, and enough partitions for future consumer parallelism. I define retention and use a schema for the event with versioning.
+K: kafka topic design, partitions, keys, schema
++@p6-42
+Y: A poison message is one that keeps failing. I retry temporary errors a few times, sometimes through retry topics with delays. If it still fails, I send it to a dead-letter topic with the error details, so the main flow continues. We alert on the dead-letter topic, fix the cause, and replay the messages.
+K: poison messages, retries, dead letter topic, dlq, kafka
++@p6-43
+Y: For security, I use TLS for encryption, authentication with SASL or IAM on Amazon MSK, and ACLs so each service can only read or write its own topics. For monitoring, the key things are consumer lag, under-replicated partitions, broker health, and request latency, with alerts on lag.
+K: kafka security, kafka monitoring, tls, acl, consumer lag
++@p6-44
+Y: RabbitMQ is a message broker. Producers send messages to an exchange, and the exchange routes them to queues based on bindings, which are rules linking an exchange to a queue with a routing key. Consumers read from queues. Once a message is acknowledged, it's removed. We use it for task-style work like notifications.
+K: rabbitmq, queues, bindings, exchange, message broker
++@p6-45
+Y: Acknowledgements confirm a message was handled. Publisher confirms are from the broker to the producer: RabbitMQ confirms it has safely stored the message, so the producer knows it wasn't lost. Consumer acknowledgements are from the consumer to the broker, saying I've processed it, now remove it. I use manual consumer acks after the work is committed.
+K: acknowledgement, publisher confirms, consumer ack, rabbitmq
++@p6-46
+Y: For messages to survive a broker restart, I need both a durable queue and persistent messages. A durable queue's definition survives the restart, and a persistent message is written to disk. If either is missing, messages can be lost. Today, quorum queues are the recommended durable, replicated queue type.
+K: durability, persistent messages, durable queue, quorum queues, rabbitmq
++@p6-47
+Y: Publishers can't send, and consumers lose their connection. That's why we use the outbox pattern, so events wait in the database and are sent when RabbitMQ is back. Clients reconnect automatically, and unacknowledged messages are delivered again. During our [mid-2024] outage, we replayed about [1,200] missed updates safely.
+K: rabbitmq down, outage, outbox, reconnect
++@p6-48
+Y: For temporary errors, I don't requeue immediately, because that creates a tight loop. Instead, I send the message to a retry queue with a delay, using a message TTL that dead-letters it back to the main queue, and count the attempts in a header. After a few attempts, it goes to a parking or dead-letter queue for investigation.
+K: rabbitmq retries, retry queue, ttl, dead letter exchange
++@p6-49
+Y: I protect every step. The producer saves events in an outbox and uses publisher confirms. The broker uses durable quorum queues with persistent messages. The consumer acknowledges manually only after committing its work, and failed messages go to a dead-letter queue. Confirms cost us about [5 percent] throughput, which is well worth it.
+K: message loss, reliability, publisher confirms, outbox, manual ack
++@p6-50
+Y: I scale consumers by running more instances on the same queue, the competing consumers pattern, and tune the prefetch count. I monitor queue depth, unacknowledged messages, consumer count, memory and disk alarms, using the management UI or Prometheus with Grafana, and alert when queues keep growing.
+K: rabbitmq scaling, monitoring, prefetch, competing consumers
++@p6-51
+Y: I look at where the time and errors are. If database waits or slow queries spike at the same time, it points to the database. If only one service has errors, especially after a deploy, it's likely the application. If many unrelated services fail together, it points to infrastructure or a shared dependency, like the network or broker. Traces make this quick.
+K: troubleshooting, root cause, application vs database vs infrastructure
++@p6-52
+Y: Every request gets a correlation id at the edge, which our middleware adds to every log line and passes in headers and message metadata to the next service. With OpenTelemetry, we also get trace ids and spans. So I search one id in CloudWatch, or open the trace, and see the whole journey across services.
+K: request tracing, correlation id, distributed tracing, opentelemetry
++@p6-53
+Y: First, the error logs of the failing service around the time the issue started, filtered by correlation id if I have one. Then I check the deployment history for recent changes. After that, the logs of its dependencies, like the database or message broker, and infrastructure events, like containers restarting or running out of memory.
+K: logs, troubleshooting, first steps, incident
++@p6-54
+Y: A symptom is what we see, like high CPU or slow responses. The root cause is why it happens, like a missing index causing table scans. I keep asking why until fixing that one thing would stop the problem. Then I prove it, by reproducing it, or showing that the fix removes the symptom.
+K: symptoms vs root cause, root cause analysis, 5 whys
++@p6-55
+Y: First I reduce the impact, often by rolling back, and keep people updated. Then I find the root cause with logs, metrics and traces. Afterwards we do a blameless review with a timeline and actions with owners, like an alert, a test, or a design fix. For example, after our RabbitMQ outage, we added publisher confirms and memory alerts.
+K: incident management, post-mortem, prevention, production incident
++@p6-56
+Y: In [2024], a security review found that external links in our UI used target blank without noopener. That lets the opened page change our original tab, for example to a fake login page. I fixed about [40] links across React and Angular by adding rel noopener noreferrer, and turned on an ESLint rule so the build fails if it comes back. It passed retest with no regressions.
+K: reverse tabnabbing, security fix, noopener, story
++@p6-57
+Y: Mocking means replacing a real dependency with a test double. A stub just returns fixed answers. A mock also checks that certain calls were made, like verifying an email was sent once. A fake is a simple working version, like an in-memory repository. I prefer fakes and stubs, and use mocks only when the call itself is what matters.
+K: mocking, mock, stub, fake, test doubles
++@p6-58
+Y: For unit tests, I inject fakes or mocks for the dependencies, so I test only the service's logic. For integration tests, I use real dependencies where possible, like SQL Server or RabbitMQ in Docker with Testcontainers, and replace only external systems, like vendor APIs, with fakes.
+K: testing dependencies, unit test, integration test, testcontainers
++@p6-59
+Y: I prefer testing controllers through HTTP, using WebApplicationFactory, which runs the real pipeline with routing, model binding, validation, filters and authentication. Then I check status codes and responses. Unit testing controller methods directly misses most of that. Business logic is tested separately in the services.
+K: controller testing, webapplicationfactory, integration test
++@p6-60
+Y: I test EF Core code against a real database, usually SQL Server in a Docker container with Testcontainers, because the in-memory provider doesn't behave like a real relational database, for example with constraints and transactions. Each test starts with known data. For pure business logic, I keep it outside the queries and unit test it.
+K: ef core testing, testcontainers, in-memory provider, database tests
++@p6-61
+Y: Playwright is a browser automation tool for end-to-end tests: it drives real browsers, clicks and checks pages, with auto-waiting. Cucumber is a BDD framework where tests are written in plain Given, When, Then language. They work together: Cucumber describes the scenario in business language, and Playwright does the actual steps in the browser.
+K: playwright, cucumber, bdd, e2e testing
++@p6-62
+Y: A flaky test sometimes passes and sometimes fails without any code change. Common causes are timing and fixed sleeps, shared data between tests, dependence on test order, real time and dates, or network calls. I find the cause and fix it, and only quarantine the test briefly, because flaky tests make people ignore real failures.
+K: flaky test, test reliability, intermittent failure
++@p6-63
+Y: Test coverage shows the percentage of code run by tests. It's useful to find untested code, but high coverage doesn't mean good tests, because tests without proper assertions also count. 100 percent is usually not worth the cost. I aim for high coverage on business rules and risky code, like our 80 percent gate on new code.
+K: test coverage, code coverage, 100 percent coverage
++@p6-64
+Y: A good unit test checks one behaviour, has a clear name that says what's expected, and is fast, independent and repeatable. Arrange-Act-Assert is the structure: arrange the data and dependencies, act by calling the method once, and assert the result. I test behaviour, not internal details, so refactoring doesn't break tests.
+K: unit test design, arrange act assert, aaa, best practices
++@p6-65
+Y: I write the test method as async Task and await the code, never use async void or .Result. For exceptions, I use await Assert.ThrowsAsync with the expected exception type and check the message if it matters. For timeouts and delays, I use a fake time provider, so tests don't actually wait.
+K: async testing, exception testing, throwsasync, xunit
++@p6-66
+Y: For unit tests, I test the message handler logic separately from the broker. For integration tests, I run real Kafka or RabbitMQ in Docker with Testcontainers, publish a test message, and check the consumer processed it, including retries, dead-lettering and duplicate handling. I also use contract tests for message formats.
+K: kafka testing, rabbitmq testing, testcontainers, messaging tests
