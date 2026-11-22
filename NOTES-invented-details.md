@@ -22,6 +22,16 @@ These are assumed or invented so the answers hang together. Change them here and
 - Backend: same as the existing architecture answer (ASP.NET Core microservices on AWS ECS, SQL Server on RDS, Kafka for events, RabbitMQ work queues, outbox, SFTP vendor integrations).
 - The one-sentence "what a study is" definition was added to answers that talk about studies (CSV import, study-transfer guard, randomisation design, IRT meaning, security, integrations, platform design and others).
 
+**On-premise Azure DevOps and AWS (CIRT story)**
+- Real (from you): the product began as CIRT (Cenduit IRT); IQVIA acquired Cenduit; IQVIA standardises on AWS; you still use both on-premise Azure DevOps Server / TFS (variable groups, build and release pipelines) and AWS.
+- Invented phases: (1) before you joined, TFS upgraded to Azure DevOps Server (still on-premise) and TFVC moved to Git with YAML builds; (2) from about 2022, new .NET services built on AWS (ECS, RDS, Secrets Manager, Parameter Store, Terraform) but still built and released from the same on-premise Azure DevOps Server; (3) older workloads moving lowest-risk first: lower environments (FV, TechOps) before UAT and production.
+- Still on-premise today (invented specifics): the Azure DevOps Server with its repos, pipelines, variable groups and approval history (kept because it is validation evidence); parts of the validated core CIRT environments (multi-node installs on 4 to 6 nodes); some older WCF integrations.
+- Agents that deploy to AWS run on EC2 in your AWS account, registered with the on-premise server, and use IAM roles; on-premise agents install the core.
+- Releases have not moved to CodePipeline; you deploy to AWS from Azure DevOps.
+- Why the MCP server: AI assistants (Copilot, Cursor) and ready-made integrations target cloud Azure DevOps Services and could not reach the on-premise server (older API versions, inside the company network); the server runs locally inside the network.
+- Migration STAR: the existing UAT "missing setting" incident (about 8% errors, rolled back in 15 minutes) is now explained as config drift between variable groups and Parameter Store; fixes: ValidateOnStart, a per-service configuration manifest, and a configuration parity check tool in the CIRT MCP server; no configuration-related release failures since.
+- Woven into: Tell me about yourself, Walk me through your resume, MCP server (why), Most challenging project, Azure DevOps pipeline and release flow, YAML vs classic, Explain your AWS architecture, Why AWS, Deploy to AWS from Azure DevOps, Multi-node deployments, How MCP interacts with Azure DevOps.
+
 
 Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.
 
@@ -596,6 +606,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 5
 - **p9-14** How do you perform multi-node deployments and ensure all nodes run the same version?
   - 4 to 6
+  - still on-premise for the validated environments
   - 98 percent
 - **p9-16** What is Agile, and Scrum vs Kanban?
   - two-week
@@ -761,3 +772,39 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - I worked on the backend that tracks consent versions per patient and flags re-consent automatically.
   - The site-facing screens are in React with TypeScript.
   - Sites now get a clear list of patients to re-consent at their next visit
+- **p14-1** Why do you use both on-premise Azure DevOps and AWS?
+  - which was later upgraded to Azure DevOps Server, still on-premise
+- **p14-2** Tell me about the CIRT to IQVIA transition from on-premise to AWS.
+  - The first phase was about tooling, before I joined. Team Foundation Server was upgraded to Azure DevOps Server, still on-premise, and source code moved from TFVC to Git, with YAML build pipelines.
+  - The second phase, from around 2022, when I joined,
+  - The third phase is moving older workloads, lowest risk first: the lower environments, like FV and TechOps, before UAT and production
+- **p14-3** What still runs on-premise today, and why?
+  - Its build agents also run on-premise, with some agents for AWS work running in our AWS account.
+  - parts of the validated core CIRT application environments
+  - 4 to 6
+  - like older WCF services
+- **p14-5** Why did you build an MCP server for on-premise Azure DevOps?
+  - older API versions
+- **p14-6** Tell me about a challenge during the Azure-to-AWS transition.
+  - In 2024,
+  - about 8 percent
+  - 15 minutes
+  - I added a configuration manifest to each service's repository, listing every required key per environment
+  - Since then, we've had no configuration-related release failures
+- **p14-7** How does a release flow across on-premise Azure DevOps and AWS?
+  - 4 to 6
+- **p14-10** Azure DevOps release pipelines vs AWS CodePipeline and CodeDeploy?
+  - We haven't moved our releases to CodePipeline
+- **p14-11** TFS and TFVC vs Git; Azure Repos vs GitHub or CodeCommit?
+  - It moved to Git, in Azure DevOps Server, after IQVIA acquired Cenduit,
+- **p14-12** Azure DevOps agent pools vs AWS CodeBuild and self-hosted runners?
+  - In our setup, the agents that deploy to AWS run on EC2 inside our AWS account and are registered with our on-premise Azure DevOps Server.
+- **p14-15** Azure Monitor and Application Insights vs AWS CloudWatch and X-Ray?
+  - 2024
+  - 4
+- **p14-16** Azure Service Bus vs AWS SQS and SNS?
+  - mid-2024
+- **p14-17** ARM templates and Bicep vs CloudFormation, CDK and Terraform?
+  - the core AWS stacks, like networking, are in CloudFormation, owned by the platform team, and newer service infrastructure, like queues and alarms, is in Terraform.
+- **p14-18** Azure App Service and VMs vs AWS Elastic Beanstalk, ECS and EC2?
+  - still runs on servers rather than containers

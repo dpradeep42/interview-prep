@@ -20,3 +20,13 @@ These are assumed or invented so the answers hang together. Change them here and
 - Backend: same as the existing architecture answer (ASP.NET Core microservices on AWS ECS, SQL Server on RDS, Kafka for events, RabbitMQ work queues, outbox, SFTP vendor integrations).
 - The one-sentence "what a study is" definition was added to answers that talk about studies (CSV import, study-transfer guard, randomisation design, IRT meaning, security, integrations, platform design and others).
 
+**On-premise Azure DevOps and AWS (CIRT story)**
+- Real (from you): the product began as CIRT (Cenduit IRT); IQVIA acquired Cenduit; IQVIA standardises on AWS; you still use both on-premise Azure DevOps Server / TFS (variable groups, build and release pipelines) and AWS.
+- Invented phases: (1) before you joined, TFS upgraded to Azure DevOps Server (still on-premise) and TFVC moved to Git with YAML builds; (2) from about 2022, new .NET services built on AWS (ECS, RDS, Secrets Manager, Parameter Store, Terraform) but still built and released from the same on-premise Azure DevOps Server; (3) older workloads moving lowest-risk first: lower environments (FV, TechOps) before UAT and production.
+- Still on-premise today (invented specifics): the Azure DevOps Server with its repos, pipelines, variable groups and approval history (kept because it is validation evidence); parts of the validated core CIRT environments (multi-node installs on 4 to 6 nodes); some older WCF integrations.
+- Agents that deploy to AWS run on EC2 in your AWS account, registered with the on-premise server, and use IAM roles; on-premise agents install the core.
+- Releases have not moved to CodePipeline; you deploy to AWS from Azure DevOps.
+- Why the MCP server: AI assistants (Copilot, Cursor) and ready-made integrations target cloud Azure DevOps Services and could not reach the on-premise server (older API versions, inside the company network); the server runs locally inside the network.
+- Migration STAR: the existing UAT "missing setting" incident (about 8% errors, rolled back in 15 minutes) is now explained as config drift between variable groups and Parameter Store; fixes: ValidateOnStart, a per-service configuration manifest, and a configuration parity check tool in the CIRT MCP server; no configuration-related release failures since.
+- Woven into: Tell me about yourself, Walk me through your resume, MCP server (why), Most challenging project, Azure DevOps pipeline and release flow, YAML vs classic, Explain your AWS architecture, Why AWS, Deploy to AWS from Azure DevOps, Multi-node deployments, How MCP interacts with Azure DevOps.
+

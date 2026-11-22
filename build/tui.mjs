@@ -18,7 +18,7 @@ for (const [w, h, mobile] of [[390, 844, true], [1280, 900, false]]) {
   const nCanon = await pg.evaluate(() => window.__QA.cards);
   log(sv.buttons === 0 && sv.inputs === 1 && sv.links === nCanon && new Set(sv.ids).size === nCanon && /^1\. Resume/.test(sv.secs[0]) && /Tell me about yourself/.test(sv.first),
     w + 'px home (empty search): ' + sv.links + '/' + nCanon + ' questions listed once each, ' + sv.secs.length + ' section labels, first "' + sv.first + '", 0 buttons');
-  log(sv.secs.some(x => /Angular/.test(x)) && sv.secs.some(x => /IRT/.test(x)), w + 'px home has Angular and IRT sections');
+  log(sv.secs.some(x => /Angular/.test(x)) && sv.secs.some(x => /IRT/.test(x)) && sv.secs.some(x => /Azure/.test(x)), w + 'px home has Angular, IRT and Azure/AWS sections');
   if (mobile) { await pg.screenshot({path: SHOTS + '/shot-home-390.png'}); await pg.evaluate(() => [...document.querySelectorAll('#res li.sec')].find(l => /IRT: clinical/.test(l.textContent)).scrollIntoView()); await pg.screenshot({path: SHOTS + '/shot-home-irt-390.png'}); await pg.evaluate(() => window.scrollTo(0, 0)); }
   // tapping a home question opens it; back returns to the home list
   await pg.evaluate(() => [...document.querySelectorAll('#res a')].find(a => a.dataset.id === 'p13-10').scrollIntoView({block: 'center'}));

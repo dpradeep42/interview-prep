@@ -1,0 +1,69 @@
+@p14-1
+S: hyb
+D: B
+T: Why do you use both on-premise Azure DevOps and AWS?
+K: azure and aws, both azure and aws, on-premise azure devops, hybrid, why two platforms, cirt, cenduit
+X: It comes from the history of our product. Our IRT platform started as CIRT, Cenduit's IRT system. Cenduit was later acquired by IQVIA, and IQVIA standardises on AWS for its cloud. So we have two worlds that grew at different times.
+X: The CIRT world was built on the Microsoft stack, on-premise: .NET, SQL Server, and Team Foundation Server for source control, builds and releases, [which was later upgraded to Azure DevOps Server, still on-premise]. The core application, its validated environments, and all its build and release pipelines, with variable groups, classic release stages and approval gates, live there.
+X: The AWS world is where new services and migrated services go, following IQVIA's cloud standards: Docker containers on ECS, RDS SQL Server, Secrets Manager and Parameter Store, Terraform, and CloudWatch.
+X: Why not move everything at once? Because it's a GxP-regulated product. Every validated environment and every release process has documented validation evidence. Moving a validated system means re-validating it, which takes real time and money and adds risk for live clinical trials. So the transition is gradual: new things go to AWS, and older pieces move when there's a good reason, like a major change that needs re-validation anyway.
+X: Today we still use both. Our on-premise Azure DevOps Server builds and releases everything, including the AWS services, and the validated core is still deployed with multi-node installs. That's also why I built the CIRT MCP server, to automate those on-premise deployments, which cut them from 6 hours to 2, and from 6 people to 1.
+@p14-2
+S: hyb
+D: I
+T: Tell me about the CIRT to IQVIA transition from on-premise to AWS.
+V: hybTimeline
+K: cirt to iqvia, transition, migration to aws, cenduit acquisition, phases, on-premise to cloud
+X: Our product began as CIRT, Cenduit's IRT platform. After IQVIA acquired Cenduit, the direction was to align with IQVIA's standards, and IQVIA's cloud is AWS. The transition has been gradual, in phases, because it's a GxP-regulated system running live clinical trials.
+X: [The first phase was about tooling, before I joined. Team Foundation Server was upgraded to Azure DevOps Server, still on-premise, and source code moved from TFVC to Git, with YAML build pipelines.] That gave us modern pull requests and branching without touching the validated runtime.
+X: [The second phase, from around 2022, when I joined,] was building new services on AWS. New .NET microservices run in Docker containers on ECS, with RDS, Secrets Manager, Parameter Store and Terraform. We kept the same on-premise Azure DevOps Server, so teams didn't have to learn a new release process, and the pipelines push images to ECR and deploy to ECS through an AWS service connection that assumes an IAM role.
+X: [The third phase is moving older workloads, lowest risk first: the lower environments, like FV and TechOps, before UAT and production], each with validation evidence. Some validated production pieces are still on-premise, because moving them means re-validation, and we time that with major releases.
+X: My part has been on both sides: building and deploying the AWS services, running release integration on the on-premise Azure DevOps Server, and automating those deployments with the CIRT MCP server, which took them from 6 hours to 2, and from 6 people to 1.
+@p14-3
+S: hyb
+D: I
+T: What still runs on-premise today, and why?
+K: still on-premise, on-prem today, what runs on premise, legacy, validated environments, why not migrate
+X: Our IRT platform started as CIRT, Cenduit's system, and after IQVIA acquired Cenduit, new work moved to AWS, which is IQVIA's cloud standard. But a few important things are still on-premise today.
+X: First, our build and release tooling: the Azure DevOps Server, which grew out of Team Foundation Server. All our repositories, build pipelines, release pipelines, variable groups and approval history are there. That history is part of our validation and audit evidence, so moving it isn't just a technical copy; the evidence must stay intact and traceable. [Its build agents also run on-premise, with some agents for AWS work running in our AWS account.]
+X: Second, [parts of the validated core CIRT application environments], which are deployed with multi-node installs: Azure DevOps release stages running Ansible, Python and Shell scripts on [4 to 6] nodes per environment.
+X: Third, some legacy integrations, [like older WCF services], that still serve partners and are being replaced over time.
+X: The reason is the same for all of them: in a GxP product, moving a validated system means re-validating it, with test evidence and approvals, and that has a real cost and risk for live clinical trials. So we move pieces when there's a good business reason, or when a major change needs re-validation anyway, not just to change hosting.
+X: Meanwhile, I make the on-premise side efficient. The CIRT MCP server I built automates builds, releases and multi-node deployments on that server, which cut deployments from 6 hours to 2, and from 6 people to 1.
+@p14-4
+S: hyb
+D: A
+T: How do you keep validated releases safe across two platforms?
+K: dual pipelines, two platforms release, validated release, hybrid release, release safety, aws and on-prem release
+X: Our product started as CIRT, Cenduit's IRT, and after IQVIA acquired Cenduit, new services moved to AWS, while the validated core and our Azure DevOps Server stayed on-premise. So one release often touches both: the on-premise core and services on AWS. The risk is that the two sides drift apart.
+X: I keep it safe with a few rules. One pipeline system: both sides are built and released from the same on-premise Azure DevOps Server, so there's one place for approvals, one release record and one audit trail. One release version: every component is tagged with the same release version, and we promote the exact same artifacts through FV, TechOps, UAT and production, never rebuilding in between. One order: the release plan says what goes first, usually database changes, then backend services on both platforms, then the UI, with backward-compatible changes so either side can go first safely. One configuration check: settings live in Azure DevOps variable groups for the on-premise side, and in Parameter Store and Secrets Manager for AWS, so before each deployment we compare the required keys on both sides. And one verification: after deployment, every on-premise node and every ECS service reports its version, and they must all match the release tag.
+X: Approvals stay human, with named approvers in Azure DevOps for controlled environments. The CIRT MCP server I built runs these steps and checks, which is how one person can now do what took six, in 2 hours instead of 6.
+@p14-5
+S: hyb
+D: A
+T: Why did you build an MCP server for on-premise Azure DevOps?
+K: why mcp on-premise, mcp for azure devops server, on-prem azure devops automation, ai cannot reach on-prem, copilot cursor on-premise
+X: It comes from our history. Our IRT platform started as CIRT, Cenduit's system, and after IQVIA acquired Cenduit, new services moved to AWS. But the builds, releases and validated deployments stayed on our on-premise Azure DevOps Server, because moving them means re-validation.
+X: That on-premise work was the slow part. A release deployment took about 6 hours and needed about 6 people. Someone triggered builds, someone created the release and checked variable groups for each environment, someone watched approvals, someone ran and checked multi-node installs, and someone copied logs into chat. The steps were spread across the Azure DevOps web UI, scripts, servers and checklists.
+X: AI assistants like Copilot and Cursor could help with code, but they couldn't reach our on-premise server. The ready-made integrations target Azure DevOps Services in the cloud, and our on-premise server runs [older API versions] behind the company network. So I built the CIRT MCP server in C#, with the official MCP SDK. It runs locally on each engineer's machine, inside the network, and exposes about 77 typed tools: builds, releases, approvals, variable group checks, multi-node deployments and environment checks.
+X: Safety was designed in. It uses each engineer's own access token, so actions run with their permissions and show their name. Read tools are separate from write tools, risky steps need confirmation, every call is logged, and production approvals stay with named people in Azure DevOps.
+X: The result: deployments went from 6 hours to 2, and from 6 people to 1.
+@p14-6
+S: hyb
+D: A
+T: Tell me about a challenge during the Azure-to-AWS transition.
+K: migration challenge star, configuration drift, variable groups parameter store mismatch, transition challenge, star aws migration
+X: Situation: Our product started as CIRT, Cenduit's IRT, and after IQVIA acquired Cenduit, new services were built on AWS, while releases still ran from our on-premise Azure DevOps Server. That split configuration across two places: Azure DevOps variable groups for the on-premise side, and Parameter Store and Secrets Manager for the AWS services. [In 2024,] after a UAT release, errors rose to [about 8 percent]. A new required setting had been added, but it was missing in the UAT Parameter Store, because the checklist only covered variable groups.
+X: Task: I rolled back within [15 minutes], and then took on the real problem: making sure configuration could never drift between the two platforms unnoticed.
+X: Action: I did three things. First, the services validate their options at startup with ValidateOnStart, so a missing setting fails the deployment instead of the first user request. Second, [I added a configuration manifest to each service's repository, listing every required key per environment]. Third, I added a configuration parity check to the CIRT MCP server: before each deployment, it reads the manifest, checks the Azure DevOps variable groups and the AWS Parameter Store and Secrets Manager paths for that environment, and reports any missing keys, without ever showing secret values. It became a standard pre-deployment step.
+X: Result: [Since then, we've had no configuration-related release failures], and the check caught missing settings several times before deployment. It also made the transition feel safer for the teams, because both platforms are checked the same way.
+@p14-7
+S: hyb
+D: I
+T: How does a release flow across on-premise Azure DevOps and AWS?
+K: release day, hybrid release flow, release across azure and aws, deployment flow, end to end release
+X: Our product started as CIRT, Cenduit's IRT, and after IQVIA acquired Cenduit, new services went to AWS, while our Azure DevOps Server and the validated core stayed on-premise. So a release day touches both, but it's driven from one place.
+X: It starts in Azure DevOps. YAML build pipelines, on every merge, build and test the .NET code, run SonarQube, and publish versioned artifacts. For AWS services, they also build Docker images and push them to Amazon ECR. Everything is tagged with the release version.
+X: Then the release pipeline promotes those exact artifacts through FV, TechOps, UAT and production. For the on-premise core, a release stage runs Ansible, Python and Shell install scripts across the [4 to 6] nodes of that environment, using the environment's variable group. For AWS services, a stage assumes an IAM role through a service connection, runs Terraform for any infrastructure changes, registers a new ECS task definition with the new image, and updates the service, which does a rolling deployment with health checks. Configuration comes from Parameter Store and Secrets Manager.
+X: Controlled environments need approval by named people before the stage runs, and release evidence, like test results and the change record, is attached, because it's GxP.
+X: Finally, verification: every node and every ECS service must report the release version and pass health and smoke checks. Today the CIRT MCP server I built drives these steps, which cut a deployment from 6 hours to 2, and from 6 people to 1.

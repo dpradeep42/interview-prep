@@ -4,11 +4,11 @@ import fs from 'fs';
 import crypto from 'crypto';
 const J = f => JSON.parse(fs.readFileSync(f, 'utf8'));
 const d = J('data.json'), L = J('list.json');
-for (const k of ['p10', 'p11', 'p12', 'p13']) d[k] = fs.existsSync(k + '.json') ? J(k + '.json') : { T: {}, ORDER: [], QS: [], VIS: {} };
+for (const k of ['p10', 'p11', 'p12', 'p13', 'p14']) d[k] = fs.existsSync(k + '.json') ? J(k + '.json') : { T: {}, ORDER: [], QS: [], VIS: {} };
 const E = J('enrich.json'), AL = J('aliases.json');
 const TITLES = fs.existsSync('titles.json') ? J('titles.json') : {};
 const DUPS = fs.existsSync('dups.json') ? J('dups.json') : {};
-const KEYS = ['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13'];
+const KEYS = ['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13','p14'];
 const nrm = t => (' ' + String(t).toLowerCase().replace(/c#/g,' csharp ').replace(/c\+\+/g,' cpp ').replace(/[^a-z0-9\u00c0-\uffff]+/g,' ') + ' ').replace(/\s+/g,' ');
 const words = s => (s.match(/[A-Za-z0-9][A-Za-z0-9'’.\-]*/g) || []).length;
 // list item -> canonical cards
@@ -105,7 +105,7 @@ cards.forEach(c => { const seen = new Set([nrm(c.q)]); const a = (aka[c.id] || [
 // home list: your question-list sections first (first occurrence wins), then every other card by topic
 const home = [], placed = new Set(), canon = id => (byId[id] && byId[id].dup) || id;
 L.forEach(sec => { const ids = []; sec.items.forEach(it => (map[it.id] || []).forEach(r => { const c = canon(r); if (byId[c] && !placed.has(c)) { placed.add(c); ids.push(c); } })); if (ids.length) home.push([sec.n + '. ' + sec.title.replace(/\s+[—-]+\s+.*$/, '').replace(/[“”]/g, '"'), ids]); });
-const REST = [['p13', 'fe'], ['p13', 'irt'], ['p13', 'irts'], ['p11', 'ng'], ['p12', 'rts'],
+const REST = [['p13', 'fe'], ['p13', 'irt'], ['p13', 'irts'], ['p14', 'hyb'], ['p14', 'map'], ['p11', 'ng'], ['p12', 'rts'],
   ['.NET, C# and ASP.NET Core deep dives', ['p10:mw', 'p10:net', 'p1:cs', 'p1:api', 'p1:ef', 'p1:sql']],
   ['More: testing, front end and other languages', ['p1:test', 'p1:fe', 'p1:poly']],
   ['More: cloud, DevOps, messaging, security and AI', ['p2:aws', 'p2:iac', 'p2:k8s', 'p2:cicd', 'p2:obs', 'p2:msg', 'p2:sec', 'p2:ai', 'p2:sd']],

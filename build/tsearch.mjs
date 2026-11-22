@@ -15,6 +15,10 @@ const CASES = [
  ['angular to react migration', ['p13-5']], ['angular and react side by side', ['p13-3']], ['design system angular react', ['p13-4']],
  ['what is a clinical trial', ['p13-6']], ['what does a study contain', ['p13-7']], ['screening', ['p13-9']], ['re-randomisation', ['p13-12']], ['rerandomization', ['p13-12']], ['econsent', ['p13-13']], ['darm', ['p13-14']],
  ['drug accountability', ['p13-14', 'p13-26']], ['admin console', ['p13-17']], ['emergency unblinding', ['p13-15']], ['stratification', ['p13-11']], ['visit schedule', ['p13-20']], ['protocol amendment', ['p13-18']], ['irt modules', ['p13-8']],
+ ['why azure and aws', ['p14-1']], ['cirt to iqvia transition', ['p14-2']], ['cenduit', ['p14-2', 'p14-1']], ['what still runs on premise', ['p14-3']], ['why mcp for on-premise azure devops', ['p14-5']],
+ ['azure to aws mapping', ['p14-8']], ['variable groups vs parameter store', ['p14-9']], ['release pipelines vs codepipeline', ['p14-10']], ['tfs vs git', ['p14-11']], ['agent pools', ['p14-12']],
+ ['service connection vs iam role', ['p14-13']], ['key vault vs secrets manager', ['p14-14']], ['application insights vs cloudwatch', ['p14-15']], ['service bus vs sqs', ['p14-16']], ['arm templates vs cloudformation', ['p14-17']], ['app service vs elastic beanstalk', ['p14-18']],
+ ['azure to aws migration challenge', ['p14-6']],
  ['outbox', ['p2-44']], ['cors', ['p1-29']], ['salary', ['p3-60']], ['strengths', ['p3-55']], ['weakness', ['p3-56']], ['clustered index', ['p1-44']], ['idempotent consumer', ['p2-42']]
 ];
 const b = await puppeteer.launch({executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox']});
