@@ -43,7 +43,7 @@ Q: IRT means Interactive Response Technology: the system clinical trials use to 
 @p7-49
 Q: GxP refers to "good practice" regulations (GCP, GMP, GLP and more) and related rules such as FDA 21 CFR Part 11 for electronic records and signatures and EU Annex 11. It matters because patient safety and trial data integrity depend on systems behaving correctly, and regulators can reject trial data or take action if systems aren't validated.
 - GAMP 5 guides risk-based validation of computerised systems.
-- Computer Software Assurance (FDA guidance finalised in 2025) encourages risk-based, less documentation-heavy testing.
+- Computer Software Assurance (FDA final guidance Sept 2025, updated Feb 2026) is written for medical-device production and quality systems, but its risk-based, less documentation-heavy testing approach is widely borrowed across GxP.
 ? What is 21 CFR Part 11? :: FDA rules for trustworthy electronic records and signatures.
 ? What is GAMP 5? :: Industry guidance for risk-based validation of computerised systems.
 

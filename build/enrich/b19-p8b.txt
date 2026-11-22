@@ -1,0 +1,238 @@
+@p8-34
+Q: Separate credentials per environment, with production tools disabled or requiring a different, approval-gated identity; production requires a change request reference and human approval in the release system; the environment is an explicit, validated parameter; confirmations show exactly what will happen; and change windows and audit apply.
+- Default to non-production; production must be opted into explicitly.
+- Dry-run previews before execution.
+? What stops a typo deploying to prod? :: Allow-listed environment names, confirmation and approval gates.
+? Should the agent ever hold prod credentials? :: Only delegated, short-lived and approval-gated.
+
+@p8-35
+Q: The agent creates a request (what, where, version, change request), the system notifies approvers, approval happens in the release tool (Azure DevOps environments) by named people, and the agent polls for the decision and continues or stops, with everything recorded.
+- Timeouts for pending approvals.
+- Approvers see the agent's summary and evidence.
+? Can the requester approve their own deployment? :: Not in production; separation of duties.
+? How are approvers notified? :: Azure DevOps notifications, email or Teams.
+
+@p8-36
+Q: An append-only log of every prompt-to-action step: user, agent, tool, arguments (masked), approval reference, result, timestamps and correlation id, stored centrally with retention, and linked to the release system's own audit.
+- Tamper-evident storage (WORM) for regulated contexts.
+- Include model and tool version for reproducibility.
+? Why log the prompt? :: To understand why the agent acted, with sensitive data masked.
+? Who reviews audits? :: QA, security and release managers as needed.
+
+@p8-37
+Q: Return structured errors, stop rather than guess on write operations, retry only idempotent transient steps, surface the failure and options to the human, keep state so work can resume from the failed step, and record the incident.
+- Never auto-escalate to more powerful actions after failure.
+- Summarise the relevant log lines.
+? Should the agent try alternatives automatically? :: Only for read-only diagnostics, not writes.
+? How do you resume? :: Per-step state and idempotent steps let you rerun only the failed part.
+
+@p8-38
+Q: Environment is an explicit, validated parameter (never inferred); per-environment config and credentials; stricter policies as you go up (dev free, UAT confirmed, production approved); consistent tools across environments; and visibility of what's deployed where.
+- Policy table maps environment to required checks.
+- Version checks prevent deploying untested versions upward.
+? Why not infer environment from context? :: Inference errors are dangerous; explicit is safer.
+? How do you prevent skipping environments? :: Promotion rules: only versions validated in the previous stage.
+
+@p8-39
+Q: The agent acts with the calling user's identity and roles (delegated, not a super-user); roles map to allowed tools and environments; tools check permissions server-side; tokens are short-lived and scoped; and the agent can never grant itself rights or call admin APIs.
+- On-behalf-of token flows for delegated access.
+- Audit escalation attempts.
+? What is privilege escalation for agents? :: Gaining more rights than the user, e.g. via a shared service account.
+? How does OBO help? :: The downstream API sees the real user's identity and permissions.
+
+@p8-40
+Q: Secrets stay server-side in a vault; tools use them but never return them; the model never sees credentials; tokens are short-lived; secrets are masked in logs and outputs; and access is audited and rotated.
+- Output filters detect secret patterns.
+- Separate secrets per environment.
+? What if the model asks for a secret? :: Tools refuse; there's no tool that returns secrets.
+? Why short-lived tokens? :: Leaks expire quickly.
+
+@p8-41
+Q: Classify actions by risk (read, reversible write, irreversible or production); run policy checks before execution (environment, permissions, change window, versions); require confirmation or approval by risk level; prefer dry runs; and verify the outcome afterwards.
+- Policy engine (OPA or custom rules) for consistent decisions.
+- Blast radius assessment: how many nodes or users affected.
+? Example of irreversible? :: Deleting data or dropping a database.
+? Post-action verification? :: Health checks, versions and smoke tests.
+
+@p8-42
+Q: An orchestrator assigns tasks to specialist agents (planner, deployer, verifier), each with only its own tools; shared state lives in a store, not in prompts; there are step and cost limits and human checkpoints; and every handoff is logged.
+- Verifier agent checks results independently.
+- Fail-safe: any agent can stop the workflow.
+? Why separate tools per agent? :: Least privilege and clearer behaviour.
+? How do you debug it? :: Traces of each agent step and handoff.
+
+@p8-43
+Q: OAuth 2.0 is an authorization framework where a client gets an access token to call an API on a user's or its own behalf (authorization code with PKCE, client credentials). OpenID Connect is an identity layer on top that adds the ID token and userinfo endpoint so apps know who the user is: OAuth is for access, OIDC for login.
+- Scopes limit what tokens allow.
+- OAuth 2.1 consolidates best practices (PKCE required, no implicit flow).
+? Can you use OAuth for login without OIDC? :: Not safely; access tokens aren't meant to prove identity to the client.
+? Client credentials flow? :: Machine-to-machine without a user.
+
+@p8-44
+Q: Single sign-on lets you log in once with a central identity provider and access many apps. The app redirects to the IdP; the user authenticates (with MFA); the IdP returns tokens or a SAML assertion; the app creates its own session; other apps reuse the IdP session without asking for credentials again.
+- Protocols: OIDC (modern) and SAML 2.0 (enterprise legacy).
+- Single logout is harder; requires end-session or front/back-channel logout.
+? SAML vs OIDC? :: SAML uses XML assertions; OIDC uses JSON tokens and suits APIs and mobile.
+? Why is logout hard with SSO? :: Each app has its own session; all must be ended.
+
+@p8-45
+Q: SQL injection is when untrusted input changes a SQL query's meaning (e.g. ' OR 1=1 --), letting attackers read or change data. Prevent it with parameterised queries (EF Core, Dapper parameters), never string concatenation, least-privilege database accounts, input validation and allow-lists for dynamic identifiers like sort columns.
+- EF Core FromSql with interpolated strings parameterises safely; FromSqlRaw with concatenation doesn't.
+- Stored procedures are safe only if they don't build dynamic SQL unsafely.
+```csharp
+var rows = await db.Shipments.FromSql($"SELECT * FROM Shipments WHERE SiteId = {siteId}").ToListAsync(); // parameterised
+```
+? Is FromSqlRaw unsafe? :: Only when you concatenate input; with parameters it's fine.
+? Can you parameterise column names? :: No; use allow-lists.
+
+@p8-46
+Q: HttpOnly stops JavaScript reading the cookie, limiting XSS token theft; Secure sends it only over HTTPS; SameSite (Lax or Strict) stops it being sent on cross-site requests, reducing CSRF; plus narrow Domain and Path, sensible expiry, and the __Host- prefix for strict scoping.
+- SameSite=None requires Secure, for legitimate cross-site use.
+- Browsers default to Lax when SameSite is missing.
+```csharp
+options.Cookie.HttpOnly = true; options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+options.Cookie.SameSite = SameSiteMode.Lax; options.Cookie.Name = "__Host-irt";
+```
+? What does __Host- enforce? :: Secure, Path=/ and no Domain attribute, so only the exact host gets it.
+? Lax vs Strict? :: Strict never sends on cross-site navigation; Lax allows top-level GET navigations.
+
+@p8-47
+Q: HTTPS, OAuth/JWT validation, authorization policies per endpoint and resource, input validation, rate limiting, a CORS allow-list, no sensitive data in logs, secrets in a vault, dependency scanning, private networking with service identities between services, and monitoring for abuse.
+- OWASP API Top 10 as checklist.
+- Zero trust between services.
+? First thing you check in a security review? :: Authorization on every endpoint, especially object-level.
+? How do you secure internal APIs? :: Tokens with audiences, network policies and mTLS where needed.
+
+@p8-48
+Q: IAM least privilege with roles and SSO, no root use, MFA; private subnets and security groups; encryption with KMS; S3 Block Public Access; Secrets Manager; CloudTrail, GuardDuty, Security Hub and AWS Config; patching; and separate accounts per environment with SCP guardrails.
+- IAM Access Analyzer for unused and external access.
+- WAF for public endpoints.
+? What does GuardDuty do? :: Detects threats from CloudTrail, VPC flow and DNS logs.
+? What are SCPs? :: Organisation-level policies limiting what accounts can do.
+
+@p8-49
+Q: dotnet list package --vulnerable, npm audit, plus pipeline tools (Dependabot, Mend, Snyk, Trivy for images); fail on critical issues, update regularly, and track exceptions with expiry dates.
+- NuGet audit runs during restore by default since .NET 8 (with transitive packages audited by default in .NET 9+).
+- SBOMs for inventory.
+? What is NuGet Audit? :: Restore-time vulnerability warnings using the GitHub Advisory Database.
+? Transitive vulnerabilities? :: Vulnerable packages pulled in indirectly; update or pin the fixed version.
+
+@p8-50
+Q: Assess severity and exploitability, contain (WAF rule, disable feature, rotate secrets), fix and test, release through an expedited but controlled change, verify, check logs for exploitation, notify as required, and run a post-mortem with actions.
+- Coordinate with security and compliance teams.
+- Communicate carefully; don't disclose details publicly before fixing.
+? How fast should you patch critical issues? :: Per policy, often within days, with containment immediately.
+? What if data was exposed? :: Follow incident and breach notification procedures.
+
+@p8-51
+Q: Stateless services behind a gateway and load balancer, autoscaled; resource-oriented design with paging, filtering and versioning; caching (CDN, Redis, HTTP caching with ETags); async processing for heavy work; database indexing, read replicas and sharding when needed; rate limiting; and observability.
+- Estimate load: requests per second, payload sizes, read/write ratio.
+- Connection pooling and async I/O.
+? First bottleneck? :: Usually the database.
+? How do you handle spikes? :: Autoscaling, queues and rate limiting.
+
+@p8-52
+Q: POST creates a short code (base62 of a unique id, or a random 7-character code with collision check); GET /{code} returns a 301/302 redirect. Store code → URL in a key-value store (DynamoDB), cache hot codes in Redis/CDN, and track clicks asynchronously.
+- 62^7 ≈ 3.5 trillion codes.
+- 301 is cached by browsers (less analytics); 302 keeps every hit visible.
+- Prevent abuse: rate limits, malware URL checks.
+? 301 vs 302? :: 301 is permanent and cached; 302 is temporary and keeps hits flowing to you.
+? How do you generate unique ids at scale? :: Distributed id generators (Snowflake-style) or pre-allocated ranges.
+
+@p8-53
+Q: Producers publish notification events to a queue; a service applies user preferences and templates, then channel workers (email, SMS, push) send through providers (SES, SNS) with retries, rate limits, deduplication and status tracking.
+- Idempotency keys to avoid duplicate sends.
+- Priority queues for urgent alerts.
+- Opt-out and quiet hours.
+? How do you avoid duplicate notifications? :: Dedup by event id and idempotent sending.
+? What if a provider is down? :: Retry with backoff or fail over to another provider.
+
+@p8-54
+Q: Services for Orders, Inventory, Payments and Shipping, each with its own database; placing an order runs a saga that reserves stock, takes payment and creates a shipment, with compensations on failure; an order state machine; outbox events; and idempotent APIs.
+- Inventory reservation with expiry.
+- Read models for order history.
+? What if payment fails after reserving stock? :: Compensate by releasing the reservation.
+? Orchestration or choreography? :: Orchestration for clear visibility of order state.
+
+@p8-55
+Q: The client asks the API for a presigned S3 URL and uploads directly (multipart for large files); an S3 event triggers virus scanning and validation; metadata goes to a database; processing runs async with status updates; downloads use presigned GET URLs; lifecycle rules manage storage.
+- Size and type limits in presigned POST policies.
+- Quarantine bucket until scanned.
+? Why direct-to-S3? :: Offloads bandwidth and avoids API timeouts.
+? How do you resume large uploads? :: Multipart upload with part retries.
+
+@p8-56
+Q: The API stores the job and enqueues it (SQS or RabbitMQ); autoscaled workers process with visibility timeouts, retries with backoff and a DLQ; handlers are idempotent; job status and progress are stored and exposed; scheduling uses EventBridge or cron; and priorities use separate queues.
+- Heartbeats extend visibility for long jobs.
+- Scale on queue depth.
+? What if a worker crashes mid-job? :: The message becomes visible again and another worker retries.
+? How do you report progress? :: Status table updated by workers, polled or pushed via SignalR.
+
+@p8-57
+Q: Idempotency keys on every request; a double-entry ledger; payment provider integration with webhooks; a state machine (created, authorised, captured, refunded, failed); reconciliation with provider reports; strong consistency for balances; and PCI compliance by tokenising cards through the provider.
+- Never store raw card numbers.
+- Webhook signature verification and idempotent handling.
+? Why double-entry? :: Every movement balances, making errors detectable.
+? How do you handle webhook duplicates? :: Dedup by event id.
+
+@p8-58
+Q: Clients keep WebSocket connections to gateway servers; messages are persisted (partitioned by conversation id) and fanned out via a pub/sub layer (Redis or Kafka) to the gateways holding recipients' connections; offline users get push notifications; ordering is per conversation; and read receipts are separate events.
+- SignalR with a Redis backplane or Azure SignalR Service in .NET.
+- Presence tracked with TTL heartbeats.
+? How do you scale WebSockets? :: Many gateway nodes with a pub/sub backplane.
+? How do you guarantee order? :: Sequence numbers per conversation.
+
+@p8-59
+Q: Services own their data and publish domain events through an outbox to Kafka; consumers are idempotent and update their own read models; sagas coordinate workflows; a schema registry manages contracts; DLQs and replay handle failures; and tracing follows events end to end.
+- Event versioning and compatibility rules.
+- Monitor consumer lag.
+? Biggest challenge? :: Debugging and consistency across asynchronous flows.
+? How do you rebuild a read model? :: Replay events from Kafka retention or a snapshot.
+
+@p8-60
+Q: A central identity provider (OIDC) issues short-lived signed JWT access tokens and rotating refresh tokens; APIs validate tokens locally with cached public keys (JWKS); MFA and risk-based checks at login; sessions and revocation handled with refresh token revocation and denylists; and the IdP scales horizontally behind load balancers.
+- Use a managed IdP (Entra ID, Cognito, Okta, Keycloak) rather than building one.
+- Rate-limit login endpoints; lockout and bot protection.
+? Why validate tokens locally? :: No call to the IdP per request, so it scales.
+? How do you revoke immediately? :: Short token lifetimes plus a jti denylist.
+
+@p8-61
+Q: Consistent hashing across cache nodes, replication for availability, LRU eviction and TTLs, the cache-aside pattern, invalidation on writes via events, and protection against stampedes (request coalescing, jittered TTLs, early refresh), monitored with hit ratio and latency.
+- Hot key mitigation: local caches or key replication.
+- Managed: ElastiCache cluster mode.
+? Why consistent hashing? :: Adding or removing nodes only moves a small share of keys.
+? What is a cache stampede? :: Many requests missing the same key at once and overloading the database.
+
+@p8-62
+Q: A web UI and vendor APIs go through a gateway with SSO; services for Study setup, Randomization, Supply, Shipments and Subjects; SQL Server per service with audit tables; Kafka and RabbitMQ for events and work queues; SFTP and API integrations; ECS across AZs; observability; and GxP controls (validation, audit trail, change control).
+- Randomization path is strongly consistent and highly available.
+- Blinding enforced by authorization.
+? Most critical service? :: Randomization and kit assignment.
+? How do you keep audit consistent? :: Audit written in the same transaction as changes.
+
+@p8-63
+Q: Scale stateless services horizontally with autoscaling, cache reads, and move heavy work to queues. For the database: indexes and query tuning first, then read replicas, caching, vertical scaling, archiving old data, partitioning, and finally sharding by study or tenant if needed.
+- CQRS read models for reporting.
+- Connection pooling and RDS Proxy.
+? Why shard by study? :: Most queries are within one study, so shards stay independent.
+? When add read replicas? :: When reads dominate and slight lag is acceptable.
+
+@p8-64
+Q: Caching for reference data (countries, depots, study configuration), sessions and token revocation, and read-heavy lookups. Kafka for high-volume event streams with multiple consumers and replay (shipment status). RabbitMQ for work queues and commands with per-message acks and retries (notifications, file processing). Synchronous APIs where the caller needs an immediate answer (randomize, get study).
+- Choose per interaction based on coupling, latency and delivery needs.
+? Why not Kafka for everything? :: Work queues with per-message retry and priorities fit RabbitMQ better.
+? What shouldn't be cached? :: Data needing strict consistency like slot allocation.
+
+@p8-65
+Q: Timeouts, retries with backoff for transient errors, circuit breakers, bulkheads, queues with DLQs, idempotency, sagas with compensations, Multi-AZ deployments, health checks with automatic replacement, graceful degradation, and tested backups and DR.
+- Chaos testing to validate.
+- Runbooks for known failures.
+? How do you know resilience works? :: Game days and failure injection tests.
+? What do you degrade first? :: Non-critical features like reports, protecting randomization.
+
+@p8-66
+Q: Monitor golden signals, structured logs with correlation ids, tracing, business metrics (randomizations, shipments), SLO alerts and dashboards. Secure with SSO and RBAC, encryption, secrets management, network isolation, WAF, scanning in CI/CD, audit trails and regular security testing.
+- SIEM integration for security events.
+- Alert on business anomalies (randomizations drop to zero).
+? Business metric worth alerting on? :: Randomizations per hour dropping unexpectedly during site hours.
+? How often do you pen-test? :: [At least yearly and after major changes].
