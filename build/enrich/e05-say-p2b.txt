@@ -1,0 +1,69 @@
++@p2-54
+Y: MCP, the Model Context Protocol, is an open standard for connecting AI assistants to tools and data. An MCP server exposes tools with names, descriptions and input schemas, and any MCP client, like Cursor, Claude or VS Code, can discover and call them. So I build the integration once and it works in many AI tools. I built an MCP server with about 77 tools for our deployments.
+K: mcp, model context protocol, ai tools, agent, tools
++@p2-55
+Y: The CIRT MCP server lets AI agents run builds, releases and multi-node deployments on our on-premise Azure DevOps Server. The about 77 tools are grouped by area, like builds, releases, deployments and diagnostics, and each has a clear name, description and typed inputs. It calls the Azure DevOps APIs with the user's own permissions. It cut deployment time from 6 hours to 2, and people needed from 6 to 1.
+K: mcp server, cirt mcp, 77 tools, azure devops, deployment automation
++@p2-56
+Y: I made it safe in layers. It uses each user's own Azure DevOps token, so the agent can't do more than that person can. Most tools are read-only, write actions need confirmation, and environment names are checked against an allow-list. Approvals for controlled environments stay with humans in Azure DevOps. Every tool call is logged, and secrets never appear in outputs.
+K: mcp security, permissions, approvals, allow-list, audit log, safety
++@p2-57
+Y: A good tool has a clear name and a description that says what it does and when to use it, because that is what the model reads to choose. The inputs should be few, typed and validated, with allowed values listed. The output should be short and structured, with next steps. Errors should explain how to fix the problem. Small focused tools work better than one tool that does everything.
+K: tool definition, mcp, agent tools, function calling, tool design
++@p2-58
+Y: I use Copilot completions for boilerplate, mappings and test cases. I use Cursor chat and agent mode to explain unfamiliar code, do multi-file refactors and upgrade chores, and draft SQL, YAML and scripts, with project rules so it follows our conventions. But I always review, build and test the output, because I own every line I commit.
+K: github copilot, cursor, ai coding, developer productivity
++@p2-59
+Y: I treat AI code like code from a new team member: I read every line. I check it builds and passes tests, verify any APIs or packages it uses really exist, and look for security problems like string-built SQL, missing authorization or secrets. Our pipeline runs SonarQube and dependency scans on it like any other code. If I can't explain it, I don't commit it.
+K: ai generated code, code review, security, hallucination, sonarqube
++@p2-60
+Y: I give clear context and a role, describe the exact task and the output format I want, and include examples when format matters. For complex work I ask it to plan first and go step by step. I give constraints, like use .NET 8 and our logging style. Then I iterate on the result instead of expecting perfection in one prompt.
+K: prompt engineering, prompts, few-shot, context, llm
++@p2-61
+Y: RAG means retrieval-augmented generation. Instead of relying only on what the model learned, we first search our own documents for the relevant parts, using embeddings and a vector search, and give those parts to the model with the question. So answers are based on current, private information, and can cite their sources. We built a [runbook assistant] this way.
+K: rag, retrieval augmented generation, embeddings, vector search, llm
++@p2-62
+Y: Agentic orchestration means an AI agent works toward a goal in a loop: it plans, calls tools, looks at the results and decides the next step, instead of just answering once. Claude Code and Cursor agents do this with coding tools, and AutoGen lets several agents work together. Our deployment agent does this with our MCP tools, with humans approving controlled steps.
+K: agentic ai, agents, orchestration, autogen, claude code, agent loop
++@p2-63
+Y: Azure OpenAI runs the models inside our company's Azure tenant, with enterprise security, private networking, compliance and the promise that our data isn't used for training. Going to a provider directly can give the newest models sooner and sometimes more features. For company products with sensitive data, we use the enterprise route, like Azure OpenAI.
+K: azure openai, openai, llm provider, enterprise ai, data privacy
++@p2-64
+Y: I ground the model with retrieved facts, and tell it to answer only from that context and say I don't know otherwise. I ask for citations so answers can be checked, use structured outputs and validate them in code, and keep humans in the loop for important actions. I also run an evaluation set of real questions whenever the prompt or model changes.
+K: hallucinations, llm, grounding, evaluation, citations, guardrails
++@p2-65
+Y: People kept the old manual process out of habit and caution, so I made adoption easy and safe instead of forcing it. I did a [30-minute] live demo on a real UAT deployment, wrote a README with [10] example prompts, paired with the first [4] engineers, and added the tools they asked for. Within [about two months] most release deployments used it: 6 hours down to 2, and 6 people down to 1.
+K: ai adoption, change management, team adoption, story, mcp
++@p2-66
+Y: A monolith is one application deployed as a single unit, which is simpler to build, test and run, especially early on. Microservices split the system into small services that own their data and deploy independently, which helps big teams and scaling, but adds network failures, data consistency and operations work. I'd start with a well-structured modular monolith and split only where there's a clear need.
+K: monolith, microservices, architecture, modular monolith, comparison
++@p2-67
+Y: Randomization must be correct, consistent and always available, because a patient is waiting at the site. I'd build a service that takes a randomization request with an idempotency key, uses a pre-generated, blinded randomization list per study, and assigns the next slot in a strongly consistent transaction. Every assignment is audited, treatment arms are hidden by access control, and it runs in multiple availability zones.
+K: randomization, system design, clinical trial, irt, consistency, blinding
++@p2-68
+Y: I'd have a supply service that tracks kit inventory at depots and sites and triggers resupply when stock is low. A shipment service creates shipments and sends them to depots and couriers through APIs or SFTP files. Vendors send back status updates, which we validate, deduplicate and process idempotently, then publish events to update stock and notify sites. Reconciliation reports catch any missed updates.
+K: drug supply, shipment tracking, system design, irt, inventory, vendors
++@p2-69
+Y: The client uploads the file to S3 with a presigned URL, and the API creates an import job and returns 202 with a job id. A worker streams the rows, validates format and business rules, and collects errors per row. Valid data is written in batches inside a transaction, all or nothing. The user sees progress and an error report, every import is audited, and a file hash stops duplicate imports.
+K: csv import, bulk import, system design, s3, background job, 202
++@p2-70
+Y: An API gateway is a single entry point in front of many services. It handles routing, authentication, rate limiting and logging, so each service doesn't repeat that. Backend-for-frontend means a separate small gateway for each type of client, like web or mobile, shaped exactly for what that client needs, so the front end makes fewer calls.
+K: api gateway, backend for frontend, bff, microservices, routing
++@p2-71
+Y: The CAP theorem says that when the network splits, a distributed system has to choose between consistency, meaning everyone sees the latest data, and availability, meaning every request gets an answer. You can't have both during a partition. So for things like randomization I choose consistency, and for things like notifications or reports I accept eventual consistency to stay available.
+K: cap theorem, consistency, availability, partition tolerance, distributed systems
++@p2-72
+Y: A saga handles a business process that spans several services, where one database transaction isn't possible. It is a sequence of local transactions, each publishing an event that triggers the next step. If a step fails, compensating actions undo the earlier steps, like cancelling a reservation. It can be choreographed through events, or orchestrated by one coordinator service.
+K: saga pattern, distributed transactions, compensation, orchestration, choreography
++@p2-73
+Y: In GxP, the audit trail must record who did what, when and why, with old and new values, for every change to regulated data. I'd write audit records in the same transaction as the change, make them append-only so nobody can edit or delete them, use server time in UTC, and record the reason for change. It must be easy to report on for auditors.
+K: audit trail, gxp, 21 cfr part 11, system design, compliance
++@p2-74
+Y: I'd first decide the key, like per user, per API key or per IP, and the limit for each. Then pick an algorithm: token bucket allows short bursts, sliding window is smoother. For one server, ASP.NET Core's built-in rate limiter is enough. Across many servers I'd keep counters in Redis or use the API gateway. Rejected calls return 429 with a Retry-After header.
+K: rate limiting, system design, token bucket, sliding window, redis, 429
++@p2-75
+Y: AI tools like Cursor or Claude talk MCP to our CIRT MCP server, which runs locally. The server wraps the Azure DevOps Server APIs for builds, releases, approvals and environments, plus per-node deployment steps. An orchestration layer runs the deployment across nodes, polls status, retries safe steps and stops with a clear report on failure. Each user's own credentials, human approvals and full logging keep it safe.
+K: deployment orchestration, system design, mcp, azure devops, platform
++@p2-76
+Y: High availability means removing single points of failure. I run at least two instances of every service across availability zones behind a load balancer with health checks, use a database with Multi-AZ failover, and keep services stateless. Then I add timeouts, retries and circuit breakers for dependencies, graceful degradation, and good monitoring. And I test failover, not just assume it works.
+K: high availability, multi-az, redundancy, failover, resilience

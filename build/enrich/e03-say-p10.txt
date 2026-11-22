@@ -1,0 +1,60 @@
++@p10-1
+Y: Middleware is a piece of code that sits in the ASP.NET Core request pipeline. Every request passes through the middleware in the order I register them, and each one can do some work, call the next one, and then do more work on the way back, or stop the request early. Authentication, routing, CORS and exception handling are all middleware. In my project, I wrote a correlation-id middleware so we could trace every request across [4] services.
+K: middleware, request pipeline, request delegate, use, next, http pipeline
++@p10-2
+Y: To write custom middleware, I create a class with a constructor that takes the next RequestDelegate and an InvokeAsync method that takes HttpContext. Inside, I do my work, await next, and then do any work after the response. Then I register it in Program.cs with app.UseMiddleware, at the right position. Our correlation-id middleware reads or creates an id, adds it to the response header and the logging scope, and then calls next.
+K: custom middleware, invokeasync, requestdelegate, usemiddleware, httpcontext
++@p10-3
+Y: Convention-based middleware is created once at startup, so it is effectively a singleton, and scoped services must be passed as parameters to InvokeAsync, not the constructor. Factory-based middleware implements IMiddleware and is created from DI for each request, so constructor injection of scoped services is fine, but I must register it in the container. The pitfall is injecting a scoped service like DbContext into a convention middleware's constructor, which captures it forever.
+K: imiddleware, convention-based middleware, factory-based middleware, scoped service, captive dependency
++@p10-4
+Y: In [2024], tracing a failed shipment update across [4] services took [about an hour], because we matched logs by timestamp. I added a correlation-id middleware to our shared service template. It reads the id from the request header or creates one, returns it in the response, puts it in the logging scope, and passes it to downstream HTTP calls and messages. Now one log query shows the whole journey, and triage takes [a few minutes].
+K: correlation id, audit logging, middleware, story, tracing, logging scope
++@p10-5
+Y: MVC filters run around controller actions, in this order: authorization filters, resource filters, action filters around the action, exception filters for errors, and result filters around the response. To write a custom action filter, I implement IAsyncActionFilter, do my check before calling next and my work after, then apply it as an attribute or globally. For example, an audit filter that records which user changed which study.
+K: filters, action filter, authorization filter, resource filter, exception filter, result filter, iasyncactionfilter
++@p10-6
+Y: IOptions reads configuration once and never changes, so it is good for settings that are fixed. IOptionsSnapshot is scoped, so it picks up changes for each new request. IOptionsMonitor is a singleton that always gives the current value and can notify me when the file changes, so it is the one to use inside singletons and background services. Most of our settings use IOptions with validation at startup.
+K: ioptions, ioptionssnapshot, ioptionsmonitor, options pattern, configuration reload
++@p10-7
+Y: A hosted service is a class that starts and stops with the application. BackgroundService is the base class for long-running work: I override ExecuteAsync with a loop that runs until the stopping token is cancelled. Because it is a singleton, I create a scope for each piece of work to use DbContext. Our SFTP poller is a BackgroundService that checks vendor folders [every 5 minutes].
+K: hosted service, backgroundservice, ihostedservice, executeasync, worker
++@p10-8
+Y: ILogger of T is the built-in logging interface, where T sets the category, usually the class name. Structured logging means I write a message template with named placeholders, like Shipment {ShipmentId} updated, instead of joining strings. The values are stored as separate fields, so in CloudWatch I can filter by ShipmentId directly. With our correlation id in the scope, I can follow one request through every service.
+K: ilogger, structured logging, logging, message template, serilog, log levels
++@p10-9
+Y: Rate limiting controls how many requests a client can make in a time window, to protect the API from overload and abuse. Since .NET 7 it is built in: I add AddRateLimiter with a policy like fixed window, sliding window, token bucket or concurrency, call UseRateLimiter, and attach the policy to endpoints. Rejected requests get a 429. We used a concurrency limit of [2 imports per user] for the CSV upload.
+K: rate limiting, throttling, 429, token bucket, fixed window, sliding window, addratelimiter
++@p10-10
+Y: A minimal API is a way to build HTTP endpoints with very little code, by mapping a route to a lambda in Program.cs, like app.MapGet. Parameters come from the route, query, body or DI automatically. They support validation, filters, OpenAPI and authorization, and they are a bit faster than controllers. I use them for small services and internal endpoints, and route groups keep them organised.
+K: minimal api, mapget, mappost, route groups, endpoints
++@p10-11
+Y: Exception middleware catches any unhandled exception in the pipeline, so it must be registered first. In .NET 8, I call UseExceptionHandler and register a class that implements IExceptionHandler. It logs the error with the correlation id and writes a ProblemDetails response, mapping known exceptions to the right status, like 404 or 409, and everything else to 500 without leaking details. This gives every service the same error format.
+K: exception middleware, iexceptionhandler, problemdetails, useexceptionhandler, error handling, .net 8
++@p10-12
+Y: IHttpClientFactory creates HttpClient instances for me and manages the underlying connections. If I create new HttpClient for every call, sockets can run out, and if I keep one forever, it may miss DNS changes. The factory pools and recycles handlers to solve both. It also lets me configure typed clients with base address, headers and resilience policies in one place, which is how we call vendor and internal APIs.
+K: ihttpclientfactory, httpclient, socket exhaustion, typed client, dns
++@p10-13
+Y: Span of T is a view over a block of memory, like part of an array or a string, without copying it. So I can slice and parse data with no extra allocations. It lives only on the stack, so it can't be used in async methods. Memory of T is the version that can be stored on the heap and used across awaits. They are useful in hot paths like parsing large CSV files.
+K: span, memory, performance, allocations, stackalloc, parsing
++@p10-14
+Y: IAsyncEnumerable lets me return items one by one as they become available, and the caller uses await foreach to consume them. So I don't need to load everything into memory before starting. For example, streaming rows from the database or reading a large file line by line. ASP.NET Core can also stream it directly as a JSON response.
+K: iasyncenumerable, async streams, await foreach, streaming
++@p10-15
+Y: Response caching uses HTTP cache headers so browsers and proxies can cache responses. Output caching, added in .NET 7, stores the response on the server and gives me control to expire it. IMemoryCache caches any data in the memory of one server. HybridCache combines memory and a distributed cache like Redis, and it prevents many requests rebuilding the same item at once. We cache reference data like countries and depots this way.
+K: caching, response caching, output caching, imemorycache, hybridcache, redis, distributed cache
++@p10-16
+Y: The client sends the JWT in the Authorization header as a Bearer token. The authentication middleware validates it: the signature using the identity provider's public key, the issuer, the audience and the expiry. If it is valid, it creates the user with claims, and the authorization middleware checks policies and roles for the endpoint. If it fails, we return 401, and if the user lacks permission, 403.
+K: jwt, bearer authentication, token validation, authentication middleware, claims, 401, 403
++@p10-17
+Y: Keyed services, added in .NET 8, let me register several implementations of the same interface with a key, and then ask for a specific one with the FromKeyedServices attribute. Before that, I needed a factory or a list of all implementations. We use it for SFTP clients: each vendor's configuration says which library key to use, like Rebex or SSH.NET.
+K: keyed services, dependency injection, fromkeyedservices, .net 8, multiple implementations
++@p10-18
+Y: Channels are a fast, thread-safe queue for passing data between producers and consumers in the same process, and they work with async. A bounded channel has a size limit, so producers wait when it is full, which gives back-pressure. I use them with a BackgroundService: the API writes work into the channel and the background worker processes it, so the request returns quickly.
+K: channels, producer consumer, queue, back-pressure, backgroundservice
++@p10-19
+Y: TimeProvider, added in .NET 8, is an abstraction for the current time and timers. Instead of calling DateTime.UtcNow directly, I inject TimeProvider, so in tests I can use a fake time provider and move time forward. That makes things like token expiry, retry delays and scheduled jobs easy to test without waiting.
+K: timeprovider, faketimeprovider, testing time, datetime, .net 8
++@p10-20
+Y: In .NET 8, I add resilience to HTTP calls with the Microsoft.Extensions.Http.Resilience package, which is built on Polly. AddStandardResilienceHandler gives sensible defaults in one line: a total timeout, retries with backoff and jitter, a circuit breaker and a per-attempt timeout. I can also build custom pipelines. We use it for vendor API calls so temporary failures recover on their own.
+K: resilience, polly, retry, circuit breaker, timeout, addstandardresiliencehandler, .net 8

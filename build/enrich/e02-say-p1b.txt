@@ -1,0 +1,123 @@
++@p1-41
+Y: WCF server is not supported in modern .NET, so I would move the services step by step. First I separate business logic from WCF so it can be reused, then expose the same operations as REST APIs or gRPC on .NET 8 or 10. If old clients still need SOAP, CoreWCF can host the same contracts for a while. We migrate one service at a time and test each one against the old behaviour.
+K: wcf migration, corewcf, grpc, rest, modernization
++@p1-42
+Y: In [early 2026] I upgraded [3] of our IRT services from .NET 8 to .NET 10, because .NET 8 support ends in November 2026 and a GxP product must run on a supported version. I updated shared libraries first, then each service, the tests and the Docker images. We compared performance during validation, released through FV, UAT and production with [no functional defects], and got about [10 to 15 percent] lower p95 latency.
+K: .net 10 upgrade, migration, lts, story
++@p1-43
+Y: Not always. EF Core's DbContext is already a unit of work and DbSet already behaves like a repository. Adding a generic repository on top often just hides useful features like Include and projections. I add a repository only when it gives real value, like hiding complex queries or making the domain cleaner to test. In some of our services we have repositories, and in newer ones we use DbContext directly with focused query classes.
+K: repository pattern, unit of work, ef core, dbcontext
++@p1-44
+Y: A clustered index decides the physical order of the rows, so a table can have only one, and it is usually the primary key. A non-clustered index is a separate structure that points back to the row, and you can have many. A covering non-clustered index includes all the columns a query needs, so SQL Server doesn't have to look up the row. That trick fixed our slow shipment list query.
+K: clustered index, non-clustered index, covering index, include columns, sql server
++@p1-45
+Y: Our site shipment list was timing out for a big study, taking about [8 to 12 seconds]. I took the real query from Query Store and read the execution plan. It showed a full scan, key lookups and a CONVERT on a date column that stopped the index being used. I rewrote the date filter as a range, added a covering index and server-side paging. Reads dropped from about [400,000 to 2,000] and the time went to [under 300 milliseconds].
+K: sql optimization, slow query, execution plan, query store, covering index, story
++@p1-46
+Y: SARGable means the WHERE condition is written so SQL Server can use an index seek. If I wrap the column in a function, like YEAR of OrderDate or CONVERT, or use a leading wildcard in LIKE, SQL Server has to scan every row. The fix is to keep the column clean and move the logic to the value side, for example a date range instead of a function. That was exactly the fix in our shipment query.
+K: sargable, index seek, where clause, functions on columns, sql server
++@p1-47
+Y: An inner join returns only rows that match in both tables. A left join returns all rows from the left table, with nulls where there is no match, and a right join is the opposite. A full outer join returns everything from both sides. A cross join gives every combination. I mostly use inner and left joins, for example a left join to show sites even if they have no shipments yet.
+K: joins, inner join, left join, right join, full outer join, cross join, sql
++@p1-48
+Y: Normalization means splitting data into related tables so each fact is stored once, which avoids duplicate data and update mistakes. Denormalization means intentionally copying some data to make reads faster, at the cost of keeping copies in sync. For our transactional IRT data we keep it normalized, and for reporting we use denormalized views or read models so reports don't slow down the main system.
+K: normalization, denormalization, normal forms, database design
++@p1-49
+Y: Isolation levels decide how much one transaction can see of another's unfinished work. Read Uncommitted allows dirty reads, Read Committed is the SQL Server default, Repeatable Read stops rows changing under you, and Serializable also stops new rows appearing, but with more locking. Snapshot isolation uses row versions so readers don't block writers. Higher isolation means more consistency but less concurrency, so I pick the lowest level that is correct.
+K: isolation levels, read committed, snapshot, serializable, dirty read, transactions
++@p1-50
+Y: A deadlock happens when two transactions each hold a lock the other needs, so SQL Server kills one of them. Common causes are updating tables in different orders and long transactions with missing indexes. I fix them by keeping transactions short, accessing tables in the same order, and adding indexes. I also make the code retry once on a deadlock error, since the victim can usually succeed on retry.
+K: deadlock, locking, sql server, retry, transactions
++@p1-51
+Y: Stored procedures keep logic in the database and can be tuned there, while ORM queries keep logic in C# where it is easier to test and version. Both are parameterized and safe. Parameter sniffing is when SQL Server builds a plan for the first parameter value and reuses it for very different values, which can make some calls slow. I fix it with OPTION RECOMPILE, OPTIMIZE FOR, or better indexes, after checking Query Store.
+K: stored procedures, orm, parameter sniffing, query plan, query store
++@p1-52
+Y: I choose SQL Server on RDS when the data is relational, needs joins, transactions and complex queries, like our clinical trial data. I choose DynamoDB when access patterns are simple and known, like lookups by key, and I need massive scale with very low latency and no server management. Changing access patterns later is hard in DynamoDB, so for core business data I default to relational.
+K: sql server, rds, dynamodb, nosql, relational, database choice
++@p1-53
+Y: DELETE removes rows one by one, can have a WHERE clause, fires triggers and is fully logged. TRUNCATE removes all rows quickly by deallocating pages, resets identity, and cannot have a WHERE. DROP removes the whole table, structure included. In production data like ours, we almost always use DELETE or soft deletes, because we need audit history.
+K: delete, truncate, drop, sql
++@p1-54
+Y: OFFSET and FETCH skip a number of rows and take the next page, which is simple, but deep pages get slow because SQL Server still reads the skipped rows. Keyset pagination remembers the last key seen and asks for rows after it, so it stays fast at any depth and is stable when data changes. I use OFFSET for normal admin screens and keyset for large lists or infinite scroll.
+K: pagination, offset fetch, keyset pagination, seek method, paging
++@p1-55
+Y: A CTE is a named temporary result I can use inside one query, which makes complex SQL readable. Window functions like ROW_NUMBER, RANK and SUM OVER calculate across a group of rows without collapsing them. A real use case for me was finding the latest status for each shipment, using ROW_NUMBER partitioned by shipment ordered by date, and taking row number one.
+K: cte, window functions, row_number, rank, partition by, sql
++@p1-56
+Y: Unit tests check one class or method in isolation and are fast. Integration tests check pieces working together, like an API with a real database. End-to-end tests drive the whole system through the UI. The test pyramid says have many unit tests, fewer integration tests, and only a few end-to-end tests, because the higher ones are slower and more fragile. That is how our test suites are balanced.
+K: unit test, integration test, end-to-end, test pyramid, testing
++@p1-57
+Y: Both are mature .NET test frameworks. xUnit is more modern: it creates a new instance of the test class for every test, uses the constructor for setup, and Fact and Theory attributes. NUnit uses Test and TestCase attributes with SetUp methods and has a lot of built-in assertions. Microsoft's own projects use xUnit, and that is what I use in our services.
+K: xunit, nunit, test framework, fact, theory
++@p1-58
+Y: I use Moq to replace dependencies with fake objects, set up what they return, and verify important calls, so I can test one class alone. What I don't mock: simple value objects, the code under test itself, and EF Core DbContext, because a mocked DbContext doesn't behave like a real database. For database code I use a real database in a container instead.
+K: moq, mocking, test doubles, unit testing, verify
++@p1-59
+Y: I use WebApplicationFactory, which starts the real API in memory with the full pipeline: routing, model binding, filters and authentication. I replace only the external parts, like an SFTP client or a vendor API, with fakes, and use a real SQL Server in a Docker container through Testcontainers. Then I call endpoints with HttpClient and check the status codes and responses.
+K: integration test, webapplicationfactory, testcontainers, asp.net core testing
++@p1-60
+Y: To keep Playwright tests reliable, I use stable selectors like test ids or roles instead of CSS paths, and rely on Playwright's auto-waiting instead of fixed sleeps. Each test sets up its own data so tests don't depend on each other. I keep end-to-end tests to the most important user journeys, and use traces and screenshots on failure to debug quickly.
+K: playwright, e2e, end-to-end testing, flaky tests, selectors
++@p1-61
+Y: BDD means describing behaviour in plain language that business people can read, using Given, When, Then scenarios. Cucumber, or SpecFlow and Reqnroll in .NET, connects each line of the scenario to test code. The main value is shared understanding between the business, QA and developers. In a regulated product, these readable scenarios can also link nicely to requirements.
+K: bdd, cucumber, gherkin, given when then, specflow, reqnroll
++@p1-62
+Y: A SonarQube quality gate is a set of conditions that new code must pass, like no new bugs or vulnerabilities, enough test coverage on new code, and limited duplication. It runs in the CI pipeline, and if the gate fails, the pull request can't be merged. It keeps code quality from slowly getting worse without arguing about it in every review.
+K: sonarqube, quality gate, static analysis, code coverage, ci
++@p1-63
+Y: For Node.js I use Jest to unit test functions and services, mocking things like the database or HTTP calls, and Supertest to test API routes. For React I use Jest with React Testing Library, which tests components the way a user uses them, by finding buttons and text instead of internal details. I keep tests focused on behaviour, so refactoring doesn't break them.
+K: jest, react testing library, node testing, supertest, unit test
++@p1-64
+Y: In a code review I first check that the change does what the story needs and is correct, including edge cases and error handling. Then security, like input validation and secrets, then performance, like N+1 queries, then tests and readability. I keep comments respectful and explain the why. I also review small pull requests faster, so I encourage the team to keep them small.
+K: code review, pull request, best practices, review checklist
++@p1-65
+Y: In GxP, testing is also documented evidence, not just something developers do. Requirements are traced to test cases, formal validation runs scripted tests with recorded results and sign-off, defects follow a controlled process, and only validated builds reach production. Automated tests help a lot, but what auditors check is the evidence and traceability. That's how we work on our IRT product.
+K: gxp, regulated testing, validation, traceability, fv, audit
++@p1-66
+Y: Hooks let function components do what class lifecycle methods did. useState holds state, and useEffect runs side effects: with an empty dependency list it runs once like componentDidMount, with dependencies it runs when they change, and its cleanup function works like componentWillUnmount. It keeps related logic together instead of splitting it across lifecycle methods, and custom hooks make it reusable.
+K: react hooks, useeffect, usestate, lifecycle methods, custom hooks
++@p1-67
+Y: Redux Toolkit is the official, simpler way to write Redux. I create a store with configureStore and define slices with createSlice, which gives the reducers and actions together, and I can write updates that look like mutations because Immer handles immutability. For server data, RTK Query or React Query handles fetching and caching. I use it when shared state is complex, otherwise local state or context is enough.
+K: redux toolkit, createslice, store, rtk query, state management, react
++@p1-68
+Y: A reusable component should do one job, take clear typed props, and not know about where its data comes from. I keep it flexible with props and children, handle loading, empty and error states, and make it accessible. For example, I built a data table component used across our IRT screens, with sorting, paging and row actions, so every screen looks and behaves the same.
+K: reusable components, react, props, design system, typescript
++@p1-69
+Y: First I measure with the React Profiler to see what re-renders. Then I fix the cause: keep state close to where it is used, avoid creating new objects and functions on every render, and use memo, useMemo and useCallback where it actually helps. For long lists I use virtualization and paging, and I split code with lazy loading so the first page loads fast.
+K: react performance, memo, usememo, usecallback, re-render, virtualization, lazy loading
++@p1-70
+Y: TypeScript catches mistakes at compile time, gives great auto-complete, and makes large code bases safer to change. Interface and type are similar: interface is good for object shapes and can be extended or merged, while type can also describe unions, intersections and other combinations. I use interface for props and API models, and type for unions like status values.
+K: typescript, interface vs type, type safety, union types
++@p1-71
+Y: Angular is a full framework with everything built in, like routing, forms and dependency injection, and a strong structure, which suits large teams that want conventions. React is a library focused on the UI, more flexible, where you choose your own libraries. Both are good. Our team used React because of its ecosystem and the team's experience.
+K: angular, react, frontend framework, comparison
++@p1-72
+Y: JavaScript runs on one thread with a call stack. When something async happens, like a timer or a network call, the callback waits in a queue. The event loop takes the next item from the queue when the stack is empty. Promise callbacks are microtasks and run before timers, which are macrotasks. That's why a long synchronous loop freezes the page.
+K: event loop, call stack, microtask, macrotask, javascript, async
++@p1-73
+Y: The main ones are XSS, so I never insert raw HTML and let React escape output, and I add a Content Security Policy. Then token storage: I prefer secure HttpOnly cookies over local storage. Also CSRF protection, dependency vulnerabilities, and tabnabbing on links that open in a new tab. I actually fixed a tabnabbing issue across about [40] links by adding rel noopener noreferrer.
+K: frontend security, xss, csrf, csp, tabnabbing, owasp
++@p1-74
+Y: Node.js runs JavaScript on one main thread with an event loop, and all input and output, like network and files, is non-blocking. So one process can handle many concurrent connections well. It is a good fit for I/O-heavy services, like APIs that call other services or process text. It is a poor fit for heavy CPU work, unless you move it to worker threads.
+K: node.js, concurrency, event loop, non-blocking, libuv
++@p1-75
+Y: I structure a Node TypeScript service in layers: routes or controllers for HTTP, services for business logic, and a data layer for the database or external calls. Configuration comes from environment variables and is validated at startup, inputs are validated with a schema library like Zod, and errors go through one error middleware. It has the same logging, health checks and Docker setup as our .NET services.
+K: node.js, typescript, microservice structure, express, layers
++@p1-76
+Y: Flask is a small, simple framework where you add what you need, and it is synchronous by default. FastAPI is newer and async-first, uses Python type hints with Pydantic for automatic validation, and generates OpenAPI documentation for free. For a new API I would choose FastAPI. We used it for a [vendor file validation service].
+K: fastapi, flask, python, comparison
++@p1-77
+Y: In FastAPI, I declare endpoints with async def, so slow input and output, like database or HTTP calls, don't block the server. For validation, I describe the request as a Pydantic model with type hints, and FastAPI checks every request automatically and returns a 422 with the exact field errors if something is wrong. The same models also produce the API documentation.
+K: fastapi, async, pydantic, validation, 422, python
++@p1-78
+Y: Spring Boot and ASP.NET Core are very similar. Both have dependency injection built in, controllers, middleware or filters, configuration by environment, and good ORMs: JPA with Hibernate on Java, and EF Core on .NET. The main differences are the language and ecosystem. Since the ideas map almost one to one, I can pick up Spring Boot quickly with my ASP.NET Core background.
+K: spring boot, asp.net core, java, comparison
++@p1-79
+Y: I keep services consistent with shared standards rather than shared code. Every service, whether .NET, Node or Python, follows the same API and event contracts, the same structured logging fields and correlation ids, the same health endpoints, the same Docker conventions, and one pipeline template in Azure DevOps. So any engineer can operate any service, whatever the language.
+K: polyglot, consistency, standards, microservices, conventions
++@p1-80
+Y: In Node I use npm with a committed package-lock file and npm ci in pipelines, so builds are repeatable. In Python I use a virtual environment with pinned versions in requirements or a Poetry lock file. In both, I scan for vulnerabilities in the pipeline and update dependencies regularly, a few at a time, with tests running.
+K: dependency management, npm, package-lock, pip, poetry, vulnerabilities
++@p1-81
+Y: I choose based on the team and the job, not personal taste. For core business services I default to .NET, because the team knows it, it is fast and our tooling is built around it. I'd choose Node for small input-output heavy tools, and Python for data handling or scripts. The service must fit our standards for logging, testing and deployment, whatever the language.
+K: language choice, technology choice, .net, node, python

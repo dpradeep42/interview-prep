@@ -1,0 +1,159 @@
++@p2-1
+Y: I use ECS with Fargate for long-running services like our APIs, because containers run all the time with no servers to manage. I use Lambda for short, event-driven tasks, like reacting to a file landing in S3, where I pay only when it runs. I use EC2 when I need full control of the machine, special software, or very steady heavy load. Our IRT services run on ECS.
+K: ecs, lambda, ec2, fargate, compute choice, aws
++@p2-2
+Y: In ECS, a cluster is the logical group where things run. A task definition is like a blueprint: the image, CPU, memory, environment variables, secrets and IAM role. A task is one running copy of it, and a service keeps the desired number of tasks running, replaces failed ones and connects them to the load balancer. With Fargate, AWS runs the servers for us.
+K: ecs, cluster, task definition, task, service, fargate
++@p2-3
+Y: API Gateway is the front door for APIs. It handles routing to backends like Lambda or HTTP services, authentication with JWT or IAM, throttling, request validation, usage plans and API keys. So the services behind it can focus on business logic. For containers with heavy traffic, an Application Load Balancer is often cheaper, so the choice depends on what features we need.
+K: api gateway, throttling, routing, authentication, aws
++@p2-4
+Y: A cold start is the extra delay when Lambda has to create a new environment and load my code before the first request. For .NET it can be noticeable. I reduce it with more memory, which also gives more CPU, smaller packages, Native AOT or SnapStart, and provisioned concurrency to keep instances warm for critical functions. For steady traffic, a container on ECS avoids cold starts completely.
+K: lambda, cold start, provisioned concurrency, snapstart, native aot
++@p2-5
+Y: In DynamoDB I start from the access patterns, not from tables and joins. I choose a partition key that spreads load evenly and a sort key for ranges, like customer id and order date. Often several entity types live in one table. For other query patterns I add global secondary indexes. Getting the keys wrong is expensive to change later, so I design them carefully up front.
+K: dynamodb, partition key, sort key, gsi, single table design, nosql
++@p2-6
+Y: The most common is cache-aside: the app checks the cache, and on a miss reads the database and stores the result with an expiry time. Write-through updates the cache when writing the database. I always set TTLs and invalidate on changes. We used ElastiCache Redis for reference data, and also for our token logout denylist, where lookups take about [1 millisecond].
+K: caching, elasticache, redis, cache-aside, write-through, ttl
++@p2-7
+Y: An Application Load Balancer works at layer 7, so it understands HTTP: it can route by path or host name, terminate TLS, and do health checks on HTTP endpoints. A Network Load Balancer works at layer 4 with TCP and UDP, so it is extremely fast, keeps static IPs, and suits non-HTTP traffic. For our web APIs on ECS we use an ALB.
+K: alb, nlb, load balancer, layer 7, layer 4, aws
++@p2-8
+Y: S3 is object storage for files: uploads, exports, backups, logs and static websites. It is very durable and cheap. A presigned URL is a temporary link, signed with our credentials, that lets a client upload or download one specific object directly, without going through our API and without AWS credentials. It is great for large file uploads, like CSV imports.
+K: s3, presigned url, object storage, file upload, aws
++@p2-9
+Y: Least privilege means every identity gets only the permissions it needs, nothing more. I give each ECS service its own task role, scope actions to specific resources like one bucket or one secret, and avoid wildcards. I use roles with temporary credentials instead of long-lived access keys. I review permissions regularly with IAM Access Analyzer and remove what isn't used.
+K: iam, least privilege, roles, policies, task role, security
++@p2-10
+Y: A typical layout is one VPC across at least two availability zones. Public subnets hold only the load balancer and NAT gateway. Private subnets hold the ECS services, and separate private subnets hold databases like RDS. Security groups allow only the needed traffic, for example the database accepts only the service's security group. Outbound internet goes through NAT, and AWS services through VPC endpoints.
+K: vpc, subnets, network layout, security groups, nat gateway, availability zones
++@p2-11
+Y: Infrastructure as code means defining servers, networks, databases and permissions in code files, like Terraform or CloudFormation, instead of clicking in the console. The benefits are that environments are repeatable and consistent, every change is reviewed in a pull request and tracked in Git, and we can rebuild an environment quickly. In a regulated product, that history is also great evidence.
+K: infrastructure as code, iac, terraform, cloudformation
++@p2-12
+Y: CloudFormation is AWS's own service, so the state is managed by AWS, and it supports AWS features well. Terraform works with many providers, not only AWS, has a nice plan step showing exactly what will change, and a big module ecosystem, but I must manage its state file. In my work, core platform stacks were in CloudFormation and newer pieces used Terraform.
+K: cloudformation, terraform, iac, comparison
++@p2-13
+Y: Terraform state is a file that maps my code to the real resources it created, so Terraform knows what to change. I store it remotely, in an S3 bucket with encryption and versioning, with locking so two people can't apply at the same time. It can contain secrets, so access is restricted. I keep separate state for each environment.
+K: terraform state, remote state, s3 backend, state locking
++@p2-14
+Y: The workflow is: write or change the code, run terraform init to set up providers and the backend, terraform plan to see exactly what will be created, changed or destroyed, then review that plan, and terraform apply to make the changes. In a team, the plan runs in the pipeline on the pull request, and apply runs after approval.
+K: terraform, init, plan, apply, workflow
++@p2-15
+Y: Drift is when the real infrastructure no longer matches the code, usually because someone changed something manually in the console. I avoid it by making all changes through code and pipelines, limiting console write access, and running regular plans or drift detection to spot differences. When drift is found, we either update the code or revert the manual change.
+K: drift, drift detection, infrastructure as code, terraform, cloudformation
++@p2-16
+Y: An image is a read-only package with the app and everything it needs to run. A container is a running instance of that image, like an object created from a class. A Dockerfile is the recipe that builds the image, step by step: the base image, copying files, building, and the command to start. We build one image per service and run it everywhere.
+K: docker, image, container, dockerfile
++@p2-17
+Y: I use a multi-stage Dockerfile. The first stage uses the SDK image to restore and publish, copying the project files first so the restore layer is cached. The final stage uses the small ASP.NET runtime image, or a chiseled image, copies only the published output, runs as a non-root user and sets the entry point. The result is small, secure and fast to build.
+K: dockerfile, multi-stage build, .net docker, non-root, chiseled image
++@p2-18
+Y: A Pod is the smallest unit, one or more containers running together. A Deployment manages pods, keeps the right number running and does rolling updates. A Service gives pods a stable name and load-balances to them. An Ingress routes outside HTTP traffic to services. ConfigMaps and Secrets hold configuration, and a Namespace groups resources.
+K: kubernetes, pod, deployment, service, ingress, configmap, secret, namespace
++@p2-19
+Y: A Deployment YAML has the number of replicas, a selector that matches the pod labels, and a pod template. The template lists the container image and tag, ports, environment variables from ConfigMaps and Secrets, CPU and memory requests and limits, and liveness and readiness probes. It also has the rolling update strategy, like how many pods can be down at once.
+K: kubernetes, deployment yaml, replicas, probes, resources, rolling update
++@p2-20
+Y: A liveness probe checks if the app is still alive, and if it fails, Kubernetes restarts the container. A readiness probe checks if it can take traffic, and if it fails, the pod is removed from the service but not restarted. A startup probe gives slow-starting apps time before the other probes begin. In .NET I map these to health check endpoints.
+K: liveness probe, readiness probe, startup probe, health checks, kubernetes
++@p2-21
+Y: A ConfigMap holds normal configuration, like URLs or feature flags, and a Secret holds sensitive values like passwords, which are only base64 encoded, so they need encryption and access control. Containers get them as environment variables or files. In ECS, we pull secrets from Secrets Manager and Parameter Store into the task at startup, and the code reads them through normal .NET configuration.
+K: configmap, secret, configuration, environment variables, secrets manager
++@p2-22
+Y: In Kubernetes, the Horizontal Pod Autoscaler adds or removes pods based on CPU, memory or custom metrics, and a cluster autoscaler adds nodes when needed. In ECS, service auto scaling uses target tracking, for example keep CPU at 60 percent or a certain number of requests per target. In both cases, the app must be stateless and shut down gracefully.
+K: autoscaling, hpa, ecs service auto scaling, target tracking, scaling
++@p2-23
+Y: Docker builds and runs containers on one machine. Kubernetes and ECS are orchestrators that run many containers across many machines, handle scaling, restarts, rolling deployments and service discovery. Kubernetes is open source, portable and very powerful but complex. ECS is AWS's simpler, managed option. Our production runs on ECS.
+K: docker, kubernetes, ecs, orchestration, comparison
++@p2-24
+Y: Continuous integration means every change is merged often and automatically built and tested. Continuous delivery means every passing build is ready to release, but a person decides when to deploy to production. Continuous deployment goes further and deploys every passing change to production automatically. In our regulated product we do continuous delivery, because production needs approvals.
+K: ci, continuous delivery, continuous deployment, ci/cd, pipeline
++@p2-25
+Y: Our YAML build pipeline runs on pull requests and merges: restore, build, unit tests with coverage, SonarQube quality gate, dependency scan, then it publishes versioned artifacts and Docker images. The release pipeline promotes that same artifact through FV, TechOps, UAT and production, with approvals at each stage, using Ansible, Python and Shell scripts for multi-node installs. Every environment traces back to one tagged version.
+K: azure devops, pipeline, release, ci/cd, artifacts, approvals
++@p2-26
+Y: YAML pipelines are defined in code in the repository, so they are reviewed, versioned and reusable with templates. Classic release pipelines are designed in the web UI, which is easy to start with and visual, with good approval gates, but changes are not in Git. New work should use YAML with environments and approvals. Some of our older release definitions are still classic.
+K: azure devops, yaml pipelines, classic release, pipeline as code
++@p2-27
+Y: We use a main branch that is always releasable, short-lived feature branches merged by pull request with reviews and checks, and release branches for each release so fixes can go in while new work continues. Every release build is tagged with its version, so we can always tell exactly what code is in each environment. Hotfixes are merged back to main.
+K: branching strategy, git, tagging, release branch, feature branch
++@p2-28
+Y: Ansible is an agentless automation tool that runs YAML playbooks over SSH to configure servers and install software. Our release installs ran through Ansible playbooks with Python and Shell scripts across the multi-node environments. Idempotency means running the same task again leaves the same result, so if a deployment fails halfway, we can safely run it again.
+K: ansible, playbook, idempotency, configuration management, automation
++@p2-29
+Y: Rolling deployment replaces instances a few at a time, which is simple and needs no extra servers. Blue-green runs the new version beside the old one and switches all traffic at once, so rollback is instant. Canary sends a small percentage of traffic to the new version first and increases it if metrics look good. ECS gives us rolling updates with automatic rollback.
+K: blue green, canary, rolling deployment, deployment strategies, rollback
++@p2-30
+Y: The key is to make database changes backward compatible, so the previous app version still works with the new schema. I use expand and contract: first add new columns or tables, deploy the app, and only remove old ones in a later release. Then rolling back the app does not need a database rollback. For risky changes we take a backup and have tested rollback scripts.
+K: rollback, database changes, expand contract, backward compatible, release
++@p2-31
+Y: In GxP, every release is controlled and documented. There is an approved change request, the build is validated in FV with scripted tests and evidence, users accept it in UAT, and production deployment needs approvals and a record of what was installed. The same validated artifact must be promoted, never rebuilt. That's why automation must keep audit trails and human approvals.
+K: gxp, release management, change control, validation, regulated
++@p2-32
+Y: Logs are detailed records of events, like an error with its message and context. Metrics are numbers over time, like request rate, error rate and latency, which are cheap to store and great for alerts and dashboards. Traces follow one request as it moves through several services, showing where the time goes. Together they tell me what is wrong, where, and why.
+K: logs, metrics, traces, observability, three pillars
++@p2-33
+Y: We send logs to CloudWatch Logs and use Logs Insights to query them, for example by correlation id or error type. CloudWatch metrics and alarms watch things like error rate, latency and CPU. Grafana dashboards show service health in one place, and we check them after every release to confirm everything is normal.
+K: cloudwatch, grafana, logs insights, dashboards, alarms, monitoring
++@p2-34
+Y: The four golden signals from Google's SRE book are latency, which is how long requests take, traffic, which is how many requests, errors, which is the rate of failures, and saturation, which is how full the system is, like CPU, memory or queue depth. If I monitor only four things for a service, it is these.
+K: golden signals, latency, traffic, errors, saturation, sre, monitoring
++@p2-35
+Y: First I limit the impact, for example by rolling back. Then I collect facts: when it started, what changed, which users, and the logs, metrics and traces. I form a hypothesis and test it, and I keep asking why until I find the real cause, not just the symptom. Finally we write a blameless review with actions, like a test or alert, so it does not happen again.
+K: root cause analysis, rca, incident, troubleshooting, post-mortem, 5 whys
++@p2-36
+Y: A good alert is actionable: when it fires, someone needs to do something, and it says what is wrong and links to a runbook. It is based on user impact, like error rate or latency, rather than every CPU spike. It has sensible thresholds and durations so it doesn't flap. Too many noisy alerts make people ignore the important ones.
+K: alerting, alerts, on-call, runbook, alert fatigue
++@p2-37
+Y: Kafka is a distributed log: messages are kept for a retention period, many consumer groups can read the same events, and it can replay them and handle very high volume. RabbitMQ is a message broker with queues: a message is delivered to a consumer and removed once acknowledged, with flexible routing and per-message retries. We use Kafka for shipment status events and RabbitMQ for task-style work.
+K: kafka, rabbitmq, messaging, comparison, message broker
++@p2-38
+Y: A topic is a named stream of events, like shipment-status. Each topic is split into partitions, which allow parallel processing, and order is kept only inside a partition. A consumer group is a set of consumers sharing the work: each partition is read by one consumer in the group. So more partitions mean more parallelism, and we use the shipment id as the key to keep its events in order.
+K: kafka, topic, partition, consumer group, offset, ordering
++@p2-39
+Y: RabbitMQ has four exchange types. Direct sends a message to queues whose binding key exactly matches the routing key. Topic matches patterns with wildcards, like shipment dot star. Fanout sends to all bound queues, ignoring the key. Headers routes based on message headers. We mostly use topic exchanges, with dead-letter queues for failures.
+K: rabbitmq, exchange, direct, topic, fanout, headers, routing key
++@p2-40
+Y: In [mid-2024], RabbitMQ hit a memory alarm, blocked publishers and dropped connections. Because we published without confirms, shipment status updates were lost silently for [about 40 minutes]. I recovered by replaying the vendor files, which was safe because consumers upsert. Then I fixed it properly with publisher confirms, so RabbitMQ acknowledges each message once stored, plus retries, alerts and memory tuning. Since then we haven't lost a message.
+K: publisher confirms, rabbitmq outage, message loss, story, reliability
++@p2-41
+Y: At-most-once means a message is delivered zero or one time, so it can be lost but never duplicated. At-least-once means it is never lost but can arrive more than once, which is the most common choice. Exactly-once is hard across systems, so in practice we use at-least-once delivery with idempotent consumers, which gives exactly-once effect.
+K: delivery guarantees, at-most-once, at-least-once, exactly-once, messaging
++@p2-42
+Y: An idempotent consumer gives the same result even if it gets the same message twice. I do it by giving each message a unique id and storing processed ids in a table with a unique key, in the same transaction as the business change, so a duplicate is simply skipped. Another way is using upserts or checking the current state, for example ignore a status update older than what we already have.
+K: idempotent consumer, deduplication, message id, upsert, at-least-once
++@p2-43
+Y: A dead-letter queue is where messages go when they can't be processed, for example after several retries or if the message is invalid. This keeps one bad message from blocking the queue or being retried forever. We monitor the dead-letter queue with alerts, look at why the message failed, fix the issue and then replay it.
+K: dead letter queue, dlq, poison message, retries, rabbitmq, kafka
++@p2-44
+Y: The outbox pattern solves the problem of saving to the database and publishing an event reliably. In the same transaction as the business change, I insert the event into an outbox table. A background process then reads the outbox and publishes to the broker, marking rows as sent. So if the broker is down, events wait safely in the database and nothing is lost.
+K: outbox pattern, transactional outbox, reliable messaging, events, dual write
++@p2-45
+Y: Authentication answers who you are, for example by validating a login or a token. Authorization answers what you are allowed to do, like checking roles, policies or whether you have access to a specific study. Authentication always comes first. In ASP.NET Core they are separate middleware, and a failed authentication returns 401, while a failed authorization returns 403.
+K: authentication, authorization, 401, 403, identity, roles, policies
++@p2-46
+Y: A JWT is a signed token with three parts: a header, a payload with claims like user id, roles and expiry, and a signature. It is only encoded, not encrypted, so no secrets go inside. The API validates the signature with the identity provider's public key, then checks the issuer, audience and expiry. If all are good, it trusts the claims without calling the server.
+K: jwt, json web token, claims, signature, token validation, bearer
++@p2-47
+Y: The app redirects the user to the identity provider with a code challenge, which is a hash of a random secret. The user logs in there, and the provider redirects back with a short-lived authorization code. The app exchanges the code plus the original secret for tokens. PKCE makes sure a stolen code is useless. OpenID Connect adds an ID token that tells the app who the user is.
+K: oauth, openid connect, oidc, authorization code flow, pkce, sso
++@p2-48
+Y: JWTs are checked without calling a server, so a token keeps working after logout until it expires. In [2024] a security review found tokens in one module still working [60 minutes] after logout. I reduced access tokens to [15 minutes], revoked refresh tokens on the server, and added a denylist of token ids in ElastiCache that is checked on every request, which costs about [1 millisecond]. Old tokens were rejected immediately.
+K: jwt logout, token revocation, denylist, jti, elasticache, story
++@p2-49
+Y: Browsers send all cookies with every request, and servers limit header size, about [16 KB] in our setup. Our SSO cookie had many group and role claims, so users in many groups got a 400 "request header too long" error. I moved the auth ticket to the server side with ITicketStore, so the cookie only holds a key, and loaded study permissions per request with caching. The cookie went from about [13 KB to under 1 KB].
+K: sso cookie, request header too long, iticketstore, cookie size, story
++@p2-50
+Y: Reverse tabnabbing happens when a link opens a new tab with target blank, and the new page uses window.opener to change the original tab to a fake login page. The fix is adding rel noopener noreferrer to those links, which modern browsers also do by default now. I fixed this on about [40] links in our application after a security scan.
+K: reverse tabnabbing, noopener, noreferrer, target blank, security
++@p2-51
+Y: For APIs, the biggest one is broken object-level authorization, where a user changes an id and sees someone else's data, so I check access to each object, not just the endpoint. Then broken authentication, injection, excessive data exposure and missing rate limits. I prevent them with per-resource checks, parameterized queries, response DTOs instead of entities, rate limiting and security tests.
+K: owasp, api security, bola, idor, injection, authorization
++@p2-52
+Y: XSS is when an attacker gets their script to run in our page, for example through unescaped user input, so it can steal data from the user's session. CSRF is when another site tricks the user's browser into sending a request to our site with their cookies. For XSS, I encode output and use a Content Security Policy. For CSRF, I use SameSite cookies and anti-forgery tokens.
+K: xss, csrf, cross-site scripting, cross-site request forgery, security
++@p2-53
+Y: Secrets never go in code, config files in Git or logs. We store them in AWS Secrets Manager or Parameter Store, encrypted with KMS, and services read them at runtime using their IAM role, so no keys are hard-coded. Access is limited to the services that need each secret, and we rotate them. Locally, developers use user secrets.
+K: secrets management, secrets manager, parameter store, kms, rotation, credentials

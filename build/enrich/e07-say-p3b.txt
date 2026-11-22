@@ -1,0 +1,72 @@
++@p3-41
+Y: While designing the CSV import, a senior colleague wanted partial imports, and I preferred all or nothing. I listed the trade-offs: partial is friendlier, but in GxP it leaves studies half set up and makes audit and rollback harder. I proposed a validate-only preview followed by an all-or-nothing save, and we took both views to the BA and QA lead. The team chose that, and the preview solved my colleague's real concern about user frustration.
+K: disagreement, conflict, colleague, csv import, story
++@p3-42
+Y: In [2024], [two graduate developers] joined our team and felt overwhelmed. I gave them a [one-hour] architecture walkthrough, picked small real stories, and paired with them for [two sprints]. Then I moved to code reviews where I explained the why, showed them how to use Copilot and Cursor safely, and held a short weekly check-in. Their first pull requests merged in [week two], and they were working independently within [about two months].
+K: mentoring, coaching, juniors, story, leadership
++@p3-43
+Y: In [2024], a security review and support tickets showed three problems: tokens still working after logout, SSO "header too long" failures, and reverse tabnabbing. I owned all three. I added short tokens with a denylist, moved the auth ticket to the server so the cookie shrank from [about 13 KB to under 1 KB], and fixed [about 40] links with a lint rule to stop it coming back. All passed retest with no regressions.
+K: quality, security improvement, story
++@p3-44
+Y: Study setup teams typed site records one by one, which took [two to three days] for a [300-site] study. Over [three sprints], I agreed the validation rules with the BA, built the API with streamed parsing, staged validation and an all-or-nothing save with audit, built the preview and error report screen, wrote unit and Playwright tests, and supported FV and UAT. It is live now, and a [300-site] setup takes [under an hour].
+K: end to end delivery, feature ownership, csv import, story
++@p3-45
+Y: In [2024], a manual check caught a transfer that was about to overwrite a study with randomized patients. I built a backend guard with five checks, clear reasons for each block, and an audit of every attempt. After it was released in [2025], it blocked [a handful of] unsafe attempts in its first months. The risky path now depends on the system, not on someone remembering a checklist.
+K: risk prevention, safety guard, study transfer, story
++@p3-46
+Y: In [early 2025], MCP was new and nobody in my team had built a server. I read the specification and the C# SDK samples over [about a week], built a three-tool prototype in [two days] against a test Azure DevOps project, tried it from Cursor and Claude Code, and asked a colleague to review the tool design. That small prototype became the CIRT MCP server with about 77 tools.
+K: learning quickly, new technology, mcp, story
++@p3-47
+Y: The MCP server started with no specification, only a slow manual process. I talked to the [5] people who usually ran deployments, listed [about 30] manual steps ranked by time and risk, and planned three steps: first read-only status and logs, then build and release creation, then node deployments with confirmations, with a demo after each. That turned the ambiguity into a clear plan.
+K: ambiguity, unclear requirements, planning, story
++@p3-48
+Y: Teammates kept using the manual process, and I had no authority to make them switch. So I won them over on merit: a [30-minute] live demo on a real UAT deployment, a one-command install, [10] example prompts, pairing with the first [4] engineers, and adding the tools they asked for. Within [about two months], most deployments used the MCP server, with 1 person instead of 6.
+K: influence without authority, adoption, persuasion, story
++@p3-49
+Y: In [2023], my lead said my pull requests, often [over 1,500 lines], were too big and slow to review. I asked for examples, then split my work into pull requests under [400] lines with clear descriptions, and used feature flags where needed. After a few weeks I checked back with reviewers. Review time went from [two to three days] to [usually the same day], and my lead mentioned it in my appraisal.
+K: feedback, handling criticism, pull requests, story
++@p3-50
+Y: In PI planning, which is part of SAFe, all teams plan the next program increment of several sprints together, agree objectives and map dependencies. Grooming, or refinement, is where we clarify stories, acceptance criteria and estimates. Each sprint then has planning, daily stand-ups, a demo and a retrospective. I take part in all of these in our engineering organisation of about 100 people.
+K: pi planning, safe, grooming, refinement, sprint demo, agile
++@p3-51
+Y: I break the story into tasks and estimate in story points relative to similar past work. I include everything, not just coding: testing, reviews, validation evidence and release work, which matters a lot in GxP. If something is unclear, I call it out and suggest a short spike. Then I check the sprint commitment against our past velocity.
+K: estimation, story points, planning, agile
++@p3-52
+Y: First I clarify the real impact and deadlines with the product owner or my lead. Production issues and anything that affects patient safety come first, then our committed sprint goals, then improvements. I explain the trade-offs openly and early, so nobody is surprised. And when the same urgent work keeps coming back, I automate it so it stops being urgent.
+K: prioritisation, urgent work, time management, hr
++@p3-53
+Y: I involve QA and validation early, in refinement, so we agree on testable acceptance criteria. I give them test data, automated tests and clear release notes, and I fix defects quickly with an explanation of the root cause. I treat their sign-off as part of done, because in a GxP product it really is.
+K: qa, validation team, collaboration, testing
++@p3-54
+Y: For me, done means the code is reviewed and merged, unit and integration tests pass, the SonarQube gate is green, documentation and release notes are updated, and it is deployed and verified in the test environment against the acceptance criteria. In our regulated work, it also means the validation evidence is captured.
+K: definition of done, agile, quality
++@p3-55
+Y: My first strength is strong .NET backend and API engineering across the whole lifecycle, including releases. My second is ownership: I solve problems end to end, like building the MCP server or leading root cause analysis on production issues. And my third is using AI tools responsibly to make the whole team more productive, which cut our deployments from 6 hours to 2.
+K: strengths, hr, about me
++@p3-56
+Y: I used to take on too much myself. For example, I was the only person working on the MCP server for a long time, so it depended on me. Now I share designs early, write things down, and hand over parts of the work to others. That has made us faster and given the team more ownership.
+K: weakness, hr, self improvement
++@p3-57
+Y: I've grown a lot in four years at IQVIA, and I'm thankful for that. Now I want a senior backend role with bigger design ownership, larger-scale systems, and continued work on AI-assisted engineering. That's exactly what this role offers, so it feels like the right next step.
+K: reason for change, why leaving, job change, hr
++@p3-58
+Y: I bring 5.5 years of .NET backend experience in a regulated, quality-first environment. I work across .NET, Node, Python, React and AWS, so I can own a service end to end. And I have proven impact from automation: our deployments went from 6 hours to 2, and from 6 people to 1. I'm confident I can bring the same ownership and results to your team.
+K: why hire you, hr, value proposition
++@p3-59
+Y: In five years, I see myself leading the design of backend systems as a senior or lead engineer, mentoring a team, and shaping engineering practices, including how we use AI in development. I'd like to grow that path inside a company like yours, where I can take on bigger systems over time.
+K: five years, career goals, future plans, hr
++@p3-60
+Y: Based on my experience, the market for senior backend roles, and the scope of this position, I'm looking for a range of [say your researched range]. I'm flexible for the right role and would like to understand the full package, including variable pay and benefits.
+K: salary, ctc, expectations, compensation, hr
++@p3-61
+Y: My notice period is [your real notice period]. I can check with my manager whether early release or a buyout is possible, and I'll make sure I do a clean handover so I join you without leaving loose ends behind.
+K: notice period, joining date, early joining, hr
++@p3-62
+Y: I like what you are building in [their product area], and your tech stack matches my experience with .NET microservices, AWS and messaging. I also come from a quality-first, regulated environment, and I've been using AI tools to improve engineering, which I see you care about too. I want to grow with a company like this for the long term.
+K: why this company, motivation, hr
++@p3-63
+Y: My B.Tech aggregate is 67.7 percent. Since then I've focused on building real things: production services, the MCP deployment platform, and owning releases over 5.5 years. I keep learning continuously, and I think my work since college shows what I can do better than my marks.
+K: btech, aggregate, marks, education, hr
++@p3-64
+Y: I'd like to ask, what does success look like in the first 90 days for this role? How do you deploy and monitor services, and what does on-call look like? How does the team use AI coding tools? And what are the biggest technical challenges for the team in the next year?
+K: questions to ask, reverse questions, hr

@@ -1,0 +1,120 @@
++@p1-1
+Y: .NET Framework is the old Windows-only version, and it now only gets fixes. .NET Core started as the cross-platform, open-source rewrite, and from .NET 5 onwards it is simply called .NET. Versions like .NET 6, 8 and 10 are long-term support releases with three years of support. In my project I moved our IRT services from .NET 8 to .NET 10 so we stay on a supported runtime and get the performance gains.
+K: framework, core, versions, lts, runtime
++@p1-2
+Y: A value type holds its data directly, like int, bool or a struct, and it is copied when you assign it. A reference type, like a class or string, holds a reference to an object on the heap, so two variables can point to the same object. Value types are good for small, short-lived data. I use structs for small immutable values and classes for business objects.
+K: struct, class, stack, heap, boxing
++@p1-3
+Y: When I await a task, the method does not block the thread. The compiler turns the method into a state machine, the thread goes back to the pool, and when the work finishes the method continues from where it stopped. This lets one server handle many more requests. In our APIs every database and HTTP call is async, so threads are free while we wait for SQL Server.
+K: state machine, thread pool, non-blocking, task
++@p1-4
+Y: A Thread is an actual operating system thread, which is expensive. A Task represents work that will finish in future, usually running on the thread pool, and it is what we use with async and await. ValueTask is a lighter version for methods that often finish immediately, like a cache hit, to avoid allocations. In my day-to-day code I use Task, and ValueTask only in hot paths.
+K: thread pool, valuetask, task parallel library
++@p1-5
+Y: IEnumerable works on data in memory and filters it in C#. IQueryable builds an expression that the provider, like EF Core, turns into SQL, so filtering happens in the database. List is a concrete in-memory collection that is already loaded. So I keep queries as IQueryable until I have added filters and paging, and only then call ToListAsync, which avoids pulling whole tables into memory.
+K: linq, deferred execution, ef core, list
++@p1-6
+Y: An interface is a contract that says what a class can do, and a class can implement many interfaces. An abstract class can hold shared code and state, but a class can inherit only one. I use interfaces for dependencies, so I can swap implementations and mock them in tests. For example, all our SFTP libraries sit behind one ISftpClient interface, and I used an abstract base class for the shared retry logic.
+K: interface, abstract, inheritance, contract
++@p1-7
+Y: SOLID is five principles that keep code easy to change. Single responsibility means one reason to change, open-closed means extend without editing, Liskov means a child class must work wherever the parent works, interface segregation means small focused interfaces, and dependency inversion means depending on abstractions. In my SFTP integration, each vendor library implements one interface, so adding a new library did not touch the business code.
+K: single responsibility, open closed, liskov, interface segregation, dependency inversion, design principles
++@p1-8
+Y: In production I have used Strategy and Adapter to put different SFTP libraries behind one interface, and a Factory to pick the library from configuration. I used Decorator to add retry and logging around clients without changing them. With messaging I used the Outbox pattern so events are not lost, and publish-subscribe with Kafka and RabbitMQ. I pick a pattern only when it solves a real problem.
+K: design patterns, strategy, adapter, factory, decorator, outbox, singleton, repository
++@p1-9
+Y: The garbage collector frees memory for objects that are no longer used. It divides objects into generations: new objects are in generation 0 and cleaned up often, while long-lived objects move to generation 1 and 2 and are checked less often. Large objects go on a separate heap. Most of the time I don't touch it, but I dispose resources properly, and once I fixed a memory leak caused by event handlers holding objects alive.
+K: gc, memory, generations, dispose, large object heap
++@p1-10
+Y: A delegate is a type-safe reference to a method. Func and Action are built-in delegates: Func returns a value and Action returns nothing. A lambda is a short way to write the method inline, and an event is a delegate that others can subscribe to but only the owner can raise. I use lambdas every day in LINQ and in minimal API endpoints.
+K: delegate, func, action, lambda, event, callback
++@p1-11
+Y: Deferred execution means a LINQ query does not run when you write it. It runs only when you loop over it or call something like ToList or Count. The good part is you can keep adding filters before it runs. The risk is running the same query twice by accident, so when I need the result more than once, I call ToList once and reuse it.
+K: linq, lazy evaluation, ienumerable, iqueryable
++@p1-12
+Y: To make code thread-safe, first I avoid shared state where possible, by keeping services stateless and using immutable objects. When sharing is needed, I use concurrent collections like ConcurrentDictionary, the lock statement for small critical sections, and SemaphoreSlim for async code because you cannot await inside a lock. For example, our CSV import used a lock row in the database so two users could not import the same study at once.
+K: thread safety, lock, concurrency, race condition, semaphoreslim, concurrentdictionary
++@p1-13
+Y: A class is a reference type with identity, so two objects with the same values are still different. A record is mainly for data: it compares by value, is easy to make immutable, and has a nice ToString and the with-expression for copies. A struct is a value type that is copied, best for small values. I use records for DTOs and events, and classes for services and entities.
+K: record, class, struct, immutable, value equality, dto
++@p1-14
+Y: My rules are simple: catch an exception only where I can actually handle it, otherwise let it bubble up to one global handler. I never swallow exceptions, I log them once with context, and I return a clean ProblemDetails response without exposing stack traces. I use specific exception types and avoid using exceptions for normal flow. In our APIs, one exception handler converts all errors into consistent responses.
+K: exception handling, try catch, problemdetails, global error handler, logging
++@p1-15
+Y: Generics let me write code once and use it with any type while keeping type safety, so no casting and no boxing. Constraints like where T is a class or has a parameterless constructor tell the compiler what the type can do. For example, I wrote a generic paged result type and a generic repository method, so every list API returns pages in the same way.
+K: generics, constraints, type safety, where t
++@p1-16
+Y: For backend services, .NET 8 brought Native AOT for APIs, keyed services in dependency injection, TimeProvider for testable time, built-in resilience handlers, and IExceptionHandler. .NET 10 is the next LTS with C# 14 and more performance improvements. When I upgraded [3] services to .NET 10 in [early 2026], we saw about [10 to 15 percent] lower p95 latency without code changes.
+K: .net 8, .net 10, new features, keyed services, native aot, timeprovider, c# 14
++@p1-17
+Y: The middleware pipeline is a chain of components that every HTTP request passes through, in the order they are registered in Program.cs. Each middleware can do something before calling the next one and something after, or stop the request early. The order matters a lot: exception handling first, then HTTPS, routing, CORS, authentication, authorization, and finally the endpoints. In my project I added a correlation-id middleware so every log line could be traced across services.
+K: middleware, request pipeline, request delegate, use, run, ordering
++@p1-18
+Y: Singleton means one instance for the whole application. Scoped means one instance per HTTP request, which is right for DbContext. Transient means a new instance every time it is asked for. The key rule is that a longer-lived service must not depend on a shorter-lived one, for example a singleton holding a scoped DbContext, because that causes threading bugs. In our services, DbContext and repositories are scoped and stateless helpers are singletons.
+K: di, dependency injection, lifetimes, singleton, scoped, transient, captive dependency
++@p1-19
+Y: Controllers are the classic MVC way: classes with actions, filters and attribute routing, good for large APIs. Minimal APIs map endpoints directly in Program.cs with lambdas, with less ceremony and slightly better performance. Both share the same routing, DI and middleware. I use controllers for our larger domain APIs and minimal APIs for small services and health or internal endpoints.
+K: minimal api, controllers, mvc, endpoints, routing
++@p1-20
+Y: In Program.cs, first the builder is created, which loads configuration from appsettings, environment variables and secrets, and sets up logging. Then I register services in the DI container. Then app is built, and I add middleware in the right order and map the endpoints. Finally app.Run starts the Kestrel server. Since .NET 6 there is no separate Startup class, everything is in this one file.
+K: program.cs, startup, host, builder, configuration, kestrel
++@p1-21
+Y: Middleware runs for every request, early in the pipeline, and only knows about the HTTP context. Filters run inside MVC, around a specific controller action, so they know which action is being called and can see the model binding results. So I use middleware for cross-cutting things like correlation ids, logging and exception handling, and filters for action-specific things like validation or an audit attribute on certain endpoints.
+K: filters, middleware, action filter, mvc pipeline, cross-cutting
++@p1-22
+Y: Model binding takes data from the route, query string, headers and body and converts it into my action parameters. Then validation runs using data annotations or FluentValidation. With the ApiController attribute, if the model is invalid, ASP.NET Core automatically returns a 400 with the errors. In our CSV import API, I validated each row and returned errors with row and column numbers so users could fix the file easily.
+K: model binding, validation, data annotations, fluentvalidation, apicontroller, 400
++@p1-23
+Y: I handle exceptions globally in one place instead of try-catch in every controller. In .NET 8 I use UseExceptionHandler with an IExceptionHandler class that logs the error with the correlation id and returns a standard ProblemDetails response. Known errors, like not found or validation, map to the right status code, and unknown errors return a 500 without internal details. This keeps every service's errors consistent.
+K: global exception handling, iexceptionhandler, problemdetails, useexceptionhandler, error handling
++@p1-24
+Y: REST means treating things as resources with URLs and using HTTP verbs for actions: GET to read, POST to create, PUT to replace, PATCH to update part, and DELETE to remove. Idempotent means calling it many times gives the same result: GET, PUT and DELETE are idempotent, POST is not. For POSTs that must not repeat, like creating a shipment, we use an idempotency key so a retry does not create duplicates.
+K: rest, http verbs, idempotency, get, post, put, patch, delete
++@p1-25
+Y: I version APIs so existing clients don't break when the contract changes. The common options are a version in the URL like /v1, a query string, or a header. I prefer URL versioning because it is clear and easy to test. Mostly I avoid new versions by making only backward-compatible changes, like adding optional fields, and I create v2 only for breaking changes, with a deprecation period for v1.
+K: api versioning, v1, v2, backward compatibility, breaking change
++@p1-26
+Y: Configuration in ASP.NET Core comes from layers: appsettings.json, environment-specific files, environment variables and secret stores, where later sources override earlier ones. The Options pattern binds a section to a strongly typed class, so I inject IOptions of that class instead of reading strings. I also validate options at startup, so a missing setting fails the deployment immediately instead of failing later in production.
+K: configuration, options pattern, ioptions, appsettings, environment variables, validateonstart
++@p1-27
+Y: I use structured logging with ILogger, so logs are key-value data, not just text, and they go to CloudWatch where we can query them. Every request gets a correlation id that is added to all logs and passed to other services, so I can follow one request end to end. For tracing and metrics we use OpenTelemetry and Grafana dashboards. This is how we find production issues quickly.
+K: logging, tracing, ilogger, structured logging, correlation id, opentelemetry, observability
++@p1-28
+Y: First I measure, because guessing wastes time. Then I fix the biggest problems, which are usually in the database: missing indexes, N+1 queries, or loading too much data. I make calls async, add paging, use AsNoTracking for read-only queries, and cache data that rarely changes. For example, one shipment list query went from about [9 seconds to under 300 milliseconds] just by fixing the query and adding a covering index.
+K: performance, optimization, caching, async, asnotracking, paging, profiling
++@p1-29
+Y: CORS is a browser security rule that blocks a web page from calling an API on a different domain unless the API allows it. In ASP.NET Core I add a named policy with the exact allowed origins, methods and headers, and call UseCors in the right place in the pipeline. I never use allow-any-origin together with credentials. Our React app calls the APIs with a specific allowed origin per environment.
+K: cors, cross-origin, preflight, browser security, usecors
++@p1-30
+Y: Network calls between services will fail sometimes, so I plan for it. I use IHttpClientFactory with resilience policies: a timeout on every call, retries with backoff for temporary errors, and a circuit breaker so we stop calling a service that is down. In .NET 8, AddStandardResilienceHandler gives this in one line. For work that doesn't need an immediate answer, I use messaging instead of HTTP.
+K: resilience, polly, retry, circuit breaker, timeout, httpclientfactory
++@p1-31
+Y: REST uses HTTP and JSON and is the default for public and web APIs. SOAP, which WCF used, is XML with strict contracts, still found in older enterprise systems. gRPC uses HTTP/2 and binary Protobuf, so it is very fast for service-to-service calls. GraphQL lets the client ask for exactly the fields it needs. In my work we use REST, and I also maintained older WCF services.
+K: rest, soap, wcf, grpc, graphql, protocols
++@p1-32
+Y: For background work I use a BackgroundService, which is a hosted service that runs a loop alongside the web app, using a scoped service for each unit of work. For queued work I use Channels or a message queue. For example, our SFTP poller runs [every 5 minutes] to pick up vendor files. For heavy or scheduled jobs that must survive restarts, a separate worker or a scheduler is better.
+K: background work, hosted service, backgroundservice, worker, channels, scheduler
++@p1-33
+Y: EF Core keeps a snapshot of every entity it loads, and when I call SaveChanges it compares and generates updates only for what changed. That is change tracking. It costs memory and time, so for read-only queries, like list screens and reports, I use AsNoTracking, which is faster. I keep tracking for data I am going to update.
+K: ef core, change tracking, asnotracking, savechanges, dbcontext
++@p1-34
+Y: Eager loading uses Include to load related data in the same query. Lazy loading loads related data automatically when you first touch it, and explicit loading is when you ask for it manually. The N+1 problem is when you load a list and then run one extra query per item, which kills performance. I avoid lazy loading in APIs and use Include or, better, a projection with Select to fetch only the columns needed.
+K: eager loading, lazy loading, explicit loading, include, n+1, ef core
++@p1-35
+Y: In our GxP environment, the app never applies migrations by itself at startup. We generate idempotent SQL scripts from the migrations, review them like code, and apply them as a controlled step of the release through FV, UAT and production. Scripts are backward compatible with the previous version of the app, and they are kept as validation evidence.
+K: ef core migrations, sql scripts, regulated, gxp, deployment, idempotent
++@p1-36
+Y: I use optimistic concurrency: a rowversion column on the table, which EF Core checks when it updates. If someone else changed the row first, EF Core throws DbUpdateConcurrencyException. I catch that and return a 409 Conflict, so the user reloads and tries again. This avoids locking rows while users are editing, which is important for screens where two people may edit the same shipment.
+K: concurrency, optimistic concurrency, rowversion, dbupdateconcurrencyexception, 409
++@p1-37
+Y: DbContext is designed to be short-lived and it is not thread-safe, so it is registered as scoped, one per request. You must not run two queries on the same DbContext in parallel, and you must not keep it in a singleton. In background services I create a new scope for each job. For high throughput, DbContext pooling can reuse instances safely.
+K: dbcontext, lifetime, scoped, thread safety, pooling, ef core
++@p1-38
+Y: When I need raw SQL in EF Core, I use FromSql or ExecuteSql with interpolated parameters, which EF Core turns into real SQL parameters, so there is no SQL injection. I never build SQL by joining strings with user input. Stored procedures are called the same way with parameters. I use raw SQL only for things LINQ can't express well, like some reporting queries.
+K: raw sql, stored procedures, fromsql, sql injection, parameters, ef core
++@p1-39
+Y: SaveChanges already runs all its changes in one transaction. When I need several SaveChanges calls or other work to succeed or fail together, I use BeginTransaction and commit at the end. If retries are enabled for SQL Server, I wrap the whole transaction in the execution strategy. Our CSV import saves all rows in one transaction, so a failure halfway saves nothing.
+K: transactions, savechanges, begintransaction, execution strategy, ef core, rollback
++@p1-40
+Y: WCF is Microsoft's older framework for building SOAP services on .NET Framework. Its ABCs are Address, which is where the service lives, Binding, which is how you talk to it, like HTTP or TCP and the security, and Contract, which is what operations it offers. I have maintained WCF services in my earlier work, and today the modern options are REST APIs or gRPC.
+K: wcf, soap, abc, address, binding, contract, service contract

@@ -1,0 +1,120 @@
++@p3-1
+Y: I'm a backend-focused full-stack engineer with about 5.5 years of experience. For the last four years at IQVIA, I've been building C# and .NET microservices for IRT, a regulated clinical trial platform that handles randomization, drug supply and shipments, running on AWS with Docker and Azure DevOps. My biggest highlight is the CIRT MCP server I built: about 77 tools that let AI agents run our deployments, which cut them from 6 hours to 2 and from 6 people to 1. Now I'm looking for a senior backend role where I can own design and delivery.
+K: tell me about yourself, introduction, self introduction, profile, hr
++@p3-2
+Y: I finished my B.Tech in Computer Science in 2020 and joined DXC Technology in March 2021, where I built C# and .NET Framework solutions on SharePoint and handled production support. In July 2022 I moved to IQVIA as Software Development Engineer 2. There I build .NET microservices, some Node and Python services, React and Angular screens on AWS, own release integration, and built the MCP deployment server. Each step gave me more scope: features, then services, then releases and platform tooling.
+K: resume walkthrough, career, experience, dxc, iqvia, hr
++@p3-3
+Y: When a new medicine is tested, patients at hospitals around the world are randomly given either the new medicine or a comparison treatment. IRT is the system that makes that choice fairly and secretly, tells the hospital which numbered drug kit to give, and makes sure every hospital has enough stock by sending shipments from depots. Because it affects patient safety and trial results, every change we make is validated and every action is audited.
+K: irt, clinical trials, explain simply, non-technical, domain
++@p3-4
+Y: I'm a Software Development Engineer 2 in an engineering organisation of about 100 people. I design and build .NET services and APIs, and I fix production issues. I also own release integration, which means merging, tagging and running the automated multi-node installs through FV, TechOps, UAT and production. I built and maintain the CIRT MCP deployment server, and I review code, mentor developers and take part in planning and demos.
+K: role, responsibilities, sde 2, irt team, hr
++@p3-5
+Y: At DXC I learned enterprise .NET development and how to work with clients, but the work was mostly SharePoint customisation and support. I wanted to build modern cloud microservices on a product used around the world. IQVIA IRT gave me exactly that: .NET Core, AWS, messaging, and a regulated domain where quality really matters. It was the right move for my growth.
+K: job change, dxc to iqvia, career move, hr
++@p3-6
+Y: SDE 2 is IQVIA's internal level name. My headline describes the work I actually do: designing services, building the MCP platform on my own, owning release integration across the application, APIs, database and UI, mentoring developers, and leading root cause analysis on production issues. I'm aiming for a senior role because I'm already doing much of that work every day.
+K: title, sde 2, senior, designation, hr
++@p3-7
+Y: Users use the IRT web UI, built with Angular and React, and vendors connect through integrations. Traffic comes in through API Gateway and load balancers with SSO login. Behind that, .NET microservices for randomization, supply and shipments run on ECS, along with some Node, Python and older WCF services. Data is in SQL Server on RDS and DynamoDB, events go through Kafka and RabbitMQ, vendor files come over SFTP, and we monitor with CloudWatch and Grafana.
+K: architecture, system diagram, irt architecture, high level design
++@p3-8
+Y: Our deployments on the on-premise Azure DevOps Server were manual and across many nodes, taking about 6 hours and about 6 people. I built the CIRT MCP server with about 77 tools for builds, releases and multi-node deployments. It wraps the Azure DevOps APIs and our install scripts, polls status, returns clear structured results, and keeps human approval for risky steps. Deployment time dropped from 6 hours to 2, and people needed from 6 to 1.
+K: mcp server, cirt mcp, project, impact, story
++@p3-9
+Y: My lead wanted proof, so I compared [8] deployments from the [two release cycles] before the tool with [8] similar ones after, on the same environments and the same number of nodes. I used the start and end times from Azure DevOps and the list of people on each deployment call. The average went from about 6 hours to about 2, and from 6 people to 1. Approvals and validation still need humans.
+K: measurement, metrics, 6 hours to 2, impact, evidence
++@p3-10
+Y: The hardest part wasn't the code, it was designing the tools so the AI reliably picked the right one out of about 77. The names, descriptions and input schemas mattered more than anything. After that, handling long-running deployments, where a start tool returns an id and status tools poll, and dealing with quirks of the on-premise Azure DevOps APIs, while keeping humans in control of production steps.
+K: mcp challenges, tool design, hardest part, story
++@p3-11
+Y: At first it ran from my own copy, and teammates' copies got out of sync. So I packaged the CIRT MCP server as a .NET global tool, published to our internal Azure Artifacts feed by its own pipeline on every tag. Teammates run one install command and add one entry to their Cursor or Claude Code settings, with their own token from an environment variable. Setup went from [about an hour] to [about 10 minutes], and everyone uses the same version.
+K: packaging, dotnet tool, distribution, mcp, azure artifacts
++@p3-12
+Y: IRT exchanges data files with external vendors over SFTP. I owned a component that supports three libraries, ComponentPro, SSH.NET and Rebex, behind one ISftpClient interface for connect, upload, download, list and delete. A factory picks the library from each vendor's configuration, so the calling code never changes, and a base class holds the shared retry, logging and error handling. I released the Rebex provider to production.
+K: sftp, pluggable component, adapter, strategy, factory, rebex
++@p3-13
+Y: ComponentPro was our original library, but its updates had slowed, and in [2024] a depot vendor disabled old algorithms like ssh-rsa with SHA-1, which broke our connection. SSH.NET was free, but we wanted commercial support for a regulated product. I compared all three on modern algorithm support, patching, licence cost and how they behaved with each vendor's test server, added a Rebex provider behind the same interface, and moved vendors over one at a time by configuration.
+K: sftp libraries, rebex, ssh.net, componentpro, decision, story
++@p3-14
+Y: I built the Rebex provider behind the existing interface, with unit tests and integration tests against a [containerised OpenSSH server] in CI, covering key exchange, host keys, a [500 MB] file, timeouts and reconnects. It went through FV, TechOps and UAT with evidence. Then in production I switched it on by configuration for [one low-volume vendor] for [two weeks], watching logs and alerts, before moving the rest. The switch caused no failed transfers.
+K: safe release, rebex, feature flag, configuration, rollout, story
++@p3-15
+Y: Study setup teams used to type [300+] site records by hand, which took [two to three days]. I built a CSV import, up to [5 MB and about 10,000 rows], that reads the file as a stream, validates it in stages, and shows a preview of every error before saving. Then it saves everything or nothing in one transaction, with an audit entry for each record and a file hash to block re-imports. Now a [300-site] setup takes [under an hour].
+K: csv import, bulk import, feature, story, validation
++@p3-16
+Y: In [2024], a manual check caught a study transfer that was about to overwrite a study that already had randomized patients. I replaced that checklist with a backend guard that runs five checks before any transfer: the target study's status, version compatibility, allowed direction, no other transfer in progress, and the user's role plus a change request reference. Each failure gives a clear reason, and every attempt is audited.
+K: study transfer, safety guard, validation, risk prevention, story
++@p3-17
+Y: For each release, I merge the features committed for it, resolve conflicts, and tag the version across the application, APIs, database and UI. We build once to produce the artifacts, run automated multi-node installs with Ansible, Python and Shell, and promote the same artifact through FV, TechOps, UAT and production. At each step I verify versions, health checks and smoke tests, and record evidence and approvals for the regulated process.
+K: release integration, verification, release process, deployment, gxp
++@p3-18
+Y: In [mid-2024], a RabbitMQ node hit its memory limit while processing a [large vendor file], blocked publishers and dropped connections. For [about 40 minutes], shipment status updates silently never reached the shipment service. I confirmed it with CloudWatch, Grafana and the RabbitMQ console, cleared the backlog, and replayed the missed window from the vendor files, which was safe because consumers upsert. Then I added publisher confirms, retries, memory tuning and alerts. All [about 1,200] updates were recovered that evening.
+K: rabbitmq outage, root cause, production issue, publisher confirms, story
++@p3-19
+Y: In [2024] I delivered three security fixes. First, real logout with tokens: shorter access tokens, refresh token revocation and a denylist in ElastiCache. Second, the SSO "request header too long" error, by moving the auth ticket to the server so the cookie went from [about 13 KB to under 1 KB]. Third, reverse tabnabbing on [about 40] links. Each had tests and went through review and our regulated release process.
+K: security fixes, logout, sso cookie, tabnabbing, story
++@p3-20
+Y: At DXC I built C# and .NET Framework solutions on SharePoint: custom web parts, lists and workflows that automated client processes like approvals, and integrations between SharePoint and other enterprise apps. I also handled production support, like incidents, data fixes and change requests. It taught me enterprise discipline and how to debug carefully in production.
+K: dxc, sharepoint, .net framework, previous experience
++@p3-21
+Y: I pick the language that fits the job. I used Node.js with TypeScript for input-output heavy tools like a [build-log summariser for the MCP platform], Python FastAPI for a [vendor file pre-validation service], and .NET for our core domain services. All of them follow the same standards: REST contracts, structured logs to CloudWatch, tests, Docker images and the same Azure DevOps pipeline template.
+K: node.js, python, polyglot, fastapi, microservices
++@p3-22
+Y: In IRT, I build responsive, reusable React components with TypeScript and work on Angular modules. I fixed UI security issues like reverse tabnabbing, and I write Playwright and Cucumber end-to-end tests for user flows. Since I also build the APIs behind these screens, I understand the full request path from the button click to the database.
+K: frontend, react, angular, typescript, ui work
++@p3-23
+Y: First I check the dashboards: is it one endpoint or all, since when, and was there a release or a traffic change. Then I look at which dependency is slow, using traces and logs by correlation id. In [March 2025], our shipments API p95 jumped from [about 200 milliseconds to about 3 seconds] with no release. Query Store showed a plan change after a statistics update. I forced the good plan to restore service, then fixed the query and index properly.
+K: slow api, performance issue, troubleshooting, parameter sniffing, story
++@p3-24
+Y: One of our ECS workers grew [about 150 MB a day] and was killed every [three days] or so. I took memory snapshots with dotnet-gcdump a few hours apart and compared them. The cause was a static dictionary caching study configuration for every version, with nothing ever removed. I replaced it with IMemoryCache with a size limit and a [30-minute] sliding expiry, and load tested overnight. Memory has stayed flat since.
+K: memory leak, troubleshooting, gcdump, imemorycache, story
++@p3-25
+Y: I decide fast: if the impact is high, I roll back to the previous tagged release first, then find the cause and fix forward. Once, after a [UAT] release, errors went up to [about 8 percent] because a new required setting was missing in UAT. I rolled back in [15 minutes], added the setting, and made our options validate on startup. Now missing configuration fails the deployment instead of failing live requests.
+K: 500 errors, release issue, rollback, validateonstart, story
++@p3-26
+Y: I trace one message by its id through every step: published, confirmed, queued, delivered, acknowledged and processed. During [validation], some kit-assignment notifications were vanishing. They were delivered, but the consumer used auto-acknowledge, so when the database had a temporary timeout, the message was already gone. I switched to manual acknowledge after the commit, added [3] retries with backoff, and a dead-letter queue with an alert.
+K: missing messages, debugging, rabbitmq, ack, dead letter queue, story
++@p3-27
+Y: First I stop the rollout so the nodes don't end up on different versions. Then I compare the failing node with the others: logs, disk, permissions, services and config. Once, a UAT deployment failed on node [3 of 5] because the disk was [98 percent] full of old releases and logs. I cleaned it up, reran the step on that node, verified all nodes had the same version, and added a pre-check tool to the MCP server that checks disk, accounts and ports before every deployment.
+K: deployment failure, multi-node, troubleshooting, story
++@p3-28
+Y: I capture the deadlock graphs from SQL Server's system health session to see exactly which queries and tables are involved. After one release, kit assignment updated Inventory then Shipment, while the resupply job did it the other way round, and a missing index caused scans. I aligned the order, added the index, shortened the transactions and added a retry for deadlock errors. Deadlocks went from [about 20 a day] to [about one a week or fewer].
+K: deadlocks, sql server, troubleshooting, story
++@p3-29
+Y: I check our job logs and the server: the file, size, path and permissions, then re-send safely and confirm with the vendor. [One Monday], a depot vendor said our order file hadn't arrived. Our logs showed a successful upload, but the vendor had moved their pickup folder and told a different team. I re-sent to the new path with the same name, then added a check that lists the remote folder after upload, alerts for failed transfers, and a [shared contact list] for vendor changes.
+K: sftp issue, vendor file, troubleshooting, story
++@p3-30
+Y: I run kubectl describe pod to see the events, like image pull errors, out of memory or probe failures, and kubectl logs with previous to see why it crashed. Then I check config, secrets, limits and probes. Once, a new Node service in [dev] kept crashing because it needed [about 40 seconds] to warm up, but the liveness probe killed it after [10]. I added a startup probe and updated our template so every service gets one.
+K: crashloopbackoff, kubernetes, pod crash, troubleshooting, story
++@p3-31
+Y: I first check whether it times out always or only on cold starts, and find the slow call. A Lambda for [shipment notifications] started timing out as volume grew. It created a new HttpClient on every run, and a slow downstream API had no timeout. I moved the client outside the handler, set a [5-second] timeout with retry, reduced the batch size, made only failed records retry, and gave it more memory. The timeouts stopped.
+K: lambda timeout, aws lambda, troubleshooting, story
++@p3-32
+Y: I look for the pattern: which users, browsers and times. In [2024] we got [about 30] tickets in [two weeks], mostly from study managers who belong to many groups, getting a 400 error after SSO. The auth cookie held every claim and was [about 13 KB], and with other cookies it crossed the [16 KB] header limit. I moved the ticket to the server side and loaded permissions per request with caching, so the cookie became under 1 KB and the tickets stopped.
+K: sso issue, logout, cookie, troubleshooting, story
++@p3-33
+Y: I look at exactly what failed and fix real issues, never mark them as false positives just to pass. [Two days] before code freeze, coverage on new code was [68 percent] against an [80 percent] target, and a hard-coded test connection string was flagged. I moved it to user secrets and a pipeline variable, wrote the missing validator tests in [about half a day], and told the release owner that morning. The gate was green the next day.
+K: sonarqube, quality gate, code coverage, release pressure, story
++@p3-34
+Y: I look for differences between my machine and the build agent, like culture, time zone, file paths, operating system or environment variables, and also test order or timing issues. Once a date-format test passed on my Windows laptop but failed on the Linux agent because the code used the current culture without saying so. I formatted with an explicit culture, set it in the test, and checked in the same SDK container the agent uses.
+K: flaky test, ci failure, debugging, culture, story
++@p3-35
+Y: I read it carefully, check the APIs against the documentation, build it, test it and add tests, and I never merge code I can't explain. Once Copilot suggested a retry policy that retried every failure, including the POST that creates a release. Retrying that after a timeout could create duplicate releases. So I limited retries to GETs and temporary errors, and added a test proving POSTs aren't retried.
+K: ai code review, copilot, verification, retry, story
++@p3-36
+Y: I use the STAR method. Situation is one or two lines of context, Task is what I was responsible for, Action is what I personally did, with technical detail, which is the longest part, and Result is the outcome with real numbers and what I learned. I keep each story to about two minutes, and I prepare a set of stories I can adapt to different questions.
+K: star method, behavioural questions, situation task action result, hr
++@p3-37
+Y: Each deployment across [4 to 6] nodes needed about 6 people for about 6 hours. Nobody asked me to fix it, but I saw that AI agents with MCP could run these steps. I agreed time with my lead for a prototype, started with [10] read-only tools, demoed it, then added write tools with confirmations, and grew it to about 77 tools. Deployments went from 6 hours to 2, and from 6 people to 1.
+K: initiative, ownership, beyond role, mcp, story
++@p3-38
+Y: In [mid-2024], a RabbitMQ memory alarm silently stopped shipment status updates for [about 40 minutes]. I saw that publishing looked normal but the queue was receiving nothing, found the memory alarm and blocked connections, and realised we published without confirms. I cleared the backlog, replayed the missed updates from vendor files safely, then added publisher confirms, retries and alerts. All [about 1,200] updates were recovered that evening, with no silent loss since.
+K: difficult production issue, rabbitmq, outage, story
++@p3-39
+Y: [A quarterly release in 2024] had changes from [5] teams and a fixed production date for a [study go-live]. [Two days] before FV, a shared database script conflicted and an integration test failed. As release integrator, I tracked every item daily, resolved the conflict with both owners in a [one-hour] session, got the test fixed, ran the FV install overnight, and agreed to move one low-priority feature. We hit the date with full evidence.
+K: tight deadline, pressure, release, story
++@p3-40
+Y: In [2023] I changed a date filter on a shipment report and tested only in Indian time. FV found shipments near midnight UTC showing on the wrong day for [US sites]. I owned it in stand-up, fixed it to store and compare in UTC and convert to the site's time zone only for display, added tests for several time zones, and added a time-zone check to my review checklist. It was fixed within [a day], before UAT.
+K: mistake, failure, time zone bug, ownership, story
