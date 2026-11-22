@@ -1,0 +1,326 @@
+@p4-1
+Q: Roughly [70 percent] backend (.NET services, APIs, messaging, SQL, AWS), [15 percent] frontend (React components and Angular modules) and [15 percent] release, DevOps and tooling such as the CIRT MCP server. I call myself backend-first full-stack: I can deliver a feature end to end, but my depth is APIs, data and distributed systems.
+- Give a split you can defend with examples from each area.
+- Frontend examples: [CSV import preview grid], tabnabbing fix, Playwright tests.
+- Tooling examples: MCP server, pipelines, Ansible installs.
+W: I'm clear about where my depth lies.
+? Would you take a pure frontend role? :: No, I'm best used in backend-heavy roles.
+? How do you keep frontend skills current? :: By owning the UI parts of my features and following React releases.
+
+@p4-2
+Q: C# with ASP.NET Core Web API, EF Core and SQL Server, used daily for 4+ years on IRT, including the [early 2026] .NET 10 upgrade. Close behind are messaging (RabbitMQ, Kafka), AWS deployment, CI/CD and release automation, and AI-assisted engineering through MCP.
+- Prove depth with internals: middleware pipeline, DI lifetimes, async state machines, EF Core query translation, execution plans.
+- Examples: [9 s to under 300 ms] query fix, ValidateOnStart config fix, memory leak fix.
+W: I can back up "strongest" with depth.
+? What's new in .NET 10 you used? :: LTS support, C# 14 features like field-backed properties and extension members, and performance gains.
+? What's hardest in EF Core? :: Getting efficient SQL: avoiding N+1, tracking overhead and cartesian explosions.
+
+@p4-3
+Q: Daily I use C#/.NET, ASP.NET Core, EF Core and SQL Server for features; Git and Azure DevOps for PRs and pipelines; CloudWatch and Grafana for monitoring; RabbitMQ and Kafka for events; xUnit, Moq and Playwright for tests; and GitHub Copilot and Cursor with the CIRT MCP server for coding and deployments.
+- Weekly: SSMS/Query Store for performance, Docker locally, Postman or .http files for APIs.
+- Show a workflow: ticket, branch, code with tests, PR, pipeline, deploy, monitor.
+W: I work across the whole delivery toolchain.
+? Which IDE? :: Visual Studio and Rider for .NET, Cursor for AI-assisted work, VS Code for scripts.
+? How do you test APIs locally? :: .http files or Postman, plus integration tests with WebApplicationFactory.
+
+@p4-4
+Q: The CIRT MCP server: deployments on on-prem Azure DevOps Server were multi-node, about 6 hours and about 6 people. I had to automate them safely in a regulated product, alone, without disturbing live releases. I mapped [about 30] manual steps, built about 77 typed tools in increments with confirmations and approvals unchanged, and drove adoption; deployments went to 2 hours and 1 person.
+- Challenges: tool design for model accuracy, long-running operations, on-prem API quirks, safety, adoption.
+- Why it was hard: technical plus people and regulatory dimensions.
+W: I take on hard, open-ended problems and finish them.
+? What almost went wrong? :: An early version polled too aggressively; I added backoff and wait hints.
+? Who supported you? :: My lead gave time and the release team gave feedback.
+
+@p4-5
+Q: For the CSV bulk import I had to choose between partial imports and all-or-nothing saves. I compared GxP audit and rollback risk against user experience, proposed a validate-only preview followed by an all-or-nothing save, and agreed it with the BA and QA lead; it's live and avoids half-configured studies.
+- Decision process: options, criteria, trade-offs, stakeholders, decision record.
+- Document decisions (ADR) so future teams know why.
+W: I make reasoned decisions and document them.
+? What is an ADR? :: Architecture Decision Record: a short document with context, decision and consequences.
+? Would you decide differently elsewhere? :: In non-regulated, independent-row imports, partial import can be better.
+
+@p4-6
+Q: Vendor transfers were tied to ComponentPro, and in [2024] a vendor hardened their server and broke our connection. I put all transfers behind an ISftpClient abstraction with a factory choosing the provider per vendor from config, added Rebex alongside ComponentPro and SSH.NET, and moved vendors one at a time; no business code changed and no transfers failed.
+- Patterns: adapter, strategy, factory; shared retry and logging in a base class.
+- Per-vendor configuration enabled gradual rollout and instant rollback.
+W: I improve systems so future changes are cheap.
+? How did you prove it was better? :: Library swaps became config changes, and vendor failures dropped.
+? What would you improve next? :: Retire ComponentPro and add synthetic transfer checks.
+
+@p4-7
+Q: A senior backend or API engineer role on .NET with AWS and event-driven systems, owning design and delivery of services, with room to use AI-assisted engineering, build developer tooling and mentor others, on a product with real scale and quality standards.
+- Align with the job description; be specific so they can picture you in the role.
+W: I know exactly where I add most value.
+? Would you consider a lead role? :: Yes, as a technical lead who still codes.
+? Remote or office? :: [Answer honestly about preference and flexibility].
+
+@p4-8
+Q: Bigger ownership of design decisions and production systems; a strong engineering culture with code reviews, CI/CD, observability and time to learn; a modern stack open to AI tools; and a clear growth path to senior or lead.
+- Phrase as what you'll contribute and what helps you do it.
+W: I look for environments where I can do my best work.
+? What would make you leave quickly? :: No ownership or no learning; I'd raise it first.
+? What culture suits you? :: Ownership with accountability and blameless learning from incidents.
+
+@p4-9
+Q: My first job was C#/.NET and I stayed because it suits enterprise backends: strong typing, excellent tooling, high performance, first-class async and DI, cross-platform containers since .NET Core, and Microsoft's predictable LTS cadence that fits regulated products.
+- Performance: ASP.NET Core ranks highly in TechEmpower benchmarks; Kestrel and System.Text.Json are fast.
+- LTS releases every two years (.NET 8, .NET 10) with 3 years support.
+- Ecosystem: EF Core, minimal APIs, Aspire, AOT.
+W: I choose tools for solid reasons, not habit alone.
+? What don't you like about .NET? :: Some boilerplate historically, though minimal APIs and newer C# fixed much of it.
+? STS vs LTS? :: STS (odd versions) now get 2 years (extended from 18 months, starting with .NET 9); LTS get 3 years.
+
+@p4-10
+Q: I didn't move away from backend; AI multiplies it. Deployments took 6 people and 6 hours, and MCP let agents run those steps safely, so I built the CIRT MCP server. I use AI where it removes toil (deployments, tests, log triage) and keep humans on approvals and design.
+- Position as a backend engineer who applies AI pragmatically, not an ML researcher.
+- Evidence: measured results and safe design.
+W: I adopt new tech for real problems, not hype.
+? Do you build ML models? :: No, I build integrations and tooling around LLMs.
+? What's next in AI for engineering? :: More agentic workflows with strong guardrails.
+
+@p4-11
+Q: I build backend services and APIs, React/TypeScript components and Angular modules in the IRT UI, Playwright tests and deployment pipelines, so I can take a feature from database to screen to production, while my depth stays in the backend.
+- Example: CSV import (API, preview UI, tests, release).
+- Full-stack helps design better API contracts for the UI.
+W: I own features end to end.
+? Which layer do you enjoy most? :: Backend and distributed systems.
+? How do you design APIs for UIs? :: Shape responses for screens (or a BFF) and avoid chatty calls.
+
+@p4-12
+Q: C#/.NET backend: ASP.NET Core, EF Core and SQL Server, plus distributed-system fundamentals like messaging and resilience. Close second is CI/CD and release automation.
+- Same answer as strongest technology; keep it consistent across interviews.
+W: I'm consistent and confident about my core.
+? Rate yourself in C# out of 10? :: [About 8]: strong daily use and internals knowledge, always more to learn.
+? What would make it a 10? :: Deeper runtime internals and contributing to open source.
+
+@p4-13
+Q: Java/Spring Boot: I've worked on services but I'm much stronger in .NET; I can read, fix and extend Spring code and would ramp up fast because concepts map one to one. Also Kubernetes cluster administration: I deploy to it, but platform teams run the clusters.
+- Honest weakness plus plan: [Spring Boot course/side project], CKAD-style practice.
+- Mapping: Spring DI ↔ .NET DI, Spring MVC ↔ ASP.NET Core, JPA ↔ EF Core.
+W: I'm honest about gaps and have a plan to close them.
+? How fast could you contribute in Java? :: Small fixes in days, features in a few weeks.
+? Do you plan to learn more Kubernetes? :: Yes, toward running workloads end to end.
+
+@p4-14
+Q: It depends on team and workload. For a core domain service: ASP.NET Core on .NET 10 LTS, EF Core with SQL Server or DynamoDB, containers on ECS, Terraform, and RabbitMQ or Kafka for events. Node/TypeScript for lightweight I/O glue, Python for data and scripting, React for UI.
+- Criteria: team skills, performance, ecosystem, hiring, operations, support lifecycle.
+- Start with a modular monolith unless clear reasons for microservices.
+W: I choose technology by fit and context.
+? Would you choose microservices from day one? :: Usually not; start modular and split when needed.
+? SQL or NoSQL? :: SQL by default for relational data and transactions; NoSQL for known access patterns at scale.
+
+@p4-15
+Q: Shipping reliable .NET backend services in a regulated environment: APIs, data, messaging, production troubleshooting (RabbitMQ outage, SQL and SSO fixes) and release ownership across FV, TechOps, UAT and production.
+- AI is a multiplier on that core, not the core.
+W: My foundation is solid engineering.
+? Best example without AI? :: The RabbitMQ outage RCA and publisher confirms fix.
+? How do you stay strong in fundamentals? :: Deep debugging work and reading framework internals.
+
+@p4-16
+Q: Individual: the CIRT MCP server (solely authored), SFTP component ownership, the Rebex release, the study-transfer guard and several production RCAs. Team: IRT microservices, the .NET upgrade (I owned [three] services), CSV import (I built it end to end with BA and QA).
+- Be precise about "I" vs "we" to stay credible.
+W: I'm honest about my contribution.
+? Did anyone help on the MCP server? :: Reviews and feedback, but I wrote it.
+? How do you work in teams? :: Clear ownership, frequent communication and reviews.
+
+@p4-17
+Q: The four OOP principles are encapsulation (bundle data with behaviour and hide state), abstraction (expose what, hide how), inheritance (reuse via is-a) and polymorphism (one interface, many implementations). Together they let us hide details, define contracts and swap behaviour, as with ISftpClient and three providers.
+- Modern C# favours composition and interfaces over deep inheritance.
+- SOLID builds on these principles.
+- Example map: Shipment.MarkDelivered (encapsulation), ISftpClient (abstraction/polymorphism), SftpClientBase (inheritance).
+? Which is most important? :: Encapsulation, because it protects invariants.
+? Is C# purely OOP? :: No, it's multi-paradigm with strong functional features (LINQ, records, pattern matching).
+
+@p4-18
+Q: Encapsulation bundles data with the methods that change it and hides internal state behind a controlled public surface, so invariants can't be broken. A Shipment exposes MarkDelivered() which checks the current status and sets the delivery time, instead of a public settable Status.
+- Private setters, readonly fields, and validation in methods.
+- Rich domain models vs anemic models (data bags with logic elsewhere).
+- Expose collections as IReadOnlyCollection.
+```csharp
+public class Shipment
+{
+    public ShipmentStatus Status { get; private set; }
+    public DateTimeOffset? DeliveredAt { get; private set; }
+    public void MarkDelivered(DateTimeOffset at)
+    {
+        if (Status != ShipmentStatus.InTransit) throw new InvalidOperationException("Not in transit");
+        Status = ShipmentStatus.Delivered; DeliveredAt = at;
+    }
+}
+```
+? Encapsulation vs abstraction? :: Encapsulation hides state and protects it; abstraction hides complexity behind a simple contract.
+? Can EF Core map private setters? :: Yes, it uses backing fields.
+
+@p4-19
+Q: Inheritance lets a class derive from a base class to reuse and extend its behaviour (is-a). SftpClientBase holds retry and logging, and each provider class inherits it and implements library-specific calls. I prefer composition when the relationship isn't truly is-a or behaviour varies independently.
+- C# supports single class inheritance and multiple interface implementation.
+- Template method pattern: base defines the algorithm, subclasses fill steps.
+- Fragile base class problem: base changes break subclasses.
+- Default interface methods (C# 8) add some shared behaviour to interfaces.
+? Why no multiple inheritance? :: To avoid the diamond problem; interfaces give the flexibility instead.
+? Abstract class vs interface? :: Abstract classes share code and state; interfaces define contracts and allow multiple implementation.
+
+@p4-20
+Q: Polymorphism means one interface, many implementations: the method that runs is chosen at runtime through virtual/override or interfaces, or at compile time through overloading and generics. Code calls ISftpClient.UploadAsync and the Rebex, SSH.NET or ComponentPro implementation runs.
+- Runtime dispatch uses virtual method tables; the JIT can devirtualize sealed or known types (and dynamic PGO helps).
+- Parametric polymorphism: generics.
+- Pattern matching offers an alternative for closed hierarchies.
+? Overloading vs overriding? :: Overloading is compile-time by signature; overriding is runtime by actual type.
+? What is dynamic PGO? :: Profile-guided optimisation at runtime, on by default since .NET 8, which can devirtualize hot calls.
+
+@p4-21
+Q: Abstraction exposes what something does and hides how; interfaces and abstract classes model the essential contract. Callers depend on ISftpClient without knowing any library details.
+- Good abstractions are small and stable; leaky abstractions expose implementation details (library exceptions).
+- We mapped provider exceptions to our own to avoid leaking.
+- Don't abstract too early; wait for a second implementation or a testing need.
+? What is a leaky abstraction? :: One where callers must understand the hidden implementation to use it correctly.
+? Abstraction vs interface keyword? :: Abstraction is the concept; interfaces are one way to express it.
+
+@p4-22
+Q: A class is the blueprint (type definition with fields, properties and methods); an object is an instance created from it at runtime with its own state on the heap. Many objects can come from one class.
+- Static members belong to the type, not instances.
+- Records and structs are also types; structs create values, not heap objects (unless boxed).
+- Object header holds sync block and method table pointer.
+? Where are objects stored? :: On the managed heap; references point to them.
+? What's a static class? :: A class that can't be instantiated and holds only static members.
+
+@p4-23
+Q: Overloading is the same method name with different parameters in one class, resolved at compile time; overriding is a derived class replacing a virtual base method with the same signature, resolved at runtime by the actual object type.
+- Return type alone can't distinguish overloads.
+- Overload resolution picks the best match; optional parameters and params can create ambiguity.
+- Covariant return types (C# 9) let overrides return a more derived type.
+? Can you override a non-virtual method? :: No; you can only hide it with new.
+? Can static methods be overridden? :: No; static abstract interface members are a different feature for generic math.
+
+@p4-24
+Q: virtual in the base class marks a method as replaceable; override in the derived class supplies the new implementation, and a call through a base reference runs the override because dispatch uses the runtime type.
+- abstract methods are implicitly virtual and must be overridden.
+- base.Method() calls the base implementation from an override.
+- Calling virtual methods in constructors is risky: the derived override runs before the derived constructor finishes.
+? Are methods virtual by default in C#? :: No, unlike Java; you must mark them.
+? Why avoid virtual calls in constructors? :: Derived fields may not be initialised yet.
+
+@p4-25
+Q: override replaces a virtual method so base-typed references call the derived version; new hides the base method (method hiding), so which runs depends on the declared reference type, a common source of bugs.
+- The compiler warns (CS0108) when hiding without new.
+- Hiding breaks polymorphism; use rarely, e.g. when a base library adds a conflicting member.
+```csharp
+class Base { public virtual string A() => "base"; public string B() => "base"; }
+class Derived : Base { public override string A() => "derived"; public new string B() => "derived"; }
+Base x = new Derived(); x.A(); // "derived"   x.B(); // "base"
+```
+? When is new useful? :: To intentionally shadow a member you can't change, with a clear reason.
+? What does the CS0108 warning mean? :: You're hiding an inherited member without saying new.
+
+@p4-26
+Q: A sealed class can't be inherited (string is sealed); a sealed override stops further overriding down the chain. I use it to express design intent and safety, and it lets the JIT devirtualize calls for a small performance gain.
+- Many analyzers (CA1852) suggest sealing internal types that aren't inherited.
+- Sealed records are common for DTOs and messages.
+- Sealing public library types is a compatibility decision.
+? Why is string sealed? :: For immutability and security guarantees and performance.
+? Can you seal a method that isn't an override? :: No, sealed applies to overrides only.
+
+@p4-27
+Q: The stack is per-thread LIFO memory for method frames, locals and value types, very fast and freed when the method returns; the heap is shared managed memory for objects (reference types), cleaned by the GC. Value types live where they're declared: inside a heap object's fields, they're on the heap.
+- Default stack size about 1 MB per thread (Windows main thread); deep recursion causes StackOverflowException, which can't be caught.
+- stackalloc and Span<T> allow stack buffers.
+- Large objects (85,000 bytes or more) go to the Large Object Heap.
+- Captured locals in lambdas or async methods move to heap objects.
+? Are structs always on the stack? :: No; fields of a class, array elements, boxed values and captured variables live on the heap.
+? What is the LOH? :: The Large Object Heap for objects of 85 KB or more, collected with Gen 2.
+
+@p4-28
+Q: Boxing wraps a value type in an object on the heap (int to object); unboxing casts it back to the exact type. Each box costs an allocation and GC work, so I avoid it with generics (List<int> instead of ArrayList) and by avoiding object parameters for value types.
+- Hidden boxing: string.Format with value types (older), interfaces on structs, non-generic collections, enums in some APIs.
+- Unboxing to the wrong type throws InvalidCastException.
+- Interpolated string handlers (C# 10) avoid boxing in many cases.
+? How do you find boxing? :: Allocation profilers or IL inspection (box instructions).
+? Does calling an interface method on a struct box? :: Yes through an interface reference, but not with a constrained generic.
+
+@p4-29
+Q: IDisposable.Dispose releases unmanaged or expensive resources (connections, streams, SFTP sessions) deterministically. A using statement calls Dispose at the end of the block even on exceptions; a C# 8 using declaration disposes at the end of the enclosing scope; IAsyncDisposable with await using handles async cleanup.
+- Dispose pattern with a finalizer only when you directly own unmanaged handles; prefer SafeHandle.
+- Don't dispose objects you don't own (DI-injected services).
+- HttpClient: don't dispose per request; use IHttpClientFactory.
+```csharp
+await using var sftp = factory.Create(vendor.Provider);
+await sftp.ConnectAsync(ct);
+using var file = File.OpenRead(path);   // disposed at end of method
+await sftp.UploadAsync(file, remote, ct);
+```
+? What happens if you forget Dispose? :: Resources stay open until the GC finalizes them, if ever, causing leaks like connection pool exhaustion.
+? Dispose vs finalizer? :: Dispose is deterministic and called by you; finalizers run non-deterministically on the GC thread.
+
+@p4-30
+Q: const is a compile-time constant, implicitly static and baked into calling assemblies; readonly is set at declaration or in the constructor, per instance; static readonly is set once per type at runtime, for values like objects or computed values that can't be const.
+- Changing a public const requires recompiling consumers; prefer static readonly for public values that might change.
+- readonly on a reference prevents reassignment, not mutation of the object.
+- readonly struct and readonly members prevent defensive copies.
+? Can const be a DateTime? :: No, only primitive types, strings and enums (or null).
+? Is a readonly List immutable? :: No, you can still add items; use ImmutableList or IReadOnlyList.
+
+@p4-31
+Q: ref passes a variable by reference (must be initialised; callee may change it); out requires the callee to assign it (TryParse pattern); in passes by read-only reference, avoiding copies of large structs. C# 12 added ref readonly parameters.
+- Not allowed in async methods or iterators (ref locals limited; C# 13 relaxed some rules).
+- ref returns and ref locals for high-performance code.
+- Prefer returning tuples or records for multiple results in normal code.
+? Why use in? :: To avoid copying large structs without allowing changes.
+? out vs returning a tuple? :: out fits the Try pattern; tuples are often clearer otherwise.
+
+@p4-32
+Q: Nullable reference types (C# 8) make reference types non-nullable by default; string? marks a nullable one, and the compiler warns on possible null dereferences or assigning null. It catches NullReferenceExceptions at compile time; it's enabled by default in new projects.
+- It's compile-time analysis only; runtime can still have nulls (deserialization, reflection).
+- Attributes like [NotNullWhen(true)], [MaybeNull] help the analysis.
+- The null-forgiving operator ! silences warnings; use sparingly.
+- Turn warnings into errors (Nullable enable plus TreatWarningsAsErrors) for new code.
+? Does it change runtime behaviour? :: No, only warnings and metadata.
+? How do you migrate a big codebase? :: File by file with #nullable enable, starting with core models.
+
+@p4-33
+Q: Pattern matching tests and deconstructs values concisely: type patterns with is, switch expressions, property patterns, relational and logical patterns (and, or, not) and list patterns (C# 11). It replaces long if/else chains with readable, compiler-checked logic.
+- Switch expressions warn on non-exhaustive matches.
+- is not null is the clearest null check.
+```csharp
+var fee = shipment switch
+{
+    { Status: ShipmentStatus.Delivered } => 0m,
+    { IsExpress: true, Weight: > 10 } => 50m,
+    { Country: "IN" or "US" } => 10m,
+    _ => 25m
+};
+if (args is [var first, .. var rest]) Console.WriteLine(first);
+```
+? What is a discard? :: _ matches anything without binding it.
+? Is pattern matching slower? :: No, it compiles to efficient type checks and comparisons.
+
+@p4-34
+Q: Extension methods are static methods in a static class whose first parameter has this T, so they can be called as if they were instance methods; LINQ is built on them. We use them for things like service registration (services.AddSftpProviders()) and small helpers.
+- They can't access private members and lose to real instance methods with the same signature.
+- C# 14 adds extension members (extension blocks) including extension properties and static extensions.
+- Keep them discoverable and in clear namespaces.
+```csharp
+public static class SftpServiceCollectionExtensions
+{
+    public static IServiceCollection AddSftpProviders(this IServiceCollection s, IConfiguration cfg)
+    {
+        s.Configure<SftpOptions>(cfg.GetSection("Sftp"));
+        s.AddSingleton<ISftpClientFactory, SftpClientFactory>();
+        return s;
+    }
+}
+```
+? Can you extend a sealed class? :: Yes, extension methods work on any type.
+? What's new in C# 14? :: Extension blocks that allow extension properties and static members.
+
+@p4-35
+Q: An enum is a named set of integer constants such as enum ShipmentStatus { Created, Shipped, Delivered }, type-safe and readable. [Flags] enums combine values with bitwise operations (powers of two), and HasFlag or bitwise checks test them.
+- Default underlying type is int; any int can be cast, so validate input (Enum.IsDefined).
+- Serialize as strings for APIs with JsonStringEnumConverter to keep contracts stable.
+- Store as strings or ints in the database deliberately; adding values in the middle changes numbers.
+```csharp
+[Flags] public enum Permissions { None = 0, Read = 1, Write = 2, Approve = 4 }
+var p = Permissions.Read | Permissions.Approve;
+bool canApprove = (p & Permissions.Approve) != 0;
+```
+? Why assign explicit values? :: So reordering doesn't change stored or serialized values.
+? Enum vs smart enum class? :: Classes can carry behaviour and data; enums are simple constants.

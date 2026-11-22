@@ -1,0 +1,267 @@
+@p4-36
+Q: An async deadlock happens when code blocks on a Task (.Result, .Wait()) while a SynchronizationContext (WinForms, WPF, classic ASP.NET) needs that same blocked thread to run the continuation: each waits for the other forever. ASP.NET Core has no SynchronizationContext, so it doesn't deadlock that way, but blocking still causes thread pool starvation.
+- Fix: async all the way; never block on async in request code.
+- Libraries use ConfigureAwait(false) to avoid capturing contexts.
+- If you must call async from sync (Main, legacy), GetAwaiter().GetResult() at the very top, knowing the risks.
+- Thread pool starvation symptoms: latency climbs, thread count grows slowly (about one thread per second injection beyond min).
+? Why does ASP.NET Core avoid the classic deadlock? :: It has no request SynchronizationContext, so continuations run on any pool thread.
+? Is .Result ever fine? :: After the task has completed (e.g. after WhenAll), it doesn't block.
+
+@p4-37
+Q: ConfigureAwait(false) tells await not to resume on the captured SynchronizationContext or TaskScheduler, so the continuation runs on a thread pool thread. It matters in libraries and UI apps to avoid deadlocks and context-switch overhead; in ASP.NET Core app code it makes little difference because there's no context.
+- Library authors should still use it because their code may run under UI contexts.
+- .NET 8 added ConfigureAwaitOptions (e.g. SuppressThrowing, ForceYielding) for Task.
+- After ConfigureAwait(false), don't touch UI elements or context-bound state.
+? Does ConfigureAwait(false) make code faster in ASP.NET Core? :: Negligibly; it's mainly about correctness in libraries.
+? What does ForceYielding do? :: Forces the continuation to be queued asynchronously even if the task already completed.
+
+@p4-38
+Q: LINQ (Language Integrated Query) gives one syntax to query collections, databases (EF Core) and XML using operators such as Where, Select, GroupBy, Join and OrderBy, in method or query syntax. Over IEnumerable it runs in memory with delegates; over IQueryable it builds expression trees that providers translate, e.g. to SQL.
+- Deferred execution: queries run when enumerated (foreach, ToList, Count).
+- Multiple enumeration re-executes the query; materialise once if reused.
+- .NET 9 added CountBy, AggregateBy and Index; .NET 6 added Chunk, MinBy, MaxBy, DistinctBy.
+```csharp
+var late = await db.Shipments
+    .Where(s => s.Status == ShipmentStatus.InTransit && s.ExpectedAt < now)
+    .OrderBy(s => s.ExpectedAt)
+    .Select(s => new { s.Id, s.SiteId, s.ExpectedAt })
+    .ToListAsync(ct);
+```
+? Query vs method syntax? :: Same result; query syntax compiles to method calls and can be clearer for joins.
+? What does CountBy do? :: Groups by a key and returns counts without creating groups (.NET 9).
+
+@p4-39
+Q: IEnumerable<T> gives forward-only iteration; ICollection<T> adds Count, Add, Remove and Contains; IList<T> adds index access and Insert. I accept the smallest interface a method needs and return read-only interfaces (IReadOnlyList, IReadOnlyCollection) to communicate intent.
+- IEnumerable may be lazy or infinite; Count() may enumerate everything.
+- IReadOnlyList<T> gives Count and indexing without mutation.
+- Arrays implement IList<T> but throw on Add.
+? Why return IReadOnlyList instead of List? :: It prevents callers mutating internal state and documents intent.
+? Is IEnumerable always lazy? :: No, it depends on the source; it's an abstraction, not a guarantee.
+
+@p4-40
+Q: First returns the first match and throws if none; FirstOrDefault returns default (null) instead. Single requires exactly one match and throws if none or more than one; SingleOrDefault returns default if none but still throws if more than one.
+- Use Single when duplicates indicate a data bug; First when order matters (with OrderBy).
+- In SQL, First becomes TOP(1); Single becomes TOP(2) to detect duplicates.
+- .NET 6 added FirstOrDefault(defaultValue) overloads.
+- FindAsync by key checks the change tracker first.
+? Which is faster in EF Core? :: First (TOP 1) reads less than Single (TOP 2), but pick by meaning.
+? FirstOrDefault on value types? :: Returns default (0 for int), which may be ambiguous.
+
+@p4-41
+Q: Any() stops at the first match and translates to EXISTS in SQL; Count() counts every matching row. Use Any() to check existence; on in-memory collections the Count property is already O(1), and LINQ Count() uses it when available.
+- Any() on IEnumerable without a predicate can use TryGetNonEnumeratedCount-like optimisations.
+- Count() > 0 is a common code smell (CA1827 analyzer).
+? What does EF Core generate for Any()? :: SELECT CASE WHEN EXISTS (...) THEN 1 ELSE 0 END.
+? When use Count? :: When you actually need the number.
+
+@p4-42
+Q: A closure is a lambda that captures variables from its outer scope; the compiler moves them into a hidden class so they live as long as the lambda. Pitfalls include capturing a loop variable in older for loops, accidentally keeping large objects alive, and hidden allocations on hot paths.
+- foreach variables are per-iteration since C# 5; for loop variables are shared.
+- static lambdas (C# 9) prevent capture and allocations.
+- Captured variables are shared: changing them later changes what the lambda sees.
+```csharp
+var actions = new List<Action>();
+for (int i = 0; i < 3; i++) actions.Add(() => Console.Write(i));   // prints 333
+for (int i = 0; i < 3; i++) { var copy = i; actions.Add(() => Console.Write(copy)); } // 012
+```
+? Do closures allocate? :: Yes, a display class instance and a delegate, unless the lambda is static or captures nothing.
+? Why can closures cause memory leaks? :: Long-lived delegates (event handlers) keep captured objects alive.
+
+@p4-43
+Q: Liskov Substitution says subtypes must work anywhere the base type is expected without breaking correct behaviour. Every ISftpClient provider honours the same contract (same exceptions, same semantics for overwrite), so callers never special-case one; the classic violation is Square inheriting Rectangle and breaking width/height expectations.
+- Violations: throwing NotSupportedException in overrides, stronger preconditions, weaker postconditions.
+- ReadOnlyCollection implementing IList and throwing on Add is a known framework compromise.
+- Contract tests run the same test suite against every implementation.
+? How do you test LSP? :: Shared contract tests for all implementations of an interface.
+? What smell suggests an LSP break? :: Callers checking concrete types with is or casts.
+
+@p4-44
+Q: Interface Segregation says clients shouldn't depend on methods they don't use. Instead of one large IShipmentRepository, we use IShipmentReader for queries and IShipmentWriter for commands, so a reporting service only gets read access and tests mock less.
+- Small, role-based interfaces; one class can implement several.
+- Fits CQRS read/write split.
+- Fat interfaces force empty implementations and change ripple.
+? Doesn't this create too many interfaces? :: Only split where clients really differ.
+? Link to security? :: Read-only interfaces make accidental writes impossible in reporting code.
+
+@p4-45
+Q: Dependency Inversion says high-level modules depend on abstractions, not concrete classes, and abstractions are owned by the high-level side. VendorExchangeService depends on ISftpClient injected through ASP.NET Core DI, not on Rebex directly, so libraries can change without touching business logic.
+- DIP is the principle; DI is the technique; IoC containers are tooling.
+- Clean Architecture: interfaces in the domain/application layer, implementations in infrastructure.
+? DIP vs DI? :: DIP is the design principle; DI is how dependencies are supplied.
+? Where should the interface live? :: With the code that uses it, not with the implementation.
+
+@p4-46
+Q: I chose an interface to decouple callers from three SFTP implementations, enable DI and unit tests with Moq, and add providers without changing callers (open/closed). It also lets me map library-specific behaviour to one consistent contract.
+- Interfaces for seams: external systems, I/O, time (TimeProvider), randomness.
+- Don't create interfaces for every class "just because"; one implementation and no test need is a smell.
+? Interface vs abstract class here? :: Interface for the contract plus an abstract base class for shared retry/logging.
+? How did it help testing? :: Callers are tested with mocked ISftpClient, no real server needed.
+
+@p4-47
+Q: I avoid inheritance when the relationship isn't truly is-a, when behaviour varies independently (use strategy or composition), when hierarchies get deep, or across module boundaries where base changes ripple. Composition over inheritance keeps classes flexible.
+- Decorator pattern adds behaviour without subclassing (e.g. a logging ISftpClient wrapper).
+- Sealing classes by default prevents accidental hierarchies.
+? Example of composition in your code? :: Providers receive a retry policy and logger rather than inheriting them in newer code.
+? When is inheritance right? :: Stable is-a relationships with shared behaviour, like framework base classes (ControllerBase).
+
+@p4-48
+Q: Garbage collections pause threads (briefly for Gen 0/1, longer for Gen 2 and LOH compaction) and high allocation rates trigger more collections, raising p99 latency and CPU. I reduce allocations on hot paths (pooling, Span, avoiding LINQ in tight loops, streaming), and measure with dotnet-counters and profilers.
+- Generational GC: Gen 0 (short-lived), Gen 1, Gen 2 (long-lived), LOH and POH.
+- Server GC for throughput (one heap per core); DATAS (default for Server GC since .NET 9) adapts heap count to reduce memory.
+- Background GC lets Gen 2 run concurrently.
+- ArrayPool<T>, RecyclableMemoryStream, object pooling for big buffers.
+? What is the POH? :: Pinned Object Heap (.NET 5+) for objects that must not move, reducing fragmentation.
+? Should you call GC.Collect? :: Almost never; it usually hurts performance.
+
+@p4-49
+Q: An exception in an async method is captured in the returned Task and rethrown at the await with its stack trace. If the Task is never awaited, the exception is unobserved (TaskScheduler.UnobservedTaskException) and silently lost; async void exceptions crash the process because there's no Task to hold them.
+- Await every task; avoid fire-and-forget without handling.
+- Task.WhenAll throws the first exception at await; inspect task.Exception for all.
+- async void only for event handlers.
+- Background work: BackgroundService or a queue with try/catch and logging.
+? How do you get all exceptions from WhenAll? :: Keep the WhenAll task and read its Exception.InnerExceptions.
+? Do exceptions thrown before the first await behave differently? :: They're still captured in the Task for async methods.
+
+@p4-50
+Q: Dependency injection means an object receives its dependencies from outside, usually through its constructor, instead of creating them. It gives loose coupling, easy testing with mocks, central lifetime management and configuration, and ASP.NET Core has a built-in container.
+- Lifetimes: Singleton, Scoped (per request), Transient.
+- Keyed services (.NET 8) for multiple named implementations.
+- ValidateScopes and ValidateOnBuild in Development catch lifetime and registration errors early.
+```csharp
+builder.Services.AddScoped<IShipmentService, ShipmentService>();
+public class ShipmentsController(IShipmentService svc) : ControllerBase { }  // primary constructor
+```
+? Is DI only for testing? :: No, it also centralises configuration and lifetimes and decouples modules.
+? When would you use a third-party container? :: For features like decorators, interception or assembly scanning (Autofac, Scrutor for scanning).
+
+@p4-51
+Q: A dependency is any object a class needs to do its work, such as a repository, an HttpClient, a logger, configuration, a clock (TimeProvider) or an ISftpClient.
+- Hidden dependencies: static calls (DateTime.Now, File.ReadAllText) make code hard to test.
+- Make them explicit through constructor parameters.
+? Is DateTime.Now a dependency? :: Yes, a hidden one; inject TimeProvider.
+? What are too many dependencies a sign of? :: The class likely has too many responsibilities.
+
+@p4-52
+Q: Inversion of Control means the framework, not your code, controls object creation and flow ("don't call us, we'll call you"); DI is one form. An IoC container registers services and lifetimes and builds object graphs automatically; ASP.NET Core's is Microsoft.Extensions.DependencyInjection.
+- Other IoC forms: events, template methods, middleware pipelines.
+- Container builds graphs recursively by constructor parameters.
+? Does the built-in container support property injection? :: No, only constructor injection (plus [FromServices] and [FromKeyedServices] in endpoints).
+? What is ActivatorUtilities? :: A helper to create objects mixing container services and explicit arguments.
+
+@p4-53
+Q: Constructor injection makes dependencies required, immutable and explicit, and it's the default in ASP.NET Core; property injection sets optional dependencies after construction and is not supported by the built-in container. Method injection ([FromServices] on an action parameter) suits rarely used dependencies.
+- Primary constructors (C# 12) reduce boilerplate; parameters are captured, not readonly fields, so assign to readonly fields if immutability matters.
+- Too many constructor parameters signals a class doing too much.
+? Why prefer constructor injection? :: Objects are always valid after construction and dependencies are visible.
+? Are primary constructor parameters readonly? :: No, they're mutable captured parameters unless assigned to readonly fields.
+
+@p4-54
+Q: IServiceProvider is the built container that resolves services (GetService), created from IServiceCollection when the host is built. Scopes come from IServiceScopeFactory, and each request has its own scoped provider in HttpContext.RequestServices.
+- Root provider resolving scoped services is a bug (caught by ValidateScopes in Development).
+- IServiceProviderIsService checks registration without resolving.
+- Keyed lookup: GetRequiredKeyedService<T>(key).
+? Why not resolve scoped services from the root? :: They'd live for the app's lifetime, becoming captive.
+? What is RequestServices? :: The request-scoped provider used to create controllers and middleware dependencies.
+
+@p4-55
+Q: A service may depend on services that live at least as long as it does. Singleton on Scoped is a captive dependency bug (DbContext held forever, shared across threads); Singleton on Transient is allowed but the transient effectively becomes a singleton; Scoped on Singleton and Transient on anything are fine.
+- ValidateScopes (on in Development) throws for singleton-to-scoped.
+- Fix singletons needing scoped services: IServiceScopeFactory, create a scope per unit of work.
+- IDbContextFactory for singletons or background work needing DbContext.
+? What is a captive dependency? :: A shorter-lived service captured by a longer-lived one.
+? How do you catch it before production? :: ValidateScopes and ValidateOnBuild, plus tests that build the host.
+
+@p4-56
+Q: GetService returns null if the service isn't registered; GetRequiredService throws InvalidOperationException. I prefer GetRequiredService to fail fast with a clear message, and use GetService only for truly optional services.
+- Both are service locator calls; prefer constructor injection.
+- IEnumerable<T> resolves to empty if none registered, never null.
+? When use GetService? :: Optional plugins or features that may not be registered.
+? Is GetRequiredService an extension method? :: Yes, in ServiceProviderServiceExtensions.
+
+@p4-57
+Q: Controllers declare dependencies in their constructor; for each request, the controller activator creates the controller from the request scope (HttpContext.RequestServices), so scoped services like DbContext are shared within that request and disposed when it ends. Controllers themselves aren't registered by default; AddControllersAsServices changes that.
+- Middleware constructors resolve once (singleton-like); request-scoped services go in InvokeAsync parameters.
+- Minimal API handlers get services as parameters, inferred from DI.
+? Are controllers singletons? :: No, a new instance per request.
+? What does AddControllersAsServices do? :: Registers controllers in DI so the container (and features like decorators) creates them.
+
+@p4-58
+Q: Register several implementations (AddTransient<INotifier, EmailNotifier>(), AddTransient<INotifier, SmsNotifier>()) and inject IEnumerable<INotifier> to get all; injecting INotifier gets the last registered. To pick one, use keyed services (.NET 8: AddKeyedSingleton<ISftpClient, RebexClient>("Rebex") with [FromKeyedServices]) or a factory.
+- TryAddEnumerable avoids duplicate registrations.
+- Keyed services fit our per-vendor SFTP provider choice from configuration.
+```csharp
+builder.Services.AddKeyedTransient<ISftpClient, RebexSftpClient>("Rebex");
+builder.Services.AddKeyedTransient<ISftpClient, SshNetSftpClient>("SshNet");
+var client = sp.GetRequiredKeyedService<ISftpClient>(vendor.Provider);
+```
+? Which one is resolved for a single INotifier? :: The last registration.
+? Keyed services vs factory? :: Keyed is built in and simple; factories allow custom logic.
+
+@p4-59
+Q: Yes: using var scope = scopeFactory.CreateScope() and resolve from scope.ServiceProvider. I use IServiceScopeFactory in singletons and BackgroundServices that need scoped services like DbContext, creating one scope per unit of work (per message or per poll) so they're disposed properly.
+- CreateAsyncScope with await using for IAsyncDisposable services.
+- Never keep a scope for the whole app lifetime.
+```csharp
+protected override async Task ExecuteAsync(CancellationToken ct)
+{
+    using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+    while (await timer.WaitForNextTickAsync(ct))
+    {
+        await using var scope = _scopes.CreateAsyncScope();
+        var poller = scope.ServiceProvider.GetRequiredService<VendorFilePoller>();
+        await poller.PollAsync(ct);
+    }
+}
+```
+? Why one scope per message? :: So DbContext tracking and connections don't grow across messages.
+? CreateScope vs CreateAsyncScope? :: The async version supports await using for async disposal.
+
+@p4-60
+Q: Service locator is pulling dependencies from IServiceProvider inside classes instead of declaring them in the constructor. It hides dependencies, makes tests harder and moves errors to runtime. It's acceptable at composition roots, factories and background scopes.
+- Smell: IServiceProvider in a business class constructor.
+- Testing requires a container or complex mocks.
+? Is using IServiceScopeFactory a service locator? :: Technically yes, but it's an accepted infrastructure exception.
+? How do you refactor away from it? :: Move dependencies to constructor parameters or inject a typed factory.
+
+@p4-61
+Q: I don't use the container in unit tests: I construct the class directly with Moq mocks (or fakes) for its interfaces, call the method, and assert outcomes and key interactions. For wiring, I use integration tests with WebApplicationFactory and replace external services with ConfigureTestServices.
+- Prefer state-based assertions over verifying every call.
+- FakeTimeProvider, FakeLogger from Microsoft.Extensions.Diagnostics.Testing.
+```csharp
+var sftp = new Mock<ISftpClient>();
+var svc = new VendorExchangeService(Mock.Of<ISftpClientFactory>(f => f.Create("Rebex") == sftp.Object),
+                                    Options.Create(new SftpOptions { Provider = "Rebex" }), NullLogger<VendorExchangeService>.Instance);
+await svc.SendOrderFileAsync(file, CancellationToken.None);
+sftp.Verify(s => s.UploadAsync(It.IsAny<Stream>(), It.Is<string>(p => p.EndsWith(".csv")), It.IsAny<CancellationToken>()), Times.Once);
+```
+? Unit vs integration test? :: Unit isolates one class; integration tests real wiring, often with a real database in containers.
+? What is Testcontainers? :: A library that starts real dependencies (SQL Server, RabbitMQ) in Docker for tests.
+
+@p4-62
+Q: VendorExchangeService receives ISftpClientFactory, IOptions<SftpOptions> and ILogger<T> through its constructor; the factory returns the Rebex, SSH.NET or ComponentPro client per vendor configuration. It's scoped, the factory is a singleton, and clients are created and disposed per transfer.
+- Registration via an AddSftpProviders extension method.
+- Options validated at startup.
+- Unit tests mock the factory and client.
+? Why is the factory a singleton? :: It's stateless and cheap to share.
+? Why create clients per transfer? :: SFTP sessions are stateful connections that should be disposed after use.
+
+@p4-63
+Q: Singletons are shared across threads and requests, so any state must be thread-safe, and holding scoped resources like DbContext causes captive dependency bugs. Everything transient creates many short-lived objects (GC pressure) and breaks sharing within a request, such as one DbContext per unit of work.
+- Choose by state: stateless and thread-safe → singleton; per-request state → scoped; lightweight, stateful per use → transient.
+- HttpClient handlers are pooled by IHttpClientFactory, not singleton HttpClients with stale DNS.
+? Is DbContext thread-safe? :: No, which is why it's scoped and never shared across concurrent operations.
+? Should a cache be singleton? :: Yes, with thread-safe structures like IMemoryCache.
+
+@p4-64
+Q: When a request ends, its DI scope is disposed: every scoped and transient IDisposable created in it is disposed (DbContext closes its connection back to the pool), the HttpContext is returned for reuse, and response completion callbacks (OnCompleted) run.
+- Don't use HttpContext or scoped services after the request ends (e.g. in fire-and-forget tasks).
+- IHttpContextAccessor in background threads returns null or stale data.
+? What if you start a background task using DbContext from the request? :: It may be disposed mid-use; create a new scope instead.
+? What is Response.OnCompleted? :: A callback that runs after the response is sent, useful for metrics.
+
+@p4-65
+Q: The container disposes what it created: scoped and transient disposables when their scope ends, singletons when the root provider is disposed at shutdown. Instances you create yourself and register (AddSingleton(new X())) are not disposed by the container.
+- Transient disposables resolved from the root live until shutdown, a memory leak pattern.
+- IAsyncDisposable is supported; prefer async disposal at shutdown.
+? Why are transient disposables from the root a leak? :: The root tracks them for disposal, so they stay referenced until the app stops.
+? Who disposes a singleton you constructed? :: You do; the container won't.

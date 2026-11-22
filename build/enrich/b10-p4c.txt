@@ -1,0 +1,324 @@
+@p4-66
+Q: ASP.NET Core is Microsoft's cross-platform, open-source, high-performance framework for web APIs, MVC, Razor Pages, Blazor and real-time apps (SignalR) on modern .NET, with built-in DI, configuration, logging, a middleware pipeline and the Kestrel server. It runs on Windows, Linux and containers.
+- Hosting: WebApplication builder (minimal hosting) since .NET 6.
+- Endpoints: controllers, minimal APIs, gRPC, SignalR hubs, health checks.
+- Performance features: Kestrel, System.Text.Json source generators, output caching, native AOT for minimal APIs.
+- .NET 10 additions: built-in validation for minimal APIs, OpenAPI 3.1 support, passkey support in Identity.
+? ASP.NET vs ASP.NET Core? :: Classic ASP.NET runs only on .NET Framework/IIS; Core is a cross-platform rewrite.
+? Can ASP.NET Core run without IIS? :: Yes, Kestrel serves directly or behind any reverse proxy.
+
+@p4-67
+Q: Kestrel is the cross-platform, async web server built into ASP.NET Core. It can serve traffic directly or sit behind a reverse proxy or load balancer (ALB, Nginx, IIS via the ASP.NET Core Module) that handles TLS termination, buffering and edge concerns.
+- Supports HTTP/1.1, HTTP/2 and HTTP/3 (QUIC).
+- Configurable limits: MaxRequestBodySize (default about 30 MB), header sizes, connection limits, timeouts.
+- Behind proxies, use ForwardedHeaders middleware to get the real client IP and scheme.
+- IIS in-process hosting runs the app inside w3wp without Kestrel.
+? Why use a reverse proxy? :: TLS offload, load balancing, WAF and centralised edge security.
+? What header does ForwardedHeaders read? :: X-Forwarded-For and X-Forwarded-Proto, from trusted proxies only.
+
+@p4-68
+Q: Middleware order is execution order, so mistakes break things quietly: UseAuthorization before UseAuthentication leaves users anonymous (401/403), UseCors after endpoints means no CORS headers, exception handling registered late misses earlier errors, and static files after auth either get protected unintentionally or bypass checks.
+- Recommended order: ExceptionHandler, HSTS, HttpsRedirection, StaticFiles, Routing, CORS, Authentication, Authorization, RateLimiter, custom, endpoints.
+- WebApplication adds UseRouting and endpoints automatically if you don't.
+- Part 10 Q1 has the full pipeline diagram.
+? What happens if UseRateLimiter is before UseRouting? :: Endpoint-specific policies can't be read; only global limiters apply.
+? Where does correlation-id middleware go? :: Very early, so all later logs include it.
+
+@p4-69
+Q: Use adds middleware that can do work and call next; Run adds terminal middleware that ends the pipeline; Map branches by path prefix and MapWhen by a predicate into a separate pipeline; UseWhen conditionally adds middleware and then rejoins the main pipeline.
+- Map strips the matched prefix from Request.Path and adds it to PathBase.
+- Prefer endpoint routing (MapGet, MapControllers) for routes; Map is for pipeline branches.
+```csharp
+app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api"), a => a.UseMiddleware<AuditMiddleware>());
+app.Map("/ping", a => a.Run(ctx => ctx.Response.WriteAsync("pong")));
+```
+? MapWhen vs UseWhen? :: MapWhen branches without rejoining; UseWhen rejoins the main pipeline.
+? What happens after Run? :: Nothing; later middleware never executes.
+
+@p4-70
+Q: With endpoint routing, UseRouting matches the request to an endpoint early and stores it on HttpContext, so middleware in between (CORS, authentication, authorization, rate limiting) can read endpoint metadata like [Authorize] or policies; UseEndpoints (or the implicit endpoint middleware) then executes it.
+- ctx.GetEndpoint() returns the matched endpoint and its metadata.
+- Route constraints ({id:int}), route groups (MapGroup) for shared prefixes and policies.
+- LinkGenerator generates URLs from route names.
+```csharp
+var api = app.MapGroup("/api/shipments").RequireAuthorization().WithTags("Shipments");
+api.MapGet("/{id:int}", (int id, IShipmentService s) => s.GetAsync(id));
+```
+? Why was endpoint routing introduced? :: So all frameworks share one routing system and middleware can see the chosen endpoint.
+? What is MapGroup? :: A way to apply a prefix and conventions to many endpoints.
+
+@p4-71
+Q: Since .NET 6 the minimal hosting model merges Startup's ConfigureServices and Configure into Program.cs (builder.Services... then app.Use...). A Startup class still works if you call it yourself, but new templates don't use it.
+- WebApplication.CreateBuilder configures configuration, logging, DI and Kestrel with sensible defaults.
+- Top-level statements; make Program partial or public for WebApplicationFactory tests (.NET 10 generates this automatically).
+- Extension methods keep Program.cs tidy (AddIrtServices()).
+? How do integration tests find Program? :: WebApplicationFactory<Program>; Program must be accessible (public partial class Program).
+? Is Startup deprecated? :: Not removed, but no longer the default pattern.
+
+@p4-72
+Q: CORS doesn't protect the server: it relaxes the browser's same-origin policy and doesn't stop curl, Postman or server-to-server calls. Real security is authentication, authorization and validation; CORS only controls which browser origins can read responses.
+- Never combine AllowAnyOrigin with AllowCredentials (not allowed and unsafe).
+- Preflight OPTIONS requests for non-simple requests; cache with SetPreflightMaxAge.
+- Allow-list specific origins per environment.
+```csharp
+builder.Services.AddCors(o => o.AddPolicy("irt-ui", p => p.WithOrigins("https://irt.example.com")
+    .AllowAnyHeader().WithMethods("GET", "POST", "PUT").AllowCredentials()));
+app.UseCors("irt-ui");
+```
+? What is a preflight? :: An OPTIONS request the browser sends to ask permission for non-simple cross-origin requests.
+? Does CORS stop CSRF? :: Not fully; simple form posts don't preflight, so use SameSite cookies and anti-forgery tokens.
+
+@p4-73
+Q: In production I use UseHttpsRedirection and UseHsts, with certificates either on Kestrel or, more commonly, TLS terminated at the ALB or API Gateway with ACM certificates and ForwardedHeaders so the app knows the original scheme. Internal traffic can be re-encrypted where policy requires.
+- HSTS tells browsers to use HTTPS only for a period; don't enable it in development.
+- TLS 1.2+ only; modern ciphers.
+- Certificate rotation automated by ACM.
+- dotnet dev-certs for local HTTPS.
+? Why ForwardedHeaders with TLS offload? :: Otherwise the app sees HTTP and may redirect loop or generate wrong URLs.
+? What is HSTS preload? :: Browsers ship a list of HTTPS-only domains so even the first visit uses HTTPS.
+
+@p4-74
+Q: AddHealthChecks registers checks for the database, RabbitMQ and other dependencies, exposed with MapHealthChecks, typically /health/live (process only) and /health/ready (dependencies). Load balancers and orchestrators use them to route traffic and restart unhealthy instances.
+- Tags and predicates separate live and ready checks.
+- AspNetCore.HealthChecks.* packages provide checks for SQL Server, Redis, RabbitMQ, URIs.
+- Custom IHealthCheck for business checks (e.g. SFTP reachable).
+- Don't expose detailed health output publicly; secure or minimise it.
+```csharp
+public class SftpHealthCheck(ISftpClientFactory f) : IHealthCheck
+{
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext ctx, CancellationToken ct = default)
+    {
+        try { await using var c = f.Create("Rebex"); await c.ConnectAsync(ct); return HealthCheckResult.Healthy(); }
+        catch (Exception ex) { return HealthCheckResult.Degraded("SFTP unreachable", ex); }
+    }
+}
+```
+? Should liveness check the database? :: No, or a DB blip restarts every instance.
+? What is Degraded used for? :: Partial health that alerts without removing the instance.
+
+@p4-75
+Q: On SIGTERM the host stops accepting new requests, lets in-flight ones finish within the shutdown timeout (30 seconds by default since .NET 8; previously 5 seconds), signals ApplicationStopping and cancels BackgroundService tokens, then disposes services. Orchestrators must allow enough time (ECS stopTimeout, Kubernetes terminationGracePeriodSeconds) and load balancers should deregister first.
+- HostOptions.ShutdownTimeout configures the wait.
+- Background workers: stop taking new messages, finish or nack the current one.
+- ALB deregistration delay should be shorter than the stop timeout.
+```csharp
+builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(45));
+app.Lifetime.ApplicationStopping.Register(() => logger.LogInformation("Draining..."));
+```
+? What happens if shutdown exceeds the timeout? :: The orchestrator sends SIGKILL and work in progress is lost.
+? How do message consumers shut down safely? :: Stop consuming, finish current messages and ack, or let unacked ones redeliver.
+
+@p4-76
+Q: I accept a CancellationToken in actions (bound to HttpContext.RequestAborted) and pass it through to EF Core, HttpClient, Task.Delay and other async calls, so abandoned requests stop work; in workers I use the stoppingToken. I check ct.ThrowIfCancellationRequested() in long loops and treat OperationCanceledException as normal, not an error.
+- Don't cancel after a point of no return (e.g. after committing); pass CancellationToken.None to cleanup.
+- CancellationTokenSource.CreateLinkedTokenSource combines tokens; CancelAfter adds timeouts.
+- Log cancellations at lower levels to avoid noise.
+```csharp
+app.MapGet("/api/shipments/report", async (ReportService r, CancellationToken ct) => await r.BuildAsync(ct));
+using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+cts.CancelAfter(TimeSpan.FromSeconds(10));
+```
+? What happens when a client disconnects? :: RequestAborted is signalled, and awaiting cancellable calls throws OperationCanceledException.
+? Should writes be cancellable? :: Be careful; partial work must be transactional or idempotent.
+
+@p4-77
+Q: PUT replaces the whole resource and is idempotent, so missing fields become defaults; PATCH applies a partial change (JSON Patch or JSON Merge Patch) and isn't guaranteed idempotent. I use PATCH for small updates like status changes and PUT when the client sends the full representation.
+- JSON Patch (RFC 6902): operations list; JSON Merge Patch (RFC 7396): partial document.
+- .NET 10 adds JSON Patch support on System.Text.Json (previously required Newtonsoft).
+- Use ETags/If-Match for concurrency on both.
+? Can PUT create resources? :: Yes, if the client chooses the id (PUT /items/42).
+? Is PATCH idempotent? :: Can be, but not by definition (e.g. "add item" operations).
+
+@p4-78
+Q: 200 OK means success with a body; 201 Created means a new resource was created, with a Location header pointing to it and usually the resource in the body. Others in the family: 202 Accepted (processing later) and 204 No Content (success without body).
+- CreatedAtAction / Results.Created set Location.
+- 202 with a status URL suits long jobs like CSV import.
+```csharp
+return CreatedAtAction(nameof(Get), new { id = shipment.Id }, dto);
+```
+? When 202? :: When work is queued and finishes later.
+? 204 vs 200 with empty body? :: 204 explicitly says no content; common for DELETE and PUT.
+
+@p4-79
+Q: 400 Bad Request means invalid input; 401 Unauthorized means not authenticated (missing or invalid token, with a WWW-Authenticate header); 403 Forbidden means authenticated but not allowed.
+- Return ProblemDetails with validation errors for 400.
+- For resources the user may not know exist, 404 can hide existence instead of 403.
+? Which code for an expired token? :: 401.
+? What does WWW-Authenticate tell the client? :: The scheme and error, e.g. Bearer error="invalid_token".
+
+@p4-80
+Q: 404 Not Found means the resource or route doesn't exist; 405 Method Not Allowed means the route exists but not for this HTTP verb (e.g. DELETE on a read-only endpoint), and the response should include an Allow header.
+- Endpoint routing returns 405 automatically when a route matches but the method doesn't.
+- Return 404 for missing ids, not 200 with null.
+? 404 vs 410? :: 410 Gone means it existed and was permanently removed.
+? Why would you get 405 unexpectedly? :: Missing [HttpPut] or a WebDAV module in IIS intercepting verbs.
+
+@p4-81
+Q: 409 Conflict means a valid request clashes with current state (duplicate, concurrency version mismatch); 422 Unprocessable Content means the request is well-formed but semantically invalid (business rule failed). Many APIs use 400 for validation; I use 422 for business rule failures when the team agrees.
+- 412 Precondition Failed for If-Match ETag mismatch.
+- Be consistent and document the choices.
+? Which for a duplicate import file? :: 409, with the existing import id.
+? Which for a concurrency conflict in EF Core? :: 409 (or 412 with ETags).
+
+@p4-82
+Q: 500 is an unhandled error in this server; 502 Bad Gateway means a proxy or gateway got an invalid response from upstream; 503 Service Unavailable means overloaded or down for maintenance (often with Retry-After); 504 means the gateway timed out waiting for upstream.
+- ALB 502 often means the target closed the connection or returned malformed responses (keep-alive timeout mismatches).
+- ALB 504 means the target didn't respond within the idle timeout.
+- 429 Too Many Requests for rate limiting.
+? Why might ALB return 502 intermittently? :: Target keep-alive timeout shorter than ALB idle timeout, so connections close unexpectedly.
+? What does 503 from ALB mean? :: No healthy targets registered.
+
+@p4-83
+Q: DTOs (Data Transfer Objects) are simple classes or records that shape exactly what an API accepts or returns. They decouple the API contract from the database schema, prevent over-posting and data leaks, allow versioning, and let each endpoint carry only what it needs.
+- Records are ideal: immutable, value equality, concise.
+- Map with explicit code, Mapperly (source generated) or AutoMapper (now commercial for new versions).
+- Separate request and response DTOs.
+```csharp
+public sealed record CreateShipmentRequest(int SiteId, int KitCount, DateOnly ShipDate);
+public sealed record ShipmentResponse(int Id, string Status, DateTimeOffset? DeliveredAt);
+```
+? AutoMapper or manual mapping? :: Manual or source-generated mapping is explicit and fast; AutoMapper hides errors until runtime.
+? Should DTOs have logic? :: No, only data and validation attributes.
+
+@p4-84
+Q: Exposing EF entities directly leaks the schema and sensitive fields, couples clients to database changes, enables over-posting, and causes serialization cycles and lazy-loading surprises. DTOs give a stable, safe contract.
+- Navigation properties create cycles (JSON ReferenceHandler is a band-aid).
+- Lazy loading during serialization creates N+1 queries.
+- Projection with Select into DTOs also generates efficient SQL.
+? How do you return data efficiently? :: Project to DTOs in the query so only needed columns are selected.
+? What is over-posting? :: Clients setting fields they shouldn't by sending extra properties.
+
+@p4-85
+Q: A DTO is the transport shape between layers or services (API contracts); a ViewModel is shaped for one UI view and may include display-only data like dropdown options. In APIs we mostly use DTOs; ViewModels belong to MVC or front-end code.
+- BFF responses are close to view models for a specific screen.
+- Keep both free of business logic.
+? Can a DTO be a ViewModel? :: Sometimes, if the API is designed for one screen.
+? What is a command object? :: An input DTO that represents an intent, as in CQRS.
+
+@p4-86
+Q: [ApiController] turns on API behaviours: attribute routing is required, invalid model state returns 400 ProblemDetails automatically, binding sources are inferred ([FromBody] for complex types, [FromRoute]/[FromQuery] for simple ones), multipart/form-data is inferred for IFormFile, and error status codes get ProblemDetails.
+- Can be applied at assembly level.
+- Customise the automatic 400 with InvalidModelStateResponseFactory or disable with SuppressModelStateInvalidFilter.
+- Services are inferred for parameters registered in DI (.NET 7+).
+? Why do some actions not hit my breakpoint with bad input? :: The automatic 400 filter returns before the action runs.
+? How do you customise the 400 response? :: Configure ApiBehaviorOptions.InvalidModelStateResponseFactory.
+
+@p4-87
+Q: Routing maps URLs to endpoints. Attribute routing puts templates on controllers and actions ([Route("api/studies/{id}")]) and is the standard for APIs; conventional routing uses one template in Program.cs such as {controller}/{action}/{id?}, typical for MVC sites.
+- Route constraints ({id:int}, {date:datetime}) and tokens ([controller]).
+- Minimal APIs use MapGet/MapPost with the same routing engine.
+- Avoid ambiguous routes; route order and specificity resolve matches.
+? What's a route constraint for? :: Matching only valid formats; not for input validation.
+? Can you mix both? :: Yes, but APIs usually stick to attribute routing.
+
+@p4-88
+Q: I accept query parameters such as ?status=Shipped&siteId=12&sortBy=shipDate&desc=true, apply them to IQueryable before paging so SQL does the work, and allow-list sortable and filterable fields to prevent injection and slow queries.
+- Build queries conditionally; never concatenate SQL.
+- Indexes to support common filters and sorts.
+- Stable sort with a tie-breaker (Id) for consistent paging.
+```csharp
+IQueryable<Shipment> q = db.Shipments.AsNoTracking();
+if (status is not null) q = q.Where(s => s.Status == status);
+q = sortBy switch { "shipDate" => desc ? q.OrderByDescending(s => s.ShipDate) : q.OrderBy(s => s.ShipDate), _ => q.OrderBy(s => s.Id) };
+var page = await q.ThenBy(s => s.Id).Skip((p - 1) * size).Take(size).ToListAsync(ct);
+```
+? Offset vs keyset paging? :: Keyset (WHERE Id > last) is faster for deep pages; offset is simpler.
+? How do you stop huge page sizes? :: Cap page size on the server.
+
+@p4-89
+Q: OpenAPI is the standard JSON/YAML description of an API; Swagger UI renders it interactively. In .NET 9+ the built-in Microsoft.AspNetCore.OpenApi generates documents (Swashbuckle is no longer in templates), with XML comments, examples and auth settings; Scalar or Swagger UI can render it.
+- .NET 10 supports OpenAPI 3.1 and XML doc comments in generated docs.
+- Generate clients (NSwag, Kiota) from the spec.
+- Contract-first or code-first; version documents per API version.
+```csharp
+builder.Services.AddOpenApi();
+app.MapOpenApi();   // /openapi/v1.json
+```
+? Why did templates drop Swashbuckle? :: Microsoft moved to a built-in, maintained OpenAPI generator.
+? How do you keep docs accurate? :: Generate from code and test the spec in CI.
+
+@p4-90
+Q: HTTPS only; authentication with JWTs from OIDC/SSO; authorization policies and resource-level checks; input validation; rate limiting; restricted CORS; security headers; no secrets or PHI in logs; dependency scanning; and least-privilege access to data and cloud resources.
+- OWASP API Top 10 as the checklist (Part 2 Q51).
+- Secrets in Secrets Manager; managed identities/roles.
+- WAF at the edge, request size limits.
+- Audit logs for sensitive actions.
+? Most common API security bug? :: Broken object level authorization (missing per-resource checks).
+? How do you test API security? :: Automated authz tests, DAST scans and penetration tests.
+
+@p4-91
+Q: The access token is short-lived (e.g. [15 minutes]) and sent on every API call; the refresh token is long-lived, stored securely and sent only to the identity provider to get new access tokens, and it can be revoked. This limits exposure if an access token leaks.
+- Refresh token rotation: each use returns a new one; reuse of an old one signals theft.
+- Store refresh tokens server-side (BFF) or in secure HttpOnly cookies.
+- Our logout fix revokes refresh tokens and denylists access token jti.
+? Why not long-lived access tokens? :: They can't easily be revoked and increase damage if stolen.
+? Where should refresh tokens never be stored? :: localStorage or anywhere JavaScript can read.
+
+@p4-92
+Q: Role-based authorization ([Authorize(Roles = "StudyManager")]) is simple but coarse; policy-based uses named policies with requirements and handlers registered in AddAuthorization, plus resource-based checks via IAuthorizationService for rules like "this user can access this study".
+- Requirements + handlers keep rules testable.
+- RequireAssertion for quick inline rules.
+- Resource-based: pass the resource to AuthorizeAsync.
+```csharp
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("CanUnblind", p => p.RequireRole("Unblinded").RequireClaim("mfa", "true"));
+public class StudyAccessHandler : AuthorizationHandler<StudyAccessRequirement, Study>
+{
+    protected override Task HandleRequirementAsync(AuthorizationHandlerContext c, StudyAccessRequirement r, Study s)
+    { if (c.User.HasClaim("study", s.Id.ToString())) c.Succeed(r); return Task.CompletedTask; }
+}
+```
+? How do you apply a policy? :: [Authorize(Policy = "CanUnblind")] or RequireAuthorization("CanUnblind").
+? Fallback policy? :: A default policy applied to endpoints without attributes, e.g. require authenticated users.
+
+@p4-93
+Q: Over-posting is when clients send extra fields that bind to properties they shouldn't set (IsAdmin, Status). I prevent it with input DTOs containing only allowed fields and never binding entities directly; [Bind] or [BindNever] are weaker alternatives.
+- Mass assignment is the same issue (OWASP API3: broken object property level authorization).
+- Response DTOs prevent the reverse: excessive data exposure.
+? Is [Bind] enough? :: It works but is easy to forget; DTOs are clearer.
+? How do you test for it? :: Send extra fields and assert they're ignored.
+
+@p4-94
+Q: I limit size (Kestrel MaxRequestBodySize, [RequestSizeLimit]), stream instead of buffering, compress, paginate responses, and send big files through presigned S3 uploads or chunked uploads rather than JSON bodies.
+- Defaults: Kestrel about 30 MB request body; IIS has its own limit.
+- Form limits: FormOptions.MultipartBodyLengthLimit.
+- Response compression with Brotli/Gzip (careful with secrets and BREACH).
+? What happens over the limit? :: Kestrel returns 413 Payload Too Large.
+? How do you stream JSON responses? :: Return IAsyncEnumerable<T>, which System.Text.Json serializes as it goes.
+
+@p4-95
+Q: I use IFormFile for small files and streaming (MultipartReader) for large ones; validate size, extension and content (magic bytes), scan for malware, store outside the web root (S3) with random names, and process asynchronously. Our CSV import used a [5 MB] limit, streamed parsing and a file hash for duplicate detection.
+- Never trust the client's file name or content type.
+- IFormFile buffers to disk above 64 KB, so huge files still cost disk.
+- Antiforgery is required for form uploads in minimal APIs (.NET 8+) unless disabled.
+? How do you check file type? :: Read the first bytes (magic numbers) and validate parsing, not just extension.
+? Why random names? :: To prevent path traversal and overwriting.
+
+@p4-96
+Q: Contract: OpenAPI, versioning, DTOs, validation and ProblemDetails errors. Security: authentication, authorization, rate limits and HTTPS. Resilience: timeouts, retries, idempotency keys and health checks. Observability: structured logs, correlation ids, metrics and alerts. Operations: config validation at startup, graceful shutdown, CI/CD and documentation.
+- Performance: pagination, caching, async I/O, efficient queries.
+- Backward compatibility: additive changes, deprecation policy.
+- Tests: unit, integration, contract and load tests.
+? What's often forgotten? :: Timeouts on outbound calls and config validation at startup.
+? How do you version? :: URL segment or header via Asp.Versioning, keeping old versions for a deprecation period.
+
+@p4-97
+Q: At every boundary for its purpose: shape and format at the API (model validation, FluentValidation or .NET 10 built-in minimal API validation), business rules in the service/domain layer, and constraints in the database (keys, unique, check constraints) as the last defence. UI validation is only for user experience.
+- Validate early, fail fast with clear messages.
+- Domain invariants enforced in entities (encapsulation).
+- Database constraints catch race conditions that app checks miss.
+? Why also in the database? :: Concurrent requests can pass app checks simultaneously; unique constraints stop duplicates.
+? FluentValidation vs data annotations? :: FluentValidation handles complex, conditional rules better and is easier to test.
+
+@p4-98
+Q: Clients send an idempotency key header; the server stores the key with the result and on a repeat returns the stored result instead of executing again. I back it with natural keys and unique constraints, optimistic concurrency, and disabling double-submit in the UI.
+- Store key, request hash and response; reject same key with different payload (422).
+- Expire keys after a window (24 hours).
+- Race: insert the key first with a unique constraint to claim it.
+```csharp
+var existing = await db.IdempotencyKeys.FindAsync([key], ct);
+if (existing is not null) return Results.Json(existing.Response, statusCode: existing.StatusCode);
+db.IdempotencyKeys.Add(new(key, requestHash));   // unique PK claims the key
+```
+? What if two identical requests arrive together? :: The unique constraint lets one win; the other waits or gets 409.
+? Is this needed for GET? :: No, GET is already safe and idempotent.
