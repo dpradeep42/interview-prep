@@ -25,4 +25,4 @@ if (hasT) {
   await pg.evaluate(t=>{const s=document.getElementById('search'); s.value=''; s.dispatchEvent(new Event('input'));});
   await pg.click('button.tab[data-k="list"]'); console.log('cleared list', await pg.$eval('#count',e=>e.textContent));
 }
-console.log('ERRORS', errs.length, errs.slice(0,5)); await b.close();
+console.log('ERRORS', errs.length, JSON.stringify(errs.slice(0,5))); await b.close();

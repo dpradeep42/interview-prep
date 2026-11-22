@@ -1,0 +1,324 @@
+[
+[
+"middleware",
+"pipeline",
+"*request delegate",
+"*request pipeline"
+],
+[
+"filter",
+"filters",
+"*action filter",
+"*exception filter"
+],
+[
+"di",
+"*dependency injection",
+"*ioc",
+"*inversion of control",
+"*service container",
+"*service lifetime",
+"lifetimes"
+],
+[
+"jwt",
+"token",
+"bearer",
+"*access token",
+"*refresh token"
+],
+[
+"auth",
+"authentication",
+"authorization",
+"login",
+"*oauth",
+"*oidc",
+"*sso"
+],
+[
+"ef core",
+"*entity framework",
+"ef",
+"*dbcontext",
+"orm",
+"migrations",
+"*linq to entities"
+],
+[
+"kafka",
+"topic",
+"partition",
+"*consumer group",
+"offset",
+"*event streaming"
+],
+[
+"rabbitmq",
+"queue",
+"exchange",
+"*amqp",
+"*dead letter",
+"*dlq"
+],
+[
+"messaging",
+"*message broker",
+"*kafka",
+"*rabbitmq",
+"*event driven"
+],
+[
+"sql",
+"*sql server",
+"query",
+"index",
+"t-sql",
+"database"
+],
+[
+"index",
+"indexes",
+"clustered",
+"non-clustered",
+"*composite index",
+"*filtered index"
+],
+[
+"async",
+"await",
+"task",
+"asynchronous",
+"*valuetask",
+"*configureawait"
+],
+[
+"thread",
+"threading",
+"thread-safe",
+"concurrency",
+"lock",
+"*race condition"
+],
+[
+"linq",
+"*ienumerable",
+"*iqueryable",
+"*deferred execution"
+],
+[
+"oop",
+"*object oriented",
+"*encapsulation",
+"inheritance",
+"*polymorphism",
+"abstraction"
+],
+[
+"solid",
+"*single responsibility",
+"*open closed",
+"*liskov",
+"*interface segregation",
+"*dependency inversion"
+],
+[
+"api",
+"rest",
+"*web api",
+"endpoint",
+"http"
+],
+[
+"status code",
+"200",
+"201",
+"400",
+"401",
+"403",
+"404",
+"409",
+"422",
+"500",
+"503"
+],
+[
+"exception",
+"*error handling",
+"*problemdetails",
+"*exception handling"
+],
+[
+"logging",
+"*ilogger",
+"*serilog",
+"*structured logging",
+"observability",
+"tracing"
+],
+[
+"cache",
+"caching",
+"*redis",
+"*elasticache",
+"*memory cache",
+"*hybridcache",
+"*output caching"
+],
+[
+"docker",
+"container",
+"*dockerfile",
+"image"
+],
+[
+"kubernetes",
+"*k8s",
+"pod",
+"deployment",
+"service",
+"*helm"
+],
+[
+"aws",
+"*ecs",
+"*fargate",
+"*lambda",
+"s3",
+"rds",
+"*dynamodb",
+"iam",
+"cloudwatch"
+],
+[
+"ci/cd",
+"pipeline",
+"*azure devops",
+"build",
+"release",
+"deployment"
+],
+[
+"terraform",
+"*cloudformation",
+"*iac",
+"*infrastructure as code"
+],
+[
+"test",
+"testing",
+"*unit test",
+"*integration test",
+"*xunit",
+"*moq",
+"mock"
+],
+[
+"react",
+"hooks",
+"component",
+"props",
+"state",
+"*redux"
+],
+[
+"javascript",
+"js",
+"*typescript",
+"ts"
+],
+[
+"mcp",
+"*model context protocol",
+"tool",
+"agent",
+"*agentic"
+],
+[
+"ai",
+"*llm",
+"*rag",
+"*openai",
+"*claude",
+"*copilot",
+"prompt"
+],
+[
+"security",
+"*owasp",
+"*xss",
+"*csrf",
+"*sql injection",
+"*cors",
+"cookie"
+],
+[
+"microservices",
+"microservice",
+"*service boundary",
+"*bounded context",
+"distributed"
+],
+[
+"gxp",
+"validation",
+"*audit trail",
+"*change control",
+"*21 cfr part 11",
+"regulated"
+],
+[
+"sftp",
+"*ftp",
+"*file transfer",
+"*vendor file"
+],
+[
+"wcf",
+"*soap",
+"*service contract"
+],
+[
+"garbage collection",
+"*gc",
+"memory",
+"dispose",
+"*idisposable"
+],
+[
+".net 8",
+"*.net 10",
+"*net 8",
+"*net 10",
+"upgrade"
+],
+[
+"minimal api",
+"*minimal apis",
+"controllers"
+],
+[
+"options pattern",
+"*ioptions",
+"configuration",
+"appsettings"
+],
+[
+"resilience",
+"*polly",
+"retry",
+"*circuit breaker",
+"timeout"
+],
+[
+"hosted service",
+"*backgroundservice",
+"*background job",
+"worker"
+],
+[
+"story",
+"star",
+"*tell me about a time"
+]
+]

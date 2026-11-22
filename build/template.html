@@ -75,6 +75,8 @@ footer{color:var(--faint);font-size:13px;margin-top:40px}
 .ans{border-left:3px solid var(--accent);padding-left:10px;margin:8px 0 14px}.ansby{font-size:13px;color:var(--muted, #888);margin-bottom:4px}.jump{margin-left:6px;font:inherit;font-size:12px;border:1px solid var(--border);background:var(--bg2);color:var(--text);border-radius:999px;padding:2px 10px;cursor:pointer}.onlist{font-size:12px;opacity:.75;margin:6px 0 0}.tag.part{background:var(--bg2);border:1px solid var(--border)}
 .quick{background:var(--accentbg);border-radius:10px;padding:10px 12px;margin:12px 0}.quick .lbl{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}.quick p{margin:4px 0 0}
 h4.sec{margin:12px 0 0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+details.more{margin:12px 0;border:1px solid var(--border);border-radius:10px;background:var(--card)}details.more>summary{font-weight:600;color:var(--muted);padding:10px 12px;font-size:14px}details.more .mbody{padding:0 12px 10px}
+.say{background:var(--accentbg);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px;margin:4px 0 12px}.say .lbl{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}.say p{font-size:19px;line-height:1.6;margin:0}
 details.impress{margin:12px 0;border:1px solid var(--accent);background:var(--card)}details.impress>summary{font-weight:700;color:var(--accent);padding:10px 12px}details.impress .ibody{padding:0 12px 10px}
 .code{margin:10px 0;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--code)}.codebar{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)}.copy{font:inherit;font-size:12px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;padding:2px 10px;cursor:pointer}
 .code pre{margin:0;padding:10px 12px;overflow-x:auto;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
@@ -97,7 +99,7 @@ details.impress{margin:12px 0;border:1px solid var(--accent);background:var(--ca
 <label class="chk" title="Also match words inside the answers (ranked below question matches)"><input type="checkbox" id="inans"> Also search answers</label>
 <label class="chk bankonly"><input type="checkbox" id="pics"> Only with pictures</label>
 <label class="chk bankonly"><input type="checkbox" id="stories"> Only with stories</label>
-<label class="chk"><input type="checkbox" id="deep"> Open "Impress" by default</label>
+<label class="chk"><input type="checkbox" id="deep"> Open "More detail" by default</label>
 <button class="btn" id="expand">Expand all</button>
 <button class="btn" id="collapse">Collapse all</button>
 </div>
@@ -161,6 +163,7 @@ function titleScore(title, Q){
   if (!sh && n.indexOf(' ' + Q.t) >= 0) return [2, 0, n.indexOf(' ' + Q.t), n.length];
   if (!sh && n.indexOf(Q.t) >= 0) return [3, 0, n.indexOf(Q.t), n.length];
   if (Q.toks.length > 1 && Q.toks.every(function(k){ return n.indexOf(' ' + k + (k.length < 3 ? ' ' : '')) >= 0; })) return [4, 0, 0, n.length];
+  if (Q.t.length > 3 && /s$/.test(Q.t) && n.indexOf(' ' + Q.t.replace(/e?s$/, '') + ' ') >= 0) return [3.5, 0, 0, n.length]; // simple plural: filters -> filter
   return null;
 }
 function answerHit(txt, Q){
@@ -272,10 +275,12 @@ function bodyHTML(x){
   var e = EN[x.id] || {};
   var vis = x.vis ? visHTML(DATA[x.part].VIS[x.vis]) : '';
   var h = '';
-  if (e.q) h += '<div class="quick"><div class="lbl">Quick answer: say this first</div><p>'+fmt(e.q)+'</p></div>';
-  if (x.a) h += '<h4 class="sec">Key points</h4><ul>' + x.a.split('|').map(function(b){return '<li>'+bl(b)+'</li>';}).join('') + '</ul>';
+  if (e.y) h += '<div class="say"><div class="lbl">Say this</div><p>'+fmt(e.y)+'</p></div>';
   h += vis;
   if (x.hook) h += '<p class="hook"><b>Memory hook:</b> '+fmt(x.hook)+'</p>';
+  h += '<details class="more"'+(state.deep?' open':'')+'><summary>More detail: quick answer, key points, deep dive, follow-ups</summary><div class="mbody">';
+  if (e.q) h += '<div class="quick"><div class="lbl">Quick answer</div><p>'+fmt(e.q)+'</p></div>';
+  if (x.a) h += '<h4 class="sec">Key points</h4><ul>' + x.a.split('|').map(function(b){return '<li>'+bl(b)+'</li>';}).join('') + '</ul>';
   if ((e.i && e.i.length) || (e.c && e.c.length) || (e.w && e.w.length)) {
     h += '<details class="impress"'+(state.deep?' open':'')+'><summary>Impress the interviewer</summary><div class="ibody">';
     if (e.i && e.i.length) h += '<ul>' + e.i.map(function(b){return '<li>'+bl(b)+'</li>';}).join('') + '</ul>';
@@ -287,6 +292,7 @@ function bodyHTML(x){
   if (x.fu) x.fu.split('||').forEach(function(f){ var p=f.split('::'); fus.push([p[0], p[1]||'']); });
   if (e.f) e.f.forEach(function(f){ fus.push(f); });
   if (fus.length) h += '<div class="fu"><h4>Likely follow-up questions</h4><ul>' + fus.map(function(p){ return '<li>'+fmt(p[0])+'<div class="a">'+fmt(p[1])+'</div></li>'; }).join('') + '</ul></div>';
+  h += '</div></details>';
   if (REV[x.id]) h += '<p class="onlist">On your list: ' + REV[x.id].map(idLabel).join(', ') + '</p>';
   return h;
 }
@@ -320,37 +326,66 @@ function listItemHTML(sec, it){
   return '<details data-lid="' + esc(it.id) + '"><summary><span class="q"><span class="num">' + esc(idLabel(it.id)) + '</span>' + fmt(it.text) + '</span>' +
     '<span class="tag part">' + esc(parts.filter(function(v,i,a){return v && a.indexOf(v)===i;}).join(', ')) + '</span></summary><div class="body"></div></details>';
 }
+function kwScore(x, Q){
+  var e = EN[x.id] || {}; if (!e.k) return null;
+  var n = norm(e.k.replace(/,/g, ' '));
+  if (n.indexOf(' ' + Q.t + ' ') >= 0) return [4.5, 0, 0, x.q.length];
+  if (Q.t.length >= 3 && n.indexOf(' ' + Q.t) >= 0) return [4.6, 0, 0, x.q.length];
+  return null;
+}
+// one scorer for bank questions: title tiers 0-4, keywords 4.5, answers 5 (only when asked)
+function bankScore(x, Q){
+  var sc = titleScore(x.q, Q); if (sc) return {sc: sc, how: 'title'};
+  sc = kwScore(x, Q); if (sc) return {sc: sc, how: 'kw'};
+  return null;
+}
+function whereTag(txt, title){ return '<span class="where"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(txt) + '</span>'; }
+function howTag(h){ return h === 'ans' ? '<span class="inans">in answer</span>' : h === 'kw' ? '<span class="inans">related</span>' : h === 'ref' ? '<span class="inans">via answer title</span>' : ''; }
 function renderListSearch(){
   var raw = state.q.trim(), Q = parseQ(raw), num = raw.replace(/^#/, '').trim().toLowerCase();
-  var hits = [];
+  var hits = [], covered = {}, more = 0;
   LIST.forEach(function(sec){
     if (state.topic!=='all' && state.topic!=='list:'+sec.n) return;
     sec.items.forEach(function(it, ix){
-      var sc = null, ans = false;
+      var sc = null, how = '';
       if (it.id.toLowerCase() === num || idLabel(it.id).toLowerCase() === raw.toLowerCase()) sc = [-1, 0, 0, 0];
-      else if (Q) sc = titleScore(it.text, Q);
-      if (!sc && Q && state.inans) {
-        var txt = it.refs.map(function(r){ var x = BYID[r]; return x ? x.q + ' ' + stext(x) : ''; }).join(' ');
-        if (answerHit(txt, Q)) { sc = [5, 0, 0, 0]; ans = true; }
+      else if (Q) {
+        sc = titleScore(it.text, Q);
+        if (!sc) { // the bank question that answers it has the term in its title or keywords
+          it.refs.forEach(function(r){ var x = BYID[r]; if (!x) return; var b = bankScore(x, Q); if (b && (!sc || cmpScore([b.sc[0] + 0.2].concat(b.sc.slice(1)), sc) < 0)) { sc = [b.sc[0] + 0.2].concat(b.sc.slice(1)); how = b.how === 'kw' ? 'kw' : 'ref'; } });
+        }
+        if (!sc) {
+          var txt = it.refs.map(function(r){ var x = BYID[r]; return x ? stext(x) : ''; }).join(' ');
+          if (answerHit(txt, Q)) { if (state.inans) { sc = [5, 0, 0, 0]; how = 'ans'; } else more++; }
+        }
       }
-      if (sc) hits.push({sec: sec, it: it, sc: sc, ans: ans, ord: sec.n * 10000 + ix});
+      if (sc) { hits.push({sec: sec, it: it, sc: sc, how: how, ord: sec.n * 10000 + ix}); it.refs.forEach(function(r){ covered[r] = 1; }); }
     });
   });
   hits.sort(function(a, b){ return cmpScore(a.sc, b.sc) || a.ord - b.ord; });
-  var tN = hits.filter(function(h){ return !h.ans; }).length;
-  var html = hits.length ? '<h2>Results for “' + esc(raw) + '”</h2>' + hits.map(function(h){
-    return listItemHTML(h.sec, h.it).replace('</span></summary>', '</span><span class="where">' + esc('Sec ' + h.sec.n) + '</span>' + (h.ans ? '<span class="inans">in answer</span>' : '') + '</summary>');
-  }).join('') : '<p class="count">No questions match “' + esc(raw) + '”.' + (state.inans ? '' : ' Try turning on “Also search answers”.') + '</p>';
+  // every bank question whose title (or keywords) matches must show, even if no list item maps to it
+  var extra = [];
+  if (Q && state.topic === 'all') ALL.forEach(function(x){
+    if (covered[x.id]) return;
+    var b = bankScore(x, Q), how = b ? b.how : '';
+    if (!b && answerHit(ntext(x), Q)) { if (state.inans) { b = {sc: [5, 0, 0, 0]}; how = 'ans'; } else more++; }
+    if (b) extra.push({x: x, sc: b.sc, how: how});
+  });
+  extra.sort(function(a, b){ return cmpScore(a.sc, b.sc) || a.x.pi - b.x.pi || a.x.n - b.x.n; });
+  var html = '';
+  if (hits.length) html += '<h2>From your list: \u201c' + esc(raw) + '\u201d</h2>' + hits.map(function(h){
+    return listItemHTML(h.sec, h.it).replace('</span></summary>', '</span>' + whereTag('Sec ' + h.sec.n) + howTag(h.how) + '</summary>');
+  }).join('');
+  if (extra.length) html += '<h2>Also in the question bank</h2>' + extra.map(function(h){
+    return qHTML(h.x).replace('</span></summary>', '</span>' + whereTag('Part ' + h.x.part.slice(1)) + howTag(h.how) + '</summary>');
+  }).join('');
+  if (!html) html = '<p class="count">No questions match \u201c' + esc(raw) + '\u201d.' + (state.inans ? '' : ' Try turning on \u201cAlso search answers\u201d.') + '</p>';
   document.getElementById('list').innerHTML = html;
   document.getElementById('toc').innerHTML = '';
-  document.getElementById('count').textContent = searchCount(hits.length, tN, LISTN, 'questions in your list', countListAns(Q, hits));
+  var c = hits.length + ' from your list' + (extra.length ? ' + ' + extra.length + ' more from the question bank' : '') + '. Question titles first, then related topics.';
+  if (state.inans) c += ' Answer matches are included at the end.'; else if (more) c += ' ' + more + ' more mention it only inside answers: tick \u201cAlso search answers\u201d.';
+  document.getElementById('count').textContent = c;
   wireDetails(document.getElementById('list'));
-}
-function countListAns(Q, hits){
-  if (state.inans || !Q) return 0;
-  var seen = {}; hits.forEach(function(h){ seen[h.it.id] = 1; }); var m = 0;
-  LIST.forEach(function(sec){ if (state.topic!=='all' && state.topic!=='list:'+sec.n) return; sec.items.forEach(function(it){ if (seen[it.id]) return; var txt = it.refs.map(function(r){ var x = BYID[r]; return x ? x.q + ' ' + stext(x) : ''; }).join(' '); if (answerHit(txt, Q)) m++; }); });
-  return m;
 }
 function searchCount(n, tN, of, what, more){
   var s = n + (n === 1 ? ' result' : ' results') + ' of ' + of + ' ' + what;
@@ -410,20 +445,20 @@ function render(){
   if (Q) {
     var hits = [], more = 0;
     items.forEach(function(x){
-      var sc = titleScore(x.q, Q), ans = false;
-      if (!sc && answerHit(ntext(x), Q)) { if (state.inans) { sc = [5, 0, 0, 0]; ans = true; } else more++; }
-      if (sc) hits.push({x: x, sc: sc, ans: ans});
+      var b = bankScore(x, Q), sc = b ? b.sc : null, how = b ? b.how : '';
+      if (!sc && answerHit(ntext(x), Q)) { if (state.inans) { sc = [5, 0, 0, 0]; how = 'ans'; } else more++; }
+      if (sc) hits.push({x: x, sc: sc, ans: how === 'ans', how: how});
     });
     hits.sort(function(a, b){ return cmpScore(a.sc, b.sc) || a.x.pi - b.x.pi || a.x.n - b.x.n; });
-    var tN = hits.filter(function(h){ return !h.ans; }).length;
+    var tN = hits.filter(function(h){ return h.how === 'title'; }).length, kN = hits.filter(function(h){ return h.how === 'kw'; }).length;
     var TL = {}; topicsFor('all').forEach(function(g){ TL[g.part + ':' + g.t] = g.label; });
     document.getElementById('list').innerHTML = hits.length ? '<h2>Results for “' + esc(raw) + '”</h2>' + hits.map(function(h){
       var x = h.x;
-      return qHTML(x).replace('</span></summary>', '</span><span class="where" title="' + esc(TL[x.part + ':' + x.topic] || '') + '">' + esc('Part ' + x.part.slice(1)) + '</span>' + (h.ans ? '<span class="inans">in answer</span>' : '') + '</summary>');
+      return qHTML(x).replace('</span></summary>', '</span><span class="where" title="' + esc(TL[x.part + ':' + x.topic] || '') + '">' + esc('Part ' + x.part.slice(1)) + '</span>' + howTag(h.how) + '</summary>');
     }).join('') : '<p class="count">No questions match “' + esc(raw) + '”.' + (state.inans ? '' : ' Try turning on “Also search answers”.') + '</p>';
     document.getElementById('toc').innerHTML = '';
     var scope0 = state.part==='all' ? total : DATA[state.part].QS.length;
-    document.getElementById('count').textContent = searchCount(hits.length, tN, scope0, 'questions', more);
+    document.getElementById('count').textContent = hits.length + ' of ' + scope0 + ' questions: ' + tN + ' with it in the title' + (kN ? ', ' + kN + ' related' : '') + (state.inans ? ', ' + (hits.length - tN - kN) + ' only in answers' : '') + '. Best matches first.' + (!state.inans && more ? ' ' + more + ' more mention it only inside answers: tick \u201cAlso search answers\u201d.' : '');
     document.getElementById('callout').classList.toggle('hidden', state.part==='p1' || state.part==='p2');
     var P0 = PARTS.filter(function(p){return p.key===state.part;})[0];
     document.getElementById('partsum').textContent = P0 ? P0.sum : 'All ten parts in one list.';
@@ -470,7 +505,7 @@ document.getElementById('topic').onchange = function(e){ state.topic = e.target.
 document.getElementById('search').oninput = function(e){ state.q = e.target.value; render(); };
 document.getElementById('inans').onchange = function(e){ state.inans = e.target.checked; render(); };
 document.getElementById('pics').onchange = function(e){ state.pics = e.target.checked; render(); };
-document.getElementById('deep').onchange = function(e){ state.deep = e.target.checked; document.querySelectorAll('#list details.impress').forEach(function(d){ d.open = state.deep; }); };
+document.getElementById('deep').onchange = function(e){ state.deep = e.target.checked; document.querySelectorAll('#list details.impress, #list details.more').forEach(function(d){ d.open = state.deep; }); };
 document.getElementById('stories').onchange = function(e){ state.stories = e.target.checked; render(); };
 document.getElementById('expand').onclick = function(){ document.querySelectorAll('#list details[data-id], #list details[data-lid]').forEach(function(d){ d.open = true; }); };
 document.getElementById('collapse').onclick = function(){ document.querySelectorAll('#list details[data-id], #list details[data-lid]').forEach(function(d){ d.open = false; }); };

@@ -22,11 +22,13 @@ for (const f of files) {
     }
     if (!cur || !ln.trim()) continue;
     if (ln.startsWith('```')) { code = { lang: ln.slice(3).trim() || 'text', buf: [] }; continue; }
-    const m = /^([QTDSHAVLW]):\s?(.*)$/.exec(ln);
+    const m = /^([QTDSHAVLWYK]):\s?(.*)$/.exec(ln);
     if (m) {
       const [, k, v] = m;
       if (k === 'Q') cur.q = (cur.q ? cur.q + ' ' : '') + v;
       else if (k === 'W') cur.w.push(v);
+      else if (k === 'Y') cur.y = (cur.y ? cur.y + ' ' : '') + v;
+      else if (k === 'K') cur.k = (cur.k ? cur.k + ', ' : '') + v;
       else cur['_' + k] = v;
       continue;
     }
