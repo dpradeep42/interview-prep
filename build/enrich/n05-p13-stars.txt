@@ -1,0 +1,36 @@
+@p13-24
+S: irts
+D: A
+T: Tell me about a time you prevented a double randomisation or re-randomisation.
+K: double randomisation, duplicate randomization, idempotency story, re-randomisation story, concurrency bug, star irt
+X: Situation: In IRT, a study is one clinical trial set up in our system, and randomisation assigns each patient to a treatment group. Every patient must get exactly one assignment. [In 2024, while we were adding re-randomisation support for a study with a second treatment stage, we found in testing that if a site user double-clicked, or the network retried a slow request, the patient could, in rare cases, be re-randomised twice.] In a live trial, that would be a serious data integrity issue.
+X: Task: I owned the backend fix, and the goal was to make a duplicate assignment impossible, not just unlikely.
+X: Action: I fixed it at three levels. First, idempotency: the UI sends an idempotency key with each request, and the API stores the key with the result, so a retry returns the original result instead of running again. Second, the database: I added a unique constraint, so a patient can have only one assignment per randomisation stage, and the slot allocation runs inside a transaction with row locking, so two concurrent requests can't both take a slot. Third, state checks: the service verifies the patient is in the right state for that stage before doing anything. On the front end, the button is disabled while the request runs. I added concurrency tests that fire parallel requests at the same patient.
+X: Result: [The concurrency tests that previously produced a duplicate now always produce exactly one assignment], it passed validation, and we've had no duplicate assignments since. [The same pattern was then reused for the first randomisation and for kit dispensing.]
+@p13-25
+S: irts
+D: A
+T: Tell me about a time you improved study setup in the Admin console.
+K: admin console story, study configuration validation, study build errors, pre go-live checks, star admin console
+X: Situation: In IRT, a study is one clinical trial, and our internal Admin console is where study teams build it: sites, arms, randomisation, visits, kits and roles. [Configuration mistakes, like a visit that dispensed a kit type not assigned to any arm, or a site without a depot, were often only found late, in user acceptance testing, which meant rework and delayed go-lives.]
+X: Task: [I was asked to help catch these problems earlier, inside the Admin console, before the study reached UAT.]
+X: Action: I designed a configuration validation service in .NET that checks a study's configuration as a whole. I worked with the study build team to collect the most common mistakes, and turned them into rules, like every dispensing visit having a valid kit type for each arm, every active site having a depot and resupply levels, strata matching the randomisation lists, and required roles being assigned. Each rule returns a clear message, with the exact item to fix. The Admin console shows the results as a checklist, and errors must be resolved before the study can be transferred. Rules are unit tested, and adding a new rule is simple, so the team kept adding them. This sits alongside the CSV bulk import for sites and the study-transfer safety guard I built, so the whole setup path is safer.
+X: Result: [Configuration defects found in UAT dropped noticeably], study teams fix issues themselves in minutes, and go-lives became more predictable.
+@p13-26
+S: irts
+D: A
+T: Tell me about a feature you built for drug accountability (DARM).
+K: darm story, drug accountability feature, returns reconciliation, star darm
+X: Situation: In IRT, a study is one clinical trial set up in our system, and DARM, Drug Accountability and Return Management, tracks every kit after it's dispensed: returned, lost, or destroyed. [Monitors reconciling kits at large sites were exporting data to spreadsheets and comparing counts by hand, which took hours per site and caused mistakes.]
+X: Task: [I worked on a reconciliation view and API, so monitors could see, per site, every kit's status and any mismatch, and confirm reconciliation in the system.]
+X: Action: On the backend, I built a .NET API that calculates, per site, kits received, dispensed, returned, expired and destroyed, and flags mismatches, like a kit dispensed but never returned, or returned quantities that don't add up. I used set-based SQL queries with the right indexes, filtered by study and site, so it stays fast even for large sites. Every reconciliation action, like confirming a return or marking a kit for destruction, is a validated state change with an audit record. Blinding was protected: the API never returns the treatment arm to blinded roles. On the front end, I built the screen in React with TypeScript, using our reusable data table component, with filters and a downloadable report.
+X: Result: [Reconciliation for a site went from hours of spreadsheet work to minutes in the system], with fewer errors, and the audit trail gave sponsors clear evidence for inspections.
+@p13-27
+S: irts
+D: A
+T: Tell me about a time you worked on eConsent versioning and re-consent.
+K: econsent story, re-consent, consent version, star econsent, protocol amendment consent
+X: Situation: In IRT, a study is one clinical trial set up in our system, and eConsent lets patients sign consent forms electronically. When a protocol amendment introduces a new consent version, patients already in the study must re-consent. [Sites were tracking who needed to re-consent manually, and there was a risk of a patient having a visit without valid consent on the current version.]
+X: Task: [I worked on the backend that tracks consent versions per patient and flags re-consent automatically.]
+X: Action: I modelled consent documents as versions with effective dates, per country and language, and stored each patient's signed versions with full audit, never overwriting earlier ones. When a new version becomes effective, an event triggers a job that finds every active patient whose latest signature is on an older version and marks them as needing re-consent. The visit API checks this, and warns the site, or blocks actions the protocol says require current consent. I made the job idempotent, so it can safely run again, and covered the rules with tests for edge cases, like patients who withdrew or moved site. [The site-facing screens are in React with TypeScript.]
+X: Result: [Sites now get a clear list of patients to re-consent at their next visit], there's no manual tracking, and the audit trail shows exactly which version every patient signed and when.

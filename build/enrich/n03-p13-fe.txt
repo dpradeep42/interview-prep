@@ -1,0 +1,49 @@
+@p13-1
+S: fe
+D: B
+T: What front-end stack does your project use: Angular or React?
+V: feSide
+K: front end stack, angular and react, both angular react, component based, irt ui
+X: Our project uses both. The IRT web UI started on Angular, and we're moving to React with TypeScript, so today the older screens are in Angular and the newer modules are built in React with TypeScript.
+X: Both parts are component-based. The UI is built from small, reusable components, like a data table, a site selector, a status badge, form fields and dialogs, and both frameworks call the same .NET Web APIs on the backend. Users don't see a difference: [both parts sit behind one login and one navigation shell], and they follow one shared design system, so the screens look and behave the same.
+X: The way we move is module by module, not a big-bang rewrite. Existing Angular screens keep running and get fixes and small features. New modules, and old screens that need a major redesign anyway, are built in React. Because the APIs are shared, with types generated from the same OpenAPI contract, the backend doesn't care which framework calls it.
+X: My own front-end work covers both. I build reusable React components with TypeScript, using hooks and Redux Toolkit where shared state is needed, and I maintain and extend Angular modules in the older parts of the UI. Since I also build the .NET APIs behind these screens, I can shape the API for what each screen needs, whichever framework it's in.
+@p13-2
+S: fe
+D: I
+T: Why did your team move from Angular to React?
+K: why move to react, angular to react reasons, migration reasons, why react
+X: It wasn't because Angular is bad. Angular is a strong framework, and our existing Angular screens work well. It was a practical decision for our team and product.
+X: First, people and skills. [Most of the developers joining the team, and most of the existing team, were more experienced with React], and it's easier to hire for. Second, flexibility and ecosystem. With React we could choose lightweight, focused libraries, like React Query for server data, React Hook Form for forms, and Redux Toolkit only where shared state is needed, instead of one large framework. Third, our older Angular code was on [an older Angular version with NgModules], and many screens needed a redesign anyway. Upgrading and redesigning them in Angular was a similar amount of work to building them fresh in React with TypeScript. And fourth, building small, reusable components with plain functions and hooks fitted the shared component library we wanted.
+X: What we deliberately did not do was a big-bang rewrite. In a GxP-regulated product, every change must be validated, so rewriting working screens just to change the framework would add risk and validation effort with no benefit for users.
+X: So the rule became: new modules in React with TypeScript, existing Angular screens maintained until they need major change, and both calling the same .NET Web APIs. If I join a team that uses Angular, I'm comfortable with it; the fundamentals are the same.
+@p13-3
+S: fe
+D: A
+T: How do you run Angular and React side by side in one product?
+V: feSide
+K: angular and react together, side by side, micro frontends, strangler fig front end, coexist, incremental migration
+X: We run them side by side using an incremental, module-by-module approach, like the strangler fig pattern on the backend: new parts grow around the old ones until the old ones can retire.
+X: There are a few pieces. Routing: [a thin web shell owns the login, the top navigation and the URL space, and each module, Angular or React, is mounted under its own route]. So the user moves between an Angular screen and a React screen without noticing. Authentication: both use the same SSO session and token handling, so there's no second login. Shared context, like the currently selected study and site, is passed through the URL and the backend, not through framework-specific state, so either side can pick it up. Look and feel: a shared design system, with the same design tokens for colours, spacing and fonts, keeps them consistent. And the backend is the real contract: both call the same .NET Web APIs, with TypeScript types generated from the same OpenAPI documents.
+X: There are trade-offs. Two frameworks mean two sets of dependencies, two build pipelines and two sets of skills. We limit this by not mixing frameworks inside a single screen, and by keeping each module owned by one framework.
+X: The benefit is that we deliver new features in React without stopping to rewrite working, validated Angular screens, which is important in a GxP-regulated product.
+@p13-4
+S: fe
+D: I
+T: How do you keep one design system across Angular and React?
+K: design system, design tokens, shared styles, component library, consistent ui, angular react styling
+X: The goal is that users can't tell whether a screen is Angular or React. Everything should look and behave the same.
+X: The foundation is design tokens: colours, spacing, font sizes, shadows and breakpoints, defined once [as CSS variables in a shared stylesheet package] that both the Angular and React apps import. So if a colour changes, it changes everywhere. On top of that, we share the base styles and layout rules, like the grid, form layout and typography.
+X: Components are the harder part, because an Angular component can't be used directly in React. We handle that with a shared specification rather than shared code: each common component, like a data table, a status badge, a site selector or a dialog, has one documented behaviour, including states like loading, empty and error, keyboard support and accessibility labels. [The React version is built first for new work, and the Angular version follows the same specification.] For truly framework-neutral pieces, web components are an option, but we've kept that limited.
+X: We also share patterns, not just pixels: the same way of showing validation errors from ProblemDetails, the same confirmation dialogs for risky actions, and the same date formats.
+X: My part was building several of the reusable React components, like the configurable data table, and making sure the matching Angular screens followed the same behaviour.
+@p13-5
+S: irts
+D: A
+T: Tell me about the Angular to React migration in your project.
+V: feSide
+K: migration story, angular to react migration, star migration, frontend migration
+X: Situation: Our IRT web UI started on Angular. Over time, [the Angular code was on an older version with NgModules], many screens needed a redesign, and most new developers were stronger in React. But it's a GxP-regulated product, so rewriting everything at once would mean huge risk and re-validation.
+X: Task: The team decided to move to React with TypeScript gradually. My part was to help set up the React side so new modules could be built quickly and safely, while the Angular screens kept working.
+X: Action: We chose a module-by-module approach. [A thin web shell handles login and navigation, and each module is mounted under its own route, either Angular or React], so users see one product. I helped build the shared foundations on the React side: [a typed API client generated from our .NET OpenAPI documents], which also adds the token and correlation id, and maps ProblemDetails errors, just like the Angular interceptors do. I built reusable components, like the configurable data table and the import error grid, following our shared design tokens, so React and Angular screens look the same. I also wrote short guidelines on typing, hooks and testing with React Testing Library and Playwright. Meanwhile, I kept maintaining Angular modules, including the tabnabbing fix across [about 40] links in both frameworks.
+X: Result: [New modules have been delivered in React since then without any change to the backend APIs], both frameworks run side by side behind one login, and Angular screens are only rewritten when they need major change anyway. Users see one consistent, component-based UI.

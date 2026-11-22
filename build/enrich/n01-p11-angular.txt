@@ -1,0 +1,230 @@
+@p11-1
+S: ng
+D: B
+T: What is Angular, and how is an Angular application structured?
+K: angular, angular basics, angular architecture, spa
+X: Angular is a complete front-end framework from Google for building single-page applications, written in TypeScript. Unlike React, which is a UI library, Angular gives you everything in one box: components, dependency injection, a router, forms, an HTTP client, and RxJS for asynchronous work, plus a CLI that generates code and builds the app.
+X: An Angular app is a tree of components. Each component has a TypeScript class with the logic, an HTML template, and its own styles. Business logic and API calls live in services, which Angular injects into components through its dependency injection system. Routes map URLs to components, and features are usually loaded lazily, so the browser only downloads what the user needs. Older apps group things into NgModules; newer apps use standalone components, which declare their own imports.
+X: The main building blocks, then, are components for the UI, services for logic and data, directives and pipes to extend templates, the router for navigation, and RxJS or signals for reactive data.
+X: In our IRT product, the older screens are built in Angular and the newer modules in React with TypeScript. Both are component-based: small reusable UI components that call the same .NET Web APIs. So I work in Angular when a feature touches those older screens, and in React for the new ones.
+@p11-2
+S: ng
+D: B
+T: What is a component in Angular?
+K: angular component, @Component, selector, template
+X: A component is the basic building block of an Angular user interface. It controls one part of the screen, like a header, a data table, or a whole page.
+X: A component has three parts. A TypeScript class, decorated with @Component, that holds the data and the logic, like properties and event handlers. An HTML template that describes what to show, using Angular's binding syntax to display data and react to events. And styles, which are scoped to that component by default, so they don't leak into the rest of the app. The decorator also defines a selector, like app-shipment-table, which is the custom HTML tag used to place the component inside other templates.
+X: Components receive data from their parent through inputs, and send events back up through outputs, so they stay reusable and loosely coupled. They usually delegate API calls and business rules to injected services, which keeps the component focused on presentation. Angular also gives components lifecycle hooks, like ngOnInit for setup and ngOnDestroy for cleanup.
+X: The idea is the same as in React: the UI is built from small, reusable pieces. In our IRT UI, for example, the older Angular screens use shared components like a site selector and a status badge across many pages, and the newer React modules follow the same component-based approach.
+@p11-3
+S: ng
+D: I
+T: NgModules vs standalone components in Angular?
+K: ngmodule, standalone, standalone components, declarations, angular modules
+X: NgModules were Angular's original way of organising an application. An NgModule is a class decorated with @NgModule that declares a set of components, directives and pipes, imports other modules it needs, provides services, and exports what other modules can use. A typical app had an AppModule, a SharedModule for common components, and feature modules for each area, often lazy-loaded.
+X: The problem was extra boilerplate and indirection. To use a component, you had to know which module declared it and import that module, and it was a common source of confusing errors, like "is not a known element".
+X: Standalone components, introduced in Angular 14 and the default since Angular 17, remove that layer. A standalone component lists its own imports directly in its @Component decorator, like CommonModule, other components or pipes. The application starts with bootstrapApplication, and routes can lazy-load a standalone component or a set of routes directly. Services are usually provided with providedIn root, or in route providers.
+X: Both still work, and they can be mixed, which matters for real projects. In an older codebase like the Angular part of our IRT UI, most screens use NgModules. New Angular work can use standalone components, and migration can happen gradually, one feature at a time, using Angular's schematics. For new code, I'd choose standalone, because it's simpler, easier to understand, and makes lazy loading more direct.
+@p11-4
+S: ng
+D: B
+T: What is data binding in Angular, and what are its types?
+K: data binding, interpolation, property binding, event binding, two-way binding, ngModel
+X: Data binding is how Angular keeps the template and the component's data in sync, without manually changing the DOM. There are four kinds.
+X: Interpolation, with double curly braces, displays a value as text, like the patient count or a study name. Property binding, with square brackets, sets a property of an element or a child component from the component's data, for example binding the disabled property of a button to whether the form is valid, or passing an input to a child component. Event binding, with round brackets, listens for an event, like a click or a keyup, and calls a method in the component. And two-way binding, with the banana-in-a-box syntax, square brackets around round brackets, combines both: it shows a value and updates it when the user changes it. The classic example is ngModel on a form input.
+X: So data flows from the component to the view with interpolation and property binding, from the view to the component with event binding, and both ways with two-way binding.
+X: In practice, I use one-way flows most of the time, because they're easier to reason about, and I use reactive forms instead of ngModel for anything non-trivial. It's a similar mindset to React, where data flows down through props and events flow up through callbacks.
+@p11-5
+S: ng
+D: I
+T: What are directives in Angular, and structural vs attribute directives?
+K: directives, ngIf, ngFor, structural directive, attribute directive, control flow, @if, @for
+X: A directive is a class that adds behaviour to elements in an Angular template. There are three kinds.
+X: Components are technically directives with their own template. Structural directives change the structure of the DOM by adding or removing elements. The classic ones are ngIf, which shows an element only when a condition is true, ngFor, which repeats an element for each item in a list, and ngSwitch. They're written with an asterisk, like star ngIf. Attribute directives change the appearance or behaviour of an existing element, without adding or removing it. Built-in examples are ngClass and ngStyle, and you can write your own, for example a highlight directive, or a directive that disables a button when the user lacks a permission.
+X: Since Angular 17, there's also built-in control flow syntax: @if, @for and @switch blocks in the template. It's easier to read, it doesn't need imports, and @for requires a track expression, which is like a key in React, so Angular can update lists efficiently.
+X: A custom attribute directive is a good example of reuse. In an IRT-style app, a directive that hides or disables actions based on the user's role keeps permission checks out of every template, though the real authorisation is always enforced by the .NET API.
+@p11-6
+S: ng
+D: I
+T: What are pipes in Angular, and pure vs impure pipes?
+K: pipes, pure pipe, impure pipe, async pipe, date pipe, custom pipe
+X: A pipe transforms a value for display in a template, without changing the underlying data. You use it with the vertical bar. Built-in examples are the date pipe for formatting dates, currency and decimal pipes for numbers, uppercase and lowercase, json for debugging, and the very important async pipe, which subscribes to an observable or promise and shows its latest value.
+X: You can write a custom pipe by creating a class with the @Pipe decorator and a transform method. For example, a pipe that turns a shipment status code into a friendly label, or masks part of an identifier.
+X: Pipes are pure by default. A pure pipe only runs again when its input reference changes, so Angular can skip it during change detection. That makes it efficient. But it also means that if you change an array in place, like pushing an item, a pure pipe won't notice; you need to create a new array. An impure pipe, marked with pure false, runs on every change detection cycle. That's needed for things that change internally, like the async pipe, but it can be expensive, so custom impure pipes should be rare and very cheap.
+X: A practical rule I follow is to use pipes instead of calling methods in templates, because a method in a template runs on every change detection cycle, while a pure pipe is cached.
+@p11-7
+S: ng
+D: I
+T: What are services and dependency injection in Angular?
+K: angular services, angular dependency injection, injectable, providedIn root, inject function, hierarchical injector
+X: A service in Angular is a class that holds logic or data that doesn't belong to one component, like calling an API, sharing state between components, logging, or permission checks. It's marked with the @Injectable decorator.
+X: Angular then provides it through dependency injection. Instead of creating the service with new, a component asks for it, either in its constructor or with the inject function, and Angular gives it an instance. That keeps components small, and makes testing easy, because a test can provide a fake service.
+X: The scope depends on where it's provided. With providedIn root, there's one shared instance for the whole app, a singleton, and it's tree-shakable, so it's removed from the bundle if nobody uses it. You can also provide a service in a route, or in a component's providers, which creates a separate instance for that part of the tree. Angular's injectors are hierarchical: a component looks for a provider in its own injector, then its parents, then the root.
+X: It's the same principle as dependency injection in ASP.NET Core, which I use every day: register once, ask for the abstraction, and let the container create it. [In our IRT Angular screens, for example, a study service wraps the HTTP calls for study data and caches reference lists], and components just inject it.
+@p11-8
+S: ng
+D: I
+T: What are RxJS observables, and Observable vs Promise?
+K: rxjs, observable, promise, observable vs promise, subscribe, reactive programming
+X: RxJS is a library for reactive programming, and Angular uses it heavily. Its core type is the Observable: a stream of values over time that you can subscribe to. HttpClient calls, router events, and form value changes are all observables in Angular.
+X: The differences from a Promise are important. A Promise represents one future value; it's eager, meaning the work starts immediately when it's created, and it can't be cancelled. An Observable can emit zero, one or many values over time, it's lazy, so nothing happens until someone subscribes, and it can be cancelled by unsubscribing. For an HTTP call, unsubscribing actually cancels the request.
+X: Observables also come with operators, like map, filter, debounceTime, switchMap and catchError, which you chain with pipe to transform streams. That makes complex asynchronous flows, like a search box that waits for the user to stop typing, cancels the previous request, and handles errors, very concise.
+X: For a single API call, a Promise or an Observable both work, but in Angular I stay with observables to use the async pipe and operators. In our IRT Angular screens, a typical example is a site search box: valueChanges, then debounceTime, distinctUntilChanged, and switchMap to the API, so only the latest search result is shown.
+@p11-9
+S: ng
+D: A
+T: switchMap vs mergeMap vs concatMap vs exhaustMap in RxJS?
+K: switchmap, mergemap, concatmap, exhaustmap, higher-order observables, rxjs operators
+X: All four take each value from a source observable and map it to an inner observable, like an HTTP request. The difference is what happens when a new value arrives while an earlier inner observable is still running.
+X: switchMap cancels the previous inner observable and switches to the new one. It's perfect for search-as-you-type or loading details for the currently selected item, because only the latest result matters, and stale responses can't overwrite newer ones. mergeMap runs them all in parallel and merges the results as they arrive, in any order. It's good for independent work, like saving several items at once, but you lose ordering. concatMap queues them and runs one at a time, in order, waiting for each to finish. That's right when order matters, like a sequence of updates to the same record. exhaustMap ignores new values while the current one is still running. That's ideal for a submit button, so double clicks don't send two requests.
+X: Choosing the wrong one causes real bugs. For example, using mergeMap for a search box can show results for an old query if its response arrives last.
+X: In practice: switchMap for searches and selections, concatMap for ordered saves, exhaustMap for submits and logins, and mergeMap for parallel independent calls. [In our Angular screens, the save button on a form uses exhaustMap], so a double click can never create a duplicate record.
+@p11-10
+S: ng
+D: I
+T: Subject vs BehaviorSubject vs ReplaySubject in RxJS?
+K: subject, behaviorsubject, replaysubject, asyncsubject, rxjs subjects
+X: A Subject is both an observable and an observer: you can subscribe to it, and you can push values into it with next. It's used to multicast values to many subscribers, often inside a service to share state or events between components.
+X: The difference between the types is what a new subscriber receives. A plain Subject has no memory: subscribers only get values emitted after they subscribe. That suits events, like "a file was uploaded". A BehaviorSubject requires an initial value and always holds the current value. A new subscriber immediately receives the latest value, and you can read it synchronously with getValue. That makes it ideal for state, like the currently selected study or the logged-in user. A ReplaySubject replays a number of previous values, or values within a time window, to new subscribers, which is useful for things like a recent activity log. There's also AsyncSubject, which only emits the last value when it completes.
+X: A common pattern in Angular services is a private BehaviorSubject for state, exposed publicly as a read-only observable with asObservable, so components can read but only the service can change it.
+X: In newer Angular, signals cover much of this state use case more simply, but BehaviorSubject is still everywhere in existing code, including our older IRT screens.
+@p11-11
+S: ng
+D: I
+T: How do you avoid memory leaks from subscriptions in Angular?
+K: unsubscribe, memory leak angular, async pipe, takeUntilDestroyed, takeUntil, subscriptions
+X: A memory leak happens when a component subscribes to a long-lived observable, like a service's state, a timer or router events, and never unsubscribes. When the component is destroyed, the subscription keeps it alive, and its callback keeps running, which wastes memory and can cause strange behaviour, like duplicated API calls.
+X: There are several ways to prevent it. The best is the async pipe in the template. It subscribes when the view is created and unsubscribes automatically when it's destroyed, and it also works nicely with OnPush change detection. The modern option in code is takeUntilDestroyed, from Angular's rxjs-interop package, which completes the subscription when the component is destroyed. The older pattern is takeUntil with a destroy Subject that's completed in ngOnDestroy. And for signals, converting with toSignal handles cleanup automatically.
+X: It's also worth knowing that HttpClient observables complete after one response, so they don't leak in the usual sense, but unsubscribing still cancels the request if the user leaves the page.
+X: My rule is: prefer the async pipe, and if I must subscribe in code, always pair it with takeUntilDestroyed. In code reviews of our Angular screens, a bare subscribe without cleanup is something I always flag.
+@p11-12
+S: ng
+D: A
+T: How does change detection work in Angular, and what is OnPush?
+K: change detection, onpush, zone.js, changedetectionstrategy, markforcheck, zoneless
+X: Change detection is how Angular keeps the screen in sync with the component's data. After something happens that might change data, like a click, an HTTP response or a timer, Angular checks the component tree from the top and updates any bindings whose values changed.
+X: Traditionally, Angular knows when to run this through zone.js, which patches browser async APIs, so after any async event, Angular runs change detection. With the default strategy, every component is checked on every cycle. That's simple, but in large screens with big tables, it can become slow.
+X: OnPush is an optimisation. A component with ChangeDetectionStrategy OnPush is only checked when one of its inputs changes by reference, when an event happens inside it, when an async pipe in its template receives a value, or when you call markForCheck. That means you must treat input data as immutable: create a new array or object instead of changing it in place, otherwise the component won't update.
+X: Newer Angular adds signals, which tell Angular exactly which component needs updating, and supports zoneless change detection, removing zone.js entirely.
+X: In practice, I use OnPush for presentational components, especially lists and tables, with immutable data and the async pipe. [On a large grid screen in our Angular UI, switching row components to OnPush noticeably reduced lag when filtering.]
+@p11-13
+S: ng
+D: B
+T: What are the Angular lifecycle hooks?
+K: lifecycle hooks, ngoninit, ngonchanges, ngondestroy, ngafterviewinit, angular lifecycle
+X: Lifecycle hooks are methods Angular calls at specific moments in a component's life, so you can run code at the right time.
+X: In order: ngOnChanges runs whenever an input property changes, and receives the previous and current values. ngOnInit runs once after the first inputs are set; it's the usual place for initial setup, like loading data. Constructors should only do simple dependency injection, not real work. ngDoCheck runs on every change detection cycle, for custom change checks, and should be used rarely. ngAfterContentInit and ngAfterContentChecked run after projected content, from ng-content, is initialised and checked. ngAfterViewInit and ngAfterViewChecked run after the component's own view and child components are ready; that's where you can safely access elements with ViewChild, for example to focus an input or initialise a chart. And ngOnDestroy runs just before the component is removed, which is where you clean up, like unsubscribing or stopping timers.
+X: Newer Angular also offers the DestroyRef and takeUntilDestroyed for cleanup, and afterNextRender for DOM work, but the classic hooks are still used everywhere.
+X: The React equivalent is useEffect: an effect with an empty dependency array is similar to ngOnInit, and its cleanup function is similar to ngOnDestroy. Since our IRT product uses both Angular and React, I often map between these two models.
+@p11-14
+S: ng
+D: B
+T: How do components communicate in Angular: @Input, @Output and services?
+K: input, output, eventemitter, component communication, parent child, input signal
+X: There are three main ways components share data in Angular.
+X: From parent to child, with inputs. The child declares a property with @Input, or the newer input function that creates a signal, and the parent binds a value to it in the template with square brackets. For example, a parent page passes a list of sites to a site table component.
+X: From child to parent, with outputs. The child declares an @Output, an EventEmitter, or the newer output function, and emits an event, for example when a row is selected. The parent listens with round brackets and handles it in a method. This keeps the child reusable, because it doesn't know what the parent will do.
+X: Between components that aren't directly related, through a shared service. The service holds the state, for example in a BehaviorSubject or a signal, and components inject it, read the state, and call methods to change it. For larger apps, a state management library like NgRx or a signal store plays this role.
+X: There's also ViewChild, to call a method on a child directly, and the router, for passing ids through the URL. The design rule I follow is the same as in React: data down, events up, and shared state in one well-defined place. That's how our Angular and React screens in IRT stay consistent, even though they're built with different frameworks.
+@p11-15
+S: ng
+D: I
+T: How do routing and route guards work in Angular?
+K: angular router, route guards, canactivate, canmatch, resolver, route parameters
+X: The Angular router maps URLs to components, so a single-page application can have different pages and deep links without full page reloads. You define a list of routes, each with a path and a component, or a lazily loaded component or set of child routes. A router-outlet in the template marks where the routed component appears, and routerLink creates navigation links. Route parameters, like a study id in the URL, are read through ActivatedRoute, or bound directly to component inputs in newer versions.
+X: Guards decide whether navigation is allowed. canActivate runs before entering a route, typically to check that the user is logged in or has a role, and can redirect to login. canMatch decides whether a route definition should even match, which also prevents lazy code from loading for users who can't use it. canDeactivate runs before leaving, for example to warn about unsaved changes on a form. Resolvers can load data before the route activates. In modern Angular, guards are simple functions that use inject.
+X: An important point is that guards are for user experience, not security. They hide screens, but the real protection is the .NET API checking the token and permissions on every request.
+X: [In our IRT UI, for example, guards check that the user has a role on the selected study before showing an admin screen, and a canDeactivate guard protects forms with unsaved changes.]
+@p11-16
+S: ng
+D: I
+T: What is lazy loading in Angular, and why use it?
+K: lazy loading, loadchildren, loadcomponent, code splitting, preloading, defer
+X: Lazy loading means the browser only downloads the code for a feature when the user actually navigates to it, instead of downloading the whole application at the start. It makes the first load much faster, especially for large enterprise apps with many modules that most users never open.
+X: In Angular, you configure it in the routes. For a whole feature, loadChildren points to a function that imports that feature's routes or module. For a single standalone component, loadComponent imports just that component. The Angular CLI then automatically splits the code into separate bundles, called chunks, and the router downloads a chunk the first time its route is visited.
+X: There are some useful extras. Preloading strategies can download lazy modules in the background after the app has loaded, so navigation is still instant. A canMatch guard prevents loading a module for users who aren't allowed to use it. And the newer defer block can lazy load parts of a template, like a heavy chart, only when they become visible.
+X: In a product like our IRT UI, with separate areas for different modules and roles, lazy loading is essential. Site users never download the admin screens, for example. The same idea exists in React with React.lazy and route-based code splitting, which we use in the newer React modules.
+@p11-17
+S: ng
+D: I
+T: Reactive forms vs template-driven forms in Angular?
+K: reactive forms, template-driven forms, formgroup, formcontrol, validators, ngmodel forms
+X: Angular has two ways to build forms.
+X: Template-driven forms define the form mostly in the HTML template, using ngModel and validation attributes like required. Angular builds the form model behind the scenes. They're quick and simple for small forms, like a login or a search box, but harder to test and to manage when the logic grows.
+X: Reactive forms define the form model explicitly in the component's TypeScript code, with FormGroup, FormControl and FormArray, usually created with FormBuilder. The template just binds to that model. Validation is done with validator functions, including custom and cross-field validators, like "end date must be after start date", and asynchronous validators, like checking on the server that a code is unique. Value and status changes are observables, so you can react to them, and since Angular 14 the forms are strongly typed.
+X: For anything non-trivial, I prefer reactive forms. They're explicit, predictable, easy to unit test without a browser, and handle dynamic forms well, like adding rows to a FormArray.
+X: In our IRT Angular screens, data entry forms, like the ones for site or study settings, use reactive forms with custom validators, and the server validates everything again, returning field-level ProblemDetails errors that we map back onto the form.
+@p11-18
+S: ng
+D: I
+T: How do you use HttpClient and interceptors in Angular?
+K: httpclient, http interceptor, interceptors, auth token interceptor, error handling http, angular http
+X: HttpClient is Angular's service for calling HTTP APIs. You inject it into a service and call methods like get and post, typed with the response model, and they return observables. In a well-structured app, components don't call HttpClient directly; they call a service, like a shipment API service, which keeps URLs and mapping in one place.
+X: Interceptors sit in the middle of every request and response, like middleware in ASP.NET Core. They're perfect for cross-cutting concerns. An auth interceptor adds the access token to the Authorization header. A correlation interceptor adds a correlation id header, so a request can be traced through the backend logs. An error interceptor handles common errors in one place: on 401, it redirects to login or refreshes the token; on 403, it shows a permission message; and on validation errors, it passes the ProblemDetails through to the form. A loading interceptor can show a global spinner. Interceptors run in the order they're provided, and in modern Angular they're simple functions registered with provideHttpClient and withInterceptors.
+X: For testing, HttpTestingController lets unit tests check the exact request and return a fake response.
+X: In our IRT UI, the Angular interceptors and the React API client do the same jobs: token, correlation id and error mapping, so both parts of the UI behave identically against our .NET APIs.
+@p11-19
+S: ng
+D: A
+T: What are Angular signals, and signals vs RxJS?
+K: signals, angular signals, computed, effect, signal vs observable, input signal
+X: Signals are Angular's newer reactive primitive, stable since Angular 17. A signal is a wrapper around a value that tells Angular when it changes. You create one with signal and an initial value, read it by calling it like a function, and update it with set or update. computed creates a derived signal that recalculates only when the signals it depends on change, and it's cached. effect runs side effects, like logging or saving to local storage, whenever the signals it reads change.
+X: The big benefit is fine-grained change detection. Angular knows exactly which component uses which signal, so it can update just that component, and it enables zoneless applications without zone.js. Signals are also simpler to read and write than observables for plain state. Inputs and queries can now be signals too.
+X: Signals don't replace RxJS. Signals are best for synchronous state: the current value of something, like the selected site or a filter. RxJS is still best for asynchronous streams and events: HTTP calls, debouncing, cancellation and combining streams. The interop functions toSignal and toObservable connect the two, for example turning an HTTP observable into a signal for the template.
+X: For new Angular code, I'd use signals for component and service state, and keep RxJS for async flows. It's similar in spirit to useState and derived values in React, which helps when moving between our Angular and React screens.
+@p11-20
+S: ng
+D: A
+T: How do you manage state in an Angular application?
+K: ngrx, state management angular, store, signal store, services state, redux angular
+X: I choose the simplest option that fits how widely the state is shared and how complex it is.
+X: Local state stays in the component, as properties or signals, like whether a panel is open. Shared state for one feature lives in a service, using a BehaviorSubject or signals, exposed as read-only, with methods to change it. That covers most needs, like the currently selected study and site shared across a few screens. Server data, like lists from the API, can be cached in those services too, with care to refresh it.
+X: For large applications with complex, widely shared state, NgRx is the standard library. It follows the Redux pattern: a single store, actions that describe events, reducers that produce new state, selectors to read it efficiently, and effects for side effects like API calls. It's very predictable and has great dev tools, but it adds a lot of boilerplate, so I only use it where it pays off. The newer NgRx Signal Store is lighter and based on signals.
+X: Whatever the tool, the principles are the same: one source of truth, immutable updates, and keeping server state separate from UI state. That's the same thinking as Redux Toolkit and React Query in the React part of our IRT UI, which makes it easier for the team to work in both frameworks.
+@p11-21
+S: ng
+D: A
+T: How do you optimise Angular application performance?
+K: angular performance, trackby, onpush, lazy loading, bundle size, virtual scroll
+X: I start by measuring, with Angular DevTools' profiler and the browser's performance tools, so I fix real problems rather than guesses. Then the usual improvements fall into three groups.
+X: Loading time. Lazy load feature routes, so users only download what they open. Use defer blocks for heavy parts of a page, like charts. Keep bundles small: check them with a bundle analyser, remove unused libraries, and rely on tree-shakable providedIn root services. Production builds with ahead-of-time compilation are the default.
+X: Rendering. Use OnPush change detection with immutable data, or signals, so Angular checks only what changed. Always use track in @for, or trackBy in ngFor, so lists reuse DOM elements instead of recreating them. Avoid calling methods in templates; use pure pipes or computed signals instead. For very long lists, use virtual scrolling from the CDK, so only visible rows are rendered.
+X: Data. Avoid duplicate HTTP calls by caching reference data in services, use switchMap to cancel stale requests, debounce search inputs, and ask the API for paged, filtered data instead of loading everything.
+X: [A real example from our Angular UI: a large grid felt slow when filtering. Adding trackBy, OnPush on the row component, and server-side paging made it responsive again.]
+@p11-22
+S: ng
+D: I
+T: How do you test Angular applications?
+K: angular testing, testbed, jasmine, karma, jest angular, httptestingcontroller, component testing
+X: I test Angular at three levels.
+X: Unit tests for services, pipes and plain logic. These don't need the framework much: I create the service, provide fakes for its dependencies, and check the results. For services that use HttpClient, HttpTestingController lets me check that the right request was made, with the right URL and body, and return a fake response or an error.
+X: Component tests with TestBed. TestBed configures a small testing module with the component, its imports, and fake versions of its services. I create the component, set inputs, trigger events like clicks, run change detection, and check what the template shows. Angular Testing Library makes these tests read more like what a user does, querying by role and label rather than CSS classes. The test runner has traditionally been Karma with Jasmine; many teams now use Jest, and newer Angular moves towards Vitest.
+X: End-to-end tests with Playwright or Cypress, running the real app in a browser, for the key user flows. We use Playwright, with Cucumber scenarios for business-readable flows.
+X: The principles are the same as for React: test behaviour, not implementation details, keep unit tests fast, and keep a small number of reliable end-to-end tests for the critical paths, like randomising a subject in a test study.
+@p11-23
+S: ng
+D: I
+T: What are AOT compilation and the Ivy engine in Angular?
+K: aot, jit, ivy, angular compiler, ahead of time compilation
+X: Angular templates aren't plain HTML; they have to be compiled into JavaScript instructions that create and update the DOM. There are two ways to do that.
+X: Just-in-time, or JIT, compiles templates in the browser at runtime. It was used for development in older versions, but it means shipping the compiler to the browser and doing extra work at startup. Ahead-of-time, or AOT, compiles templates during the build. The browser receives ready-to-run code, so the app starts faster, the bundle is smaller because the compiler isn't shipped, and template errors, like binding to a property that doesn't exist, are caught at build time instead of by users. AOT has been the default for both development and production builds for several versions.
+X: Ivy is Angular's rendering and compilation engine, the default since Angular 9, replacing the older View Engine. Ivy compiles each component independently into efficient instructions, which made bundles smaller through better tree-shaking, builds faster, debugging easier, and it made features like standalone components and signals possible.
+X: In day-to-day work, you rarely think about Ivy directly, but understanding AOT helps explain build errors in templates, and why strict template type-checking is worth enabling. [We keep strictTemplates switched on in our Angular projects], so template mistakes fail the build.
+@p11-24
+S: ng
+D: A
+T: What is content projection in Angular, and ViewChild vs ContentChild?
+K: content projection, ng-content, viewchild, contentchild, templateref, reusable components angular
+X: Content projection lets a parent pass a piece of markup into a child component, which places it inside its own template using ng-content. It's how you build flexible container components. For example, a card or dialog component provides the frame, title bar and buttons, and the parent decides what goes inside. With multi-slot projection, using select, a component can have several slots, like a header, a body and a footer. It's the Angular equivalent of passing children in React.
+X: ViewChild and ContentChild are ways for a component to get a reference to something. ViewChild looks inside the component's own template, for elements, directives or child components it declares itself. For example, getting a reference to an input to focus it, or to a child component to call a method. ContentChild looks at the content that was projected into the component by its parent. For example, a tab group component finding the tab components placed inside it. The plural versions, ViewChildren and ContentChildren, return lists. They're available after the view or content is initialised, and newer Angular offers signal-based versions.
+X: These features are what make good reusable component libraries possible. In our shared component set, dialogs and panels use content projection, so every screen gets consistent layout and behaviour, while each feature supplies its own content.
+@p11-25
+S: ng
+D: I
+T: How do you handle errors in an Angular application?
+K: angular error handling, errorhandler, catcherror, global error handler, problemdetails angular
+X: I handle errors at three levels, so users see helpful messages and we still get the details we need to investigate.
+X: First, HTTP errors, in one place. An HTTP interceptor catches failed responses. A 401 sends the user to login or refreshes the token, a 403 shows a "no permission" message, a 404 shows a not-found message, and 5xx errors show a friendly "something went wrong" with the correlation id, so support can find the request in the backend logs. Validation errors, returned by our .NET APIs as ProblemDetails, are passed back to the form and shown next to the right fields.
+X: Second, local handling where the screen needs it, using the catchError operator in RxJS to show an inline error state, fall back to empty data, or let the user retry. I don't swallow errors silently.
+X: Third, a global ErrorHandler. Angular lets you replace its default ErrorHandler with your own class, which catches any unhandled error in the app, logs it, ideally to a monitoring service with the user's context, and shows a generic message instead of a broken screen.
+X: It's the same structure as our backend: specific handling where it's needed, plus a global safety net. The React modules mirror it with error boundaries and a shared API client, so both parts of the IRT UI behave consistently.

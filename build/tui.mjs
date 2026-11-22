@@ -11,15 +11,31 @@ for (const [w, h, mobile] of [[390, 844, true], [1280, 900, false]]) {
   pg.on('requestfailed', r => { if (!/jsdelivr/.test(r.url())) errs.push('requestfailed ' + r.url()); });
   await pg.setViewport({width: w, height: h, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: mobile ? 3 : 1});
   await pg.goto(URL0, {waitUntil: 'networkidle0'}); await pg.waitForFunction(() => window.__QA);
-  // search view: only the title, the box, the hint and the results
+  // home view: only the box, the hint and the ordered list of every question (your list's sections first), no buttons
   const sv = await pg.evaluate(() => ({buttons: document.querySelectorAll('button,select,textarea,input:not(#q)').length, inputs: document.querySelectorAll('input').length,
-    visibleLinks: [...document.querySelectorAll('a')].filter(a => a.offsetParent).length, res: document.querySelectorAll('#res li').length, hint: document.querySelector('#hint').textContent}));
-  log(sv.buttons === 0 && sv.inputs === 1 && sv.visibleLinks === 0 && sv.res === 0, w + 'px empty search view: 1 input, 0 buttons, 0 links, 0 results, hint "' + sv.hint + '"');
+    links: document.querySelectorAll('#res a').length, secs: [...document.querySelectorAll('#res li.sec')].map(l => l.textContent), first: (document.querySelector('#res a') || {}).textContent,
+    ids: [...document.querySelectorAll('#res a')].map(a => a.dataset.id), hint: document.querySelector('#hint').textContent}));
+  const nCanon = await pg.evaluate(() => window.__QA.cards);
+  log(sv.buttons === 0 && sv.inputs === 1 && sv.links === nCanon && new Set(sv.ids).size === nCanon && /^1\. Resume/.test(sv.secs[0]) && /Tell me about yourself/.test(sv.first),
+    w + 'px home (empty search): ' + sv.links + '/' + nCanon + ' questions listed once each, ' + sv.secs.length + ' section labels, first "' + sv.first + '", 0 buttons');
+  log(sv.secs.some(x => /Angular/.test(x)) && sv.secs.some(x => /IRT/.test(x)), w + 'px home has Angular and IRT sections');
+  if (mobile) { await pg.screenshot({path: SHOTS + '/shot-home-390.png'}); await pg.evaluate(() => [...document.querySelectorAll('#res li.sec')].find(l => /IRT: clinical/.test(l.textContent)).scrollIntoView()); await pg.screenshot({path: SHOTS + '/shot-home-irt-390.png'}); await pg.evaluate(() => window.scrollTo(0, 0)); }
+  // tapping a home question opens it; back returns to the home list
+  await pg.evaluate(() => [...document.querySelectorAll('#res a')].find(a => a.dataset.id === 'p13-10').scrollIntoView({block: 'center'}));
+  await pg.click('#res a[data-id="p13-10"]'); await pg.waitForFunction(() => !document.querySelector('#answer').hidden && document.querySelectorAll('#abody p').length > 1);
+  const hq = await pg.evaluate(() => document.querySelector('#aq').textContent);
+  await pg.goBack(); await pg.waitForFunction(() => !document.querySelector('#search').hidden);
+  await new Promise(r => setTimeout(r, 300));
+  const hb = await pg.evaluate(() => ({links: document.querySelectorAll('#res a').length, y: window.scrollY}));
+  log(/randomisation work in IRT/.test(hq) && hb.links === nCanon && hb.y > 200, w + 'px home tap -> "' + hq + '" -> back to home list (' + hb.links + ' links, scroll kept at ' + Math.round(hb.y) + ')');
+  await pg.evaluate(() => window.scrollTo(0, 0));
   await pg.type('#q', 'middleware', {delay: 10}); await new Promise(r => setTimeout(r, 200));
   const rs = await pg.evaluate(() => [...document.querySelectorAll('#res a')].map(a => a.textContent));
   log(rs.length >= 5 && /middleware/i.test(rs[0]), w + 'px typing "middleware": ' + rs.length + ' results, #1 "' + rs[0] + '"');
   if (mobile) await pg.screenshot({path: SHOTS + '/shot-search-390.png'}); else await pg.screenshot({path: SHOTS + '/shot-search-1280.png'});
   await pg.evaluate(() => { const s = document.querySelector('#q'); s.value = ''; s.dispatchEvent(new Event('input')); });
+  const cl = await pg.evaluate(() => ({links: document.querySelectorAll('#res a').length, home: document.querySelector('#res').classList.contains('home')}));
+  log(cl.home && cl.links === nCanon, w + 'px clearing the box brings the home list back (' + cl.links + ' questions)');
   await pg.type('#q', 'custom middleware', {delay: 10}); await new Promise(r => setTimeout(r, 200));
   await pg.click('#res a'); await pg.waitForFunction(() => !document.querySelector('#answer').hidden && document.querySelectorAll('#abody p').length > 1);
   const av = await pg.evaluate(() => ({hash: location.hash, q: document.querySelector('#aq').textContent, controls: [...document.querySelectorAll('button,select,textarea,a,input')].filter(e => e.offsetParent).map(e => e.id || e.tagName)}));

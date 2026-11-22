@@ -178,7 +178,11 @@ function loadMermaid(cb) {
   document.head.appendChild(s);
 }
 function diagramCode(p) {
-  var L = ['flowchart ' + (p.direction === 'vertical' ? 'TB' : 'LR')];
+  // phones: a left-to-right chain becomes top-to-bottom, so labels stay readable (fan-outs keep their direction)
+  var outd = {}; (p.edges || []).forEach(function (e) { outd[e.from] = (outd[e.from] || 0) + 1; });
+  var maxOut = Math.max.apply(null, [0].concat(Object.keys(outd).map(function (k) { return outd[k]; })));
+  var dir = p.direction === 'vertical' ? 'TB' : 'LR'; if (dir === 'LR' && window.innerWidth < 700 && maxOut <= 2) dir = 'TB';
+  var L = ['flowchart ' + dir];
   (p.nodes || []).forEach(function (n) {
     var lab = '<b>' + mesc(n.label) + '</b>' + (n.detail ? '<br/><small>' + mesc(n.detail) + '</small>' : ''), id = 'n_' + n.id.replace(/[^A-Za-z0-9_]/g, '_'), k = n.kind || 'box';
     if (k === 'decision') L.push(id + '{"' + lab + '"}'); else if (k === 'terminal') L.push(id + '(["' + lab + '"])'); else if (k === 'person') L.push(id + '(("' + lab + '"))'); else L.push(id + '["' + lab + '"]');
@@ -233,12 +237,22 @@ function renderMermaidIn(el) {
 }
 
 /* ================= views ================= */
-var inp, resEl, hintEl, searchV, ansV, lastQ = '', MAX = 40;
+var inp, resEl, hintEl, searchV, ansV, lastQ = null, MAX = 40, HOME = '', homeY = 0;
+function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+// home: every question in order (your list's sections first), shown whenever the search box is empty
+function buildHome(home) {
+  var n = 0;
+  HOME = (home || []).map(function (h) {
+    return '<li class="sec" aria-hidden="true">' + esc(h[0]) + '</li>' + h[1].map(function (id) { var c = BYID[id]; if (!c) return ''; n++;
+      return '<li class="hq"><a href="#q/' + c.sl + '" data-id="' + c.id + '"><span class="n">' + n + '.</span> ' + fmt(c.q) + '</a></li>'; }).join('');
+  }).join('');
+}
 function renderResults() {
   var raw = inp.value;
   if (raw === lastQ && resEl.childNodes.length) return;
   lastQ = raw;
-  if (!raw.trim()) { resEl.innerHTML = ''; hintEl.textContent = 'Type a question or a topic, then tap it to read the answer. Shaded text is also covered in a related answer.'; hintEl.hidden = false; return; }
+  if (!raw.trim()) { resEl.innerHTML = HOME; resEl.classList.add('home'); hintEl.textContent = 'Tap a question to read the answer, or type to search. Shaded text is also covered in a related answer.'; hintEl.hidden = false; return; }
+  resEl.classList.remove('home');
   var r = search(raw).slice(0, MAX);
   hintEl.hidden = !!r.length; hintEl.textContent = r.length ? '' : 'No match. Try fewer or different words.';
   resEl.innerHTML = r.map(function (x) { return '<li><a href="#q/' + x.c.sl + '" data-id="' + x.c.id + '">' + hl(x.c.q, raw) + '</a></li>'; }).join('');
@@ -248,7 +262,8 @@ function showSearch() {
   document.title = 'Interview answers';
   ansV.hidden = true; searchV.hidden = false;
   renderResults();
-  if (matchMedia('(pointer: fine)').matches) inp.focus();
+  if (homeY) { var y = homeY; homeY = 0; requestAnimationFrame(function () { window.scrollTo(0, y); }); }
+  else if (matchMedia('(pointer: fine)').matches) inp.focus({preventScroll: true});
 }
 function showAnswer(c) {
   searchV.hidden = true; ansV.hidden = false;
@@ -288,10 +303,11 @@ function init(ix) {
   TOPIC = ix.topics; CARDS = ix.cards;
   CARDS.forEach(function (c) { BYID[c.id] = c; BYSLUG[c.sl] = c; AKA[c.id] = (c.a || []).map(function (t) { return {text: t}; }); });
   NDOC = CARDS.length; CARDS.forEach(indexCard);
+  buildHome(ix.home);
   inp = $('#q'); resEl = $('#res'); hintEl = $('#hint'); searchV = $('#search'); ansV = $('#answer');
   inp.addEventListener('input', renderResults);
-  inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { var a = $('#res a'); if (a) { e.preventDefault(); a.click(); } } });
-  resEl.addEventListener('click', function (e) { var a = e.target.closest && e.target.closest('a'); if (a) { cameFromSearch = true; inp.blur(); } });
+  inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && inp.value.trim()) { var a = $('#res a'); if (a) { e.preventDefault(); a.click(); } } });
+  resEl.addEventListener('click', function (e) { var a = e.target.closest && e.target.closest('a'); if (a) { cameFromSearch = true; homeY = inp.value.trim() ? 0 : window.scrollY; inp.blur(); } });
   $('#back').addEventListener('click', function (e) { e.preventDefault(); back(); });
   document.addEventListener('keydown', function (e) {
     if (!ansV.hidden && (e.key === 'Escape' || (e.key === 'Backspace' && e.target === document.body))) { e.preventDefault(); back(); }

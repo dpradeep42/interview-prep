@@ -1,11 +1,750 @@
 {
-"mwpipe": {"type":"Diagram","props":{"direction":"horizontal","nodes":[{"id":"req","label":"Request","kind":"terminal"},{"id":"ex","label":"Exception handler"},{"id":"cid","label":"Correlation id"},{"id":"rt","label":"Routing"},{"id":"auth","label":"AuthN + AuthZ"},{"id":"rl","label":"Rate limiter"},{"id":"ep","label":"Endpoint","detail":"controller / minimal API"}],"edges":[{"from":"req","to":"ex"},{"from":"ex","to":"cid"},{"from":"cid","to":"rt"},{"from":"rt","to":"auth"},{"from":"auth","to":"rl"},{"from":"rl","to":"ep"},{"from":"auth","to":"req","label":"401/403 short-circuit","dashed":true}]}},
-"mwcustom": {"type":"Steps","props":{"steps":[{"title":"Before next","detail":"Read or create X-Correlation-ID, start a stopwatch, open a log scope"},{"title":"await next(context)","detail":"The rest of the pipeline and the endpoint run"},{"title":"After next","detail":"Log status code and duration, write audit row"},{"title":"Or short-circuit","detail":"Set status, write response, return without calling next"},{"title":"Register","detail":"app.UseMiddleware<T>() at the right place in Program.cs"}]}},
-"mwlife": {"type":"Table","props":{"columns":["","Convention-based","IMiddleware (factory)"],"rows":[["Created","Once at startup","Per request from DI"],["Constructor DI","Singletons only","Any lifetime"],["Scoped services","InvokeAsync parameters","Constructor"],["DI registration","Not needed","Required (AddScoped/AddTransient)"],["Method","InvokeAsync(HttpContext, ...)","InvokeAsync(HttpContext, RequestDelegate)"]]}},
-"filters": {"type":"Steps","props":{"steps":[{"title":"Authorization filters","detail":"Can short-circuit with 401/403"},{"title":"Resource filters","detail":"Wrap model binding; caching"},{"title":"Model binding + validation","detail":"[ApiController] returns 400 automatically"},{"title":"Action filters","detail":"See ActionArguments before, result after"},{"title":"Action method","detail":"Your code"},{"title":"Exception filters","detail":"Only for errors from the steps above"},{"title":"Result filters","detail":"Wrap writing the IActionResult"}]}},
-"optionsTbl": {"type":"Table","props":{"columns":["","IOptions<T>","IOptionsSnapshot<T>","IOptionsMonitor<T>"],"rows":[["Lifetime","Singleton","Scoped","Singleton"],["Reloads","Never","Per request","Always current + OnChange"],["Named options","No","Yes","Yes"],["Use in singletons","Yes","No (throws)","Yes"]]}},
-"ratelimit": {"type":"Table","props":{"columns":["Limiter","How it counts","Good for"],"rows":[["Fixed window","N requests per fixed period","Simple quotas"],["Sliding window","Window split into segments","Smoother limits"],["Token bucket","Tokens refill at a rate; bursts allowed","Public / vendor APIs"],["Concurrency","Max in-flight requests","Expensive endpoints (imports)"]]}},
-"cacheTbl": {"type":"Table","props":{"columns":["Kind","Where","Controlled by","Example"],"rows":[["Response caching","Browser, proxy, middleware","HTTP Cache-Control headers","Public GET resources"],["Output caching","Server, per endpoint","Server policies, tags","Study list for 60 s"],["IMemoryCache","One instance memory","Your code","Reference data"],["IDistributedCache","Redis / ElastiCache","Your code","Shared across instances"],["HybridCache (.NET 9)","Memory + Redis","Your code, tags","Study configuration"]]}},
-"jwtpipe": {"type":"Diagram","props":{"direction":"horizontal","nodes":[{"id":"c","label":"Client","kind":"terminal","detail":"Authorization: Bearer"},{"id":"an","label":"UseAuthentication","detail":"JwtBearerHandler"},{"id":"k","label":"JWKS keys","detail":"cached from authority"},{"id":"az","label":"UseAuthorization","detail":"policies"},{"id":"ep","label":"Endpoint"}],"edges":[{"from":"c","to":"an"},{"from":"an","to":"k","label":"verify signature","dashed":true},{"from":"an","to":"az","label":"HttpContext.User"},{"from":"az","to":"ep","label":"allowed"},{"from":"az","to":"c","label":"401 / 403","dashed":true}]}},
-"resil": {"type":"Steps","props":{"steps":[{"title":"Rate limiter","detail":"Protect the dependency"},{"title":"Total timeout","detail":"Upper bound for all attempts"},{"title":"Retry","detail":"Transient errors, backoff + jitter"},{"title":"Circuit breaker","detail":"Fail fast when the dependency is down"},{"title":"Attempt timeout","detail":"Bound each single try"}]}}
+ "mwpipe": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "req",
+     "label": "Request",
+     "kind": "terminal"
+    },
+    {
+     "id": "ex",
+     "label": "Exception handler"
+    },
+    {
+     "id": "cid",
+     "label": "Correlation id"
+    },
+    {
+     "id": "rt",
+     "label": "Routing"
+    },
+    {
+     "id": "auth",
+     "label": "AuthN + AuthZ"
+    },
+    {
+     "id": "rl",
+     "label": "Rate limiter"
+    },
+    {
+     "id": "ep",
+     "label": "Endpoint",
+     "detail": "controller / minimal API"
+    }
+   ],
+   "edges": [
+    {
+     "from": "req",
+     "to": "ex"
+    },
+    {
+     "from": "ex",
+     "to": "cid"
+    },
+    {
+     "from": "cid",
+     "to": "rt"
+    },
+    {
+     "from": "rt",
+     "to": "auth"
+    },
+    {
+     "from": "auth",
+     "to": "rl"
+    },
+    {
+     "from": "rl",
+     "to": "ep"
+    },
+    {
+     "from": "auth",
+     "to": "req",
+     "label": "401/403 short-circuit",
+     "dashed": true
+    }
+   ]
+  }
+ },
+ "mwcustom": {
+  "type": "Steps",
+  "props": {
+   "steps": [
+    {
+     "title": "Before next",
+     "detail": "Read or create X-Correlation-ID, start a stopwatch, open a log scope"
+    },
+    {
+     "title": "await next(context)",
+     "detail": "The rest of the pipeline and the endpoint run"
+    },
+    {
+     "title": "After next",
+     "detail": "Log status code and duration, write audit row"
+    },
+    {
+     "title": "Or short-circuit",
+     "detail": "Set status, write response, return without calling next"
+    },
+    {
+     "title": "Register",
+     "detail": "app.UseMiddleware<T>() at the right place in Program.cs"
+    }
+   ]
+  }
+ },
+ "mwlife": {
+  "type": "Table",
+  "props": {
+   "columns": [
+    "",
+    "Convention-based",
+    "IMiddleware (factory)"
+   ],
+   "rows": [
+    [
+     "Created",
+     "Once at startup",
+     "Per request from DI"
+    ],
+    [
+     "Constructor DI",
+     "Singletons only",
+     "Any lifetime"
+    ],
+    [
+     "Scoped services",
+     "InvokeAsync parameters",
+     "Constructor"
+    ],
+    [
+     "DI registration",
+     "Not needed",
+     "Required (AddScoped/AddTransient)"
+    ],
+    [
+     "Method",
+     "InvokeAsync(HttpContext, ...)",
+     "InvokeAsync(HttpContext, RequestDelegate)"
+    ]
+   ]
+  }
+ },
+ "filters": {
+  "type": "Steps",
+  "props": {
+   "steps": [
+    {
+     "title": "Authorization filters",
+     "detail": "Can short-circuit with 401/403"
+    },
+    {
+     "title": "Resource filters",
+     "detail": "Wrap model binding; caching"
+    },
+    {
+     "title": "Model binding + validation",
+     "detail": "[ApiController] returns 400 automatically"
+    },
+    {
+     "title": "Action filters",
+     "detail": "See ActionArguments before, result after"
+    },
+    {
+     "title": "Action method",
+     "detail": "Your code"
+    },
+    {
+     "title": "Exception filters",
+     "detail": "Only for errors from the steps above"
+    },
+    {
+     "title": "Result filters",
+     "detail": "Wrap writing the IActionResult"
+    }
+   ]
+  }
+ },
+ "optionsTbl": {
+  "type": "Table",
+  "props": {
+   "columns": [
+    "",
+    "IOptions<T>",
+    "IOptionsSnapshot<T>",
+    "IOptionsMonitor<T>"
+   ],
+   "rows": [
+    [
+     "Lifetime",
+     "Singleton",
+     "Scoped",
+     "Singleton"
+    ],
+    [
+     "Reloads",
+     "Never",
+     "Per request",
+     "Always current + OnChange"
+    ],
+    [
+     "Named options",
+     "No",
+     "Yes",
+     "Yes"
+    ],
+    [
+     "Use in singletons",
+     "Yes",
+     "No (throws)",
+     "Yes"
+    ]
+   ]
+  }
+ },
+ "ratelimit": {
+  "type": "Table",
+  "props": {
+   "columns": [
+    "Limiter",
+    "How it counts",
+    "Good for"
+   ],
+   "rows": [
+    [
+     "Fixed window",
+     "N requests per fixed period",
+     "Simple quotas"
+    ],
+    [
+     "Sliding window",
+     "Window split into segments",
+     "Smoother limits"
+    ],
+    [
+     "Token bucket",
+     "Tokens refill at a rate; bursts allowed",
+     "Public / vendor APIs"
+    ],
+    [
+     "Concurrency",
+     "Max in-flight requests",
+     "Expensive endpoints (imports)"
+    ]
+   ]
+  }
+ },
+ "cacheTbl": {
+  "type": "Table",
+  "props": {
+   "columns": [
+    "Kind",
+    "Where",
+    "Controlled by",
+    "Example"
+   ],
+   "rows": [
+    [
+     "Response caching",
+     "Browser, proxy, middleware",
+     "HTTP Cache-Control headers",
+     "Public GET resources"
+    ],
+    [
+     "Output caching",
+     "Server, per endpoint",
+     "Server policies, tags",
+     "Study list for 60 s"
+    ],
+    [
+     "IMemoryCache",
+     "One instance memory",
+     "Your code",
+     "Reference data"
+    ],
+    [
+     "IDistributedCache",
+     "Redis / ElastiCache",
+     "Your code",
+     "Shared across instances"
+    ],
+    [
+     "HybridCache (.NET 9)",
+     "Memory + Redis",
+     "Your code, tags",
+     "Study configuration"
+    ]
+   ]
+  }
+ },
+ "jwtpipe": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "c",
+     "label": "Client",
+     "kind": "terminal",
+     "detail": "Authorization: Bearer"
+    },
+    {
+     "id": "an",
+     "label": "UseAuthentication",
+     "detail": "JwtBearerHandler"
+    },
+    {
+     "id": "k",
+     "label": "JWKS keys",
+     "detail": "cached from authority"
+    },
+    {
+     "id": "az",
+     "label": "UseAuthorization",
+     "detail": "policies"
+    },
+    {
+     "id": "ep",
+     "label": "Endpoint"
+    }
+   ],
+   "edges": [
+    {
+     "from": "c",
+     "to": "an"
+    },
+    {
+     "from": "an",
+     "to": "k",
+     "label": "verify signature",
+     "dashed": true
+    },
+    {
+     "from": "an",
+     "to": "az",
+     "label": "HttpContext.User"
+    },
+    {
+     "from": "az",
+     "to": "ep",
+     "label": "allowed"
+    },
+    {
+     "from": "az",
+     "to": "c",
+     "label": "401 / 403",
+     "dashed": true
+    }
+   ]
+  }
+ },
+ "resil": {
+  "type": "Steps",
+  "props": {
+   "steps": [
+    {
+     "title": "Rate limiter",
+     "detail": "Protect the dependency"
+    },
+    {
+     "title": "Total timeout",
+     "detail": "Upper bound for all attempts"
+    },
+    {
+     "title": "Retry",
+     "detail": "Transient errors, backoff + jitter"
+    },
+    {
+     "title": "Circuit breaker",
+     "detail": "Fail fast when the dependency is down"
+    },
+    {
+     "title": "Attempt timeout",
+     "detail": "Bound each single try"
+    }
+   ]
+  }
+ },
+ "feSide": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "u",
+     "label": "Site / study users",
+     "kind": "terminal"
+    },
+    {
+     "id": "sh",
+     "label": "IRT web shell",
+     "detail": "one login, one menu"
+    },
+    {
+     "id": "ng",
+     "label": "Angular modules",
+     "detail": "older screens"
+    },
+    {
+     "id": "rx",
+     "label": "React + TS modules",
+     "detail": "new screens"
+    },
+    {
+     "id": "ds",
+     "label": "Shared design system",
+     "detail": "tokens, styles, patterns"
+    },
+    {
+     "id": "api",
+     "label": ".NET Web APIs",
+     "detail": "one OpenAPI contract"
+    }
+   ],
+   "edges": [
+    {
+     "from": "u",
+     "to": "sh"
+    },
+    {
+     "from": "sh",
+     "to": "ng",
+     "label": "route"
+    },
+    {
+     "from": "sh",
+     "to": "rx",
+     "label": "route"
+    },
+    {
+     "from": "ds",
+     "to": "ng",
+     "dashed": true
+    },
+    {
+     "from": "ds",
+     "to": "rx",
+     "dashed": true
+    },
+    {
+     "from": "ng",
+     "to": "api",
+     "label": "HTTPS + token"
+    },
+    {
+     "from": "rx",
+     "to": "api",
+     "label": "HTTPS + token"
+    }
+   ]
+  }
+ },
+ "studyStruct": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "st",
+     "label": "Study",
+     "detail": "one clinical trial",
+     "kind": "terminal"
+    },
+    {
+     "id": "pr",
+     "label": "Protocol",
+     "detail": "rules of the trial"
+    },
+    {
+     "id": "cs",
+     "label": "Countries + sites"
+    },
+    {
+     "id": "arm",
+     "label": "Arms + randomisation",
+     "detail": "lists, strata, blinding"
+    },
+    {
+     "id": "vs",
+     "label": "Visit schedule"
+    },
+    {
+     "id": "dr",
+     "label": "Drug kits + supply",
+     "detail": "depots, resupply, expiry"
+    },
+    {
+     "id": "ur",
+     "label": "Users + roles"
+    }
+   ],
+   "edges": [
+    {
+     "from": "st",
+     "to": "pr"
+    },
+    {
+     "from": "pr",
+     "to": "cs"
+    },
+    {
+     "from": "pr",
+     "to": "arm"
+    },
+    {
+     "from": "pr",
+     "to": "vs"
+    },
+    {
+     "from": "pr",
+     "to": "dr"
+    },
+    {
+     "from": "pr",
+     "to": "ur"
+    }
+   ]
+  }
+ },
+ "randFlow": {
+  "type": "Sequence",
+  "props": {
+   "actors": [
+    {
+     "id": "s",
+     "label": "Site (IRT UI)"
+    },
+    {
+     "id": "api",
+     "label": "Randomisation API"
+    },
+    {
+     "id": "db",
+     "label": "SQL Server"
+    },
+    {
+     "id": "q",
+     "label": "Events"
+    }
+   ],
+   "messages": [
+    {
+     "from": "s",
+     "to": "api",
+     "label": "POST + idempotency key"
+    },
+    {
+     "from": "api",
+     "to": "db",
+     "label": "lock next slot"
+    },
+    {
+     "note": "slot, kit, audit, outbox in one transaction",
+     "over": "db"
+    },
+    {
+     "from": "db",
+     "to": "api",
+     "label": "slot + kit",
+     "reply": true
+    },
+    {
+     "from": "api",
+     "to": "s",
+     "label": "kit number only",
+     "reply": true
+    },
+    {
+     "from": "api",
+     "to": "q",
+     "label": "subject randomised"
+    },
+    {
+     "note": "resupply, notifications",
+     "over": "q"
+    }
+   ]
+  }
+ },
+ "darmFlow": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "rc",
+     "label": "Kit received",
+     "detail": "at site",
+     "kind": "terminal"
+    },
+    {
+     "id": "dp",
+     "label": "Dispensed",
+     "detail": "to subject at a visit"
+    },
+    {
+     "id": "rt",
+     "label": "Returned",
+     "detail": "used / unused / lost"
+    },
+    {
+     "id": "ac",
+     "label": "Reconciled",
+     "detail": "counts checked"
+    },
+    {
+     "id": "ds",
+     "label": "Destroyed or sent to depot",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "rc",
+     "to": "dp"
+    },
+    {
+     "from": "dp",
+     "to": "rt"
+    },
+    {
+     "from": "rt",
+     "to": "ac"
+    },
+    {
+     "from": "ac",
+     "to": "ds"
+    },
+    {
+     "from": "rc",
+     "to": "ac",
+     "label": "unused stock",
+     "dashed": true
+    }
+   ]
+  }
+ },
+ "adminFlow": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "cr",
+     "label": "Create study",
+     "detail": "in Admin console",
+     "kind": "terminal"
+    },
+    {
+     "id": "cf",
+     "label": "Configure",
+     "detail": "arms, visits, kits, sites, roles"
+    },
+    {
+     "id": "vl",
+     "label": "Validate",
+     "detail": "config checks + UAT"
+    },
+    {
+     "id": "tr",
+     "label": "Transfer",
+     "detail": "to production, guarded"
+    },
+    {
+     "id": "gl",
+     "label": "Go live",
+     "detail": "sites can screen",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "cr",
+     "to": "cf"
+    },
+    {
+     "from": "cf",
+     "to": "vl"
+    },
+    {
+     "from": "vl",
+     "to": "cf",
+     "label": "fix",
+     "dashed": true
+    },
+    {
+     "from": "vl",
+     "to": "tr"
+    },
+    {
+     "from": "tr",
+     "to": "gl"
+    }
+   ]
+  }
+ },
+ "irtBackend": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "ui",
+     "label": "Angular + React UI",
+     "kind": "terminal"
+    },
+    {
+     "id": "gw",
+     "label": "API Gateway",
+     "detail": "SSO token"
+    },
+    {
+     "id": "svc",
+     "label": ".NET services",
+     "detail": "screening, randomisation, supply, eConsent, DARM"
+    },
+    {
+     "id": "db",
+     "label": "SQL Server",
+     "detail": "study data + audit"
+    },
+    {
+     "id": "mq",
+     "label": "Kafka / RabbitMQ",
+     "detail": "events + work queues"
+    },
+    {
+     "id": "ext",
+     "label": "Vendors",
+     "detail": "depots, couriers via SFTP"
+    }
+   ],
+   "edges": [
+    {
+     "from": "ui",
+     "to": "gw"
+    },
+    {
+     "from": "gw",
+     "to": "svc"
+    },
+    {
+     "from": "svc",
+     "to": "db"
+    },
+    {
+     "from": "svc",
+     "to": "mq",
+     "label": "outbox"
+    },
+    {
+     "from": "mq",
+     "to": "ext"
+    }
+   ]
+  }
+ }
 }

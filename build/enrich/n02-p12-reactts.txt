@@ -1,0 +1,99 @@
+@p12-1
+S: rts
+D: I
+T: How do you type React components, props and hooks in TypeScript?
+K: react typescript, typing props, props interface, react.fc, typed hooks, tsx
+X: In a React and TypeScript project, I type everything at the boundaries, so mistakes show up in the editor instead of in production.
+X: For props, I define an interface or a type, like ShipmentTableProps, with each prop and its type, marking optional ones with a question mark, and I type the function's parameter with it. I usually don't use React.FC; a plain function with typed props is clearer. For children, I use React.ReactNode. For event handler props, I type the callback, like onSelect taking a site id and returning void. For variants, union types are great: a status prop typed as "active", "on hold" or "closed" means you can't pass anything else.
+X: For hooks, useState usually infers the type from the initial value, but when it starts as null, I give it explicitly, like useState of Study or null. useRef gets the element type, like HTMLInputElement. Custom hooks return typed objects. For reusable components, like a data table, generics let one component work for any row type while keeping full type safety.
+X: For API data, I use types generated from the backend's OpenAPI definition, so the front end and the .NET API share one contract.
+X: When our team moved new modules from Angular to React, strict TypeScript was non-negotiable, because Angular had already given us typed code, and we didn't want to lose that safety.
+@p12-2
+S: rts
+D: I
+T: What are custom hooks in React, and can you give an example?
+K: custom hooks, usehook, reusable logic, hooks rules, use prefix
+X: A custom hook is a JavaScript function whose name starts with "use", and which calls other hooks, like useState, useEffect or useContext. It's React's way to reuse stateful logic between components, without copying code and without wrappers like higher-order components.
+X: The important point is that a custom hook shares logic, not state. Each component that calls it gets its own independent state. And the rules of hooks apply: call hooks only at the top level of a component or another hook, never inside conditions or loops, so React can match them up on every render.
+X: Some examples I've used. A useDebounce hook that takes a value and a delay, and returns the value only after the user stops typing, used for search boxes. A usePermission hook that reads the current user's roles from context and returns whether they can perform an action, so components just ask "can I edit this site?". And a useStudyContext hook that returns the currently selected study and site, and throws a clear error if it's used outside the provider.
+X: For data fetching, I now mostly use React Query's useQuery inside small custom hooks, like useShipments with a study id, so components don't know about URLs or caching at all.
+X: Custom hooks make components short and readable, and the logic is easy to unit test on its own. They're the React equivalent of injectable services in Angular, which is a comparison I often make, since our IRT UI uses both frameworks.
+@p12-3
+S: rts
+D: I
+T: How do you fetch data with React Query (TanStack Query)?
+K: react query, tanstack query, usequery, usemutation, server state, caching, data fetching
+X: React Query, now called TanStack Query, is a library for managing server state in React: data that lives on the backend and that the UI fetches, caches and keeps up to date.
+X: Without it, every component needs its own useEffect, loading flag, error flag and caching logic, which leads to duplicated requests and stale data. With React Query, you call useQuery with a query key, like shipments and a study id, and a function that calls the API. It returns the data, plus isLoading and error states. It caches the result by that key, so other components asking for the same data reuse it, deduplicates requests that happen at the same time, retries failures, and refetches in the background when data becomes stale or the window regains focus.
+X: For changes, useMutation sends a POST or PUT, and on success I invalidate the related query keys, so lists refresh automatically. Optimistic updates are also possible, where the UI updates immediately and rolls back if the server fails.
+X: My rule is to keep server state in React Query and only UI state, like open panels or selected filters, in useState, context or Redux Toolkit. That removes a lot of state management code.
+X: In the newer React modules of our IRT UI, data fetching is wrapped in small typed hooks around React Query, calling the same .NET Web APIs as the older Angular screens.
+@p12-4
+S: rts
+D: I
+T: What are error boundaries in React?
+K: error boundary, componentdidcatch, getderivedstatefromerror, react error handling, fallback ui
+X: An error boundary is a React component that catches JavaScript errors thrown while rendering its child components, logs them, and shows a fallback UI instead of crashing the whole application. Without one, an error in a single component unmounts the entire React tree, and the user sees a blank screen.
+X: Error boundaries are still class components, because they rely on two lifecycle methods: getDerivedStateFromError, to switch to the fallback UI, and componentDidCatch, to log the error and component stack, for example to a monitoring service. In practice, most teams use the small react-error-boundary library, which gives a ready component with a fallback and a reset button, so you can write everything else as function components.
+X: There are limits to know. Error boundaries don't catch errors in event handlers, in asynchronous code like promises and timeouts, or in server-side rendering. Those are handled with try-catch, or with the error states of React Query.
+X: Placement matters. I put one boundary at the top of the app as a final safety net, and others around each major area or widget, like a dashboard panel, so one failing part doesn't take down the page. The fallback shows a friendly message and the correlation id, which helps support trace the failure in the backend logs.
+X: It's the React counterpart to Angular's global ErrorHandler, and in our IRT UI both are set up to behave the same way.
+@p12-5
+S: rts
+D: I
+T: How do you test React components with React Testing Library?
+K: react testing library, rtl, jest, vitest, msw, testing react components, user-event
+X: I test React components the way a user uses them, with React Testing Library, running on Jest or Vitest.
+X: The idea is to test behaviour, not implementation. I render the component, find elements the way a user would, by role, label or text, for example getByRole button with the name Save, interact with user-event, like typing and clicking, and assert what the user sees, like a validation message or a new row in the table. I don't test internal state or which hooks were called, so I can refactor the component without breaking tests. findBy queries wait for asynchronous updates, like data arriving from an API.
+X: For API calls, I use Mock Service Worker, MSW, which intercepts requests at the network level and returns fake responses. That way, the real data fetching code, including React Query, runs in the test. For components that need context, like the current study or the user's permissions, I wrap them in a test render helper that provides those providers. Custom hooks can be tested on their own with renderHook.
+X: Above that, Playwright end-to-end tests cover the key flows in a real browser, like randomising a subject in a test study.
+X: In our IRT product, this matters even more because it's GxP-regulated: tests are part of the evidence that the software works as intended, and they run in every pipeline.
+@p12-6
+S: rts
+D: I
+T: What is the virtual DOM and reconciliation in React, and why do keys matter?
+K: virtual dom, reconciliation, keys, diffing, react rendering, fiber
+X: The virtual DOM is a lightweight JavaScript description of what the UI should look like. When state or props change, React calls your components again to produce a new description, compares it with the previous one, and then applies only the necessary changes to the real browser DOM. That comparison is called reconciliation. Updating the real DOM is the expensive part, so doing the minimum there keeps apps fast, while you write code as if the whole UI is redrawn each time.
+X: React's diffing uses two simple assumptions to be fast. If an element's type changes, for example from a div to a span, or from one component to another, React throws away the old subtree and builds a new one. And for lists, it uses keys to know which item is which between renders.
+X: That's why keys matter. A key should be a stable, unique id from the data, like a site id. If you use the array index, and items are inserted, removed or sorted, React matches the wrong items, which can cause wrong input values, lost focus, or unnecessary re-rendering. Keys also let you reset a component on purpose, by changing its key.
+X: Modern React does this with its Fiber architecture, which can split rendering work and prioritise urgent updates, like typing.
+X: Angular has the same concern with track in @for loops, so in both parts of our IRT UI, lists are always tracked by a real id.
+@p12-7
+S: rts
+D: I
+T: useState vs useReducer in React?
+K: usestate, usereducer, reducer, dispatch, complex state, react state
+X: Both hooks hold state inside a component, and the choice is about how complex the state and its updates are.
+X: useState is the simple one. You get a value and a setter. It's ideal for independent, simple values, like whether a dialog is open, the text in a search box, or a selected tab. When the new value depends on the old one, I use the function form of the setter, so updates are never lost.
+X: useReducer is better when the state has several related fields that change together, or when there are many different kinds of updates. You write a reducer function that takes the current state and an action, like "row added" or "file validated", and returns the new state, and components call dispatch with actions. All the update logic is in one pure function, which is easy to read and easy to unit test without rendering anything, and impossible states are easier to avoid. With TypeScript, I type the actions as a discriminated union, so each action's payload is checked.
+X: A real example: a multi-step import screen, with steps, a selected file, validation results and errors, fits useReducer much better than five separate useState calls that must be kept in sync.
+X: If that state needs to be shared across many components, I move the same reducer pattern into Redux Toolkit, which is on my resume and uses exactly this model.
+@p12-8
+S: rts
+D: A
+T: How do you share API types between a .NET backend and a React TypeScript front end?
+K: openapi, swagger, generated types, api contract, typescript client generation, nswag, openapi-typescript
+X: The most reliable way is to make the API's OpenAPI definition the single source of truth, and generate TypeScript types from it, instead of writing them by hand.
+X: On the .NET side, ASP.NET Core produces an OpenAPI document from the controllers and DTOs, using Swashbuckle or the built-in OpenAPI support, with nullable and required annotations so the generated types are precise. On the front end, a tool like openapi-typescript or NSwag generates TypeScript types, and optionally a typed client, from that document. We run the generator as part of the build, so when a backend developer renames a field or adds a required property, the front-end build fails right away, instead of a user finding a broken screen.
+X: A few practices make it work well. The API is versioned, and breaking changes go into a new version, so older screens keep working. DTOs are designed for the API, not copied from database entities. Dates are sent as ISO strings, and enums as strings, so they're readable on both sides. And contract tests check the important responses.
+X: This mattered a lot in our project, because the same .NET Web APIs serve both the older Angular screens and the newer React modules. [Both front ends generate their types from the same OpenAPI documents], so they always agree with the backend and with each other.
+@p12-9
+S: rts
+D: I
+T: What is lazy loading and code splitting in React?
+K: react lazy, suspense, code splitting, dynamic import, bundle size, route based splitting
+X: Code splitting means breaking the JavaScript bundle into smaller pieces that load on demand, instead of making the user download the whole app before seeing anything. Lazy loading is loading those pieces only when they're needed.
+X: In React, the built-in way is React.lazy with a dynamic import. You wrap a component, like the reports page, in React.lazy, and the bundler, like Vite or webpack, automatically puts it into its own chunk. You render it inside a Suspense boundary, which shows a fallback, like a spinner, while the chunk downloads.
+X: The most effective place to split is by route: each major page or module loads separately, so a site user never downloads the admin screens. Inside pages, heavy components that aren't immediately visible, like charts, editors or large dialogs, are also good candidates. You can prefetch likely next routes on hover or when the browser is idle, so navigation still feels instant. And I check the result with a bundle analyser, because sometimes one large library is the real problem.
+X: Errors while loading a chunk, for example after a new deployment, should be caught by an error boundary with a reload option.
+X: It's the same idea as lazy-loaded routes in Angular. In our IRT UI, both the older Angular modules and the newer React modules load per feature, so users only download what their role needs.
+@p12-10
+S: rts
+D: A
+T: How do you use Redux Toolkit with TypeScript, and what is RTK Query?
+K: redux toolkit typescript, createslice, typed hooks, rtk query, configurestore, useappselector
+X: Redux Toolkit is the official, modern way to use Redux, and it's on my resume. It removes most of the old boilerplate, and it works very well with TypeScript.
+X: The setup is simple. configureStore creates the store with good defaults, like the dev tools and checks for accidental mutations. Each feature has a slice, made with createSlice, which defines its initial state and reducers in one place, and generates the action creators automatically. Inside reducers, you can write code that looks like it mutates state, because Immer turns it into immutable updates. createAsyncThunk handles async logic, like calling an API, with pending, fulfilled and rejected actions.
+X: With TypeScript, I define a RootState type from the store, and an AppDispatch type, and then create typed hooks, useAppSelector and useAppDispatch, which every component uses. That way, selectors and dispatched actions are fully checked, and state shapes are defined once with interfaces.
+X: RTK Query is the data-fetching part of Redux Toolkit. You define an API with endpoints, and it generates hooks, like useGetShipmentsQuery, with caching, deduplication and cache invalidation through tags, similar to React Query.
+X: I keep Redux for truly global client state, like the selected study, user preferences or a multi-step workflow, and let a query library handle server data. That keeps the store small, which matters in a large app like our IRT UI.

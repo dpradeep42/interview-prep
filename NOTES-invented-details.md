@@ -1,5 +1,28 @@
 # Invented details (private notes)
 
+## Shared story details used across many answers (added Nov 2026)
+
+These are assumed or invented so the answers hang together. Change them here and in the answers if your real project differs.
+
+**Front end: Angular to React**
+- The IRT web UI started on Angular and is moving to React with TypeScript, module by module (no big-bang rewrite, because re-validation in a GxP product is costly).
+- Today both run side by side: older screens in Angular, new modules in React + TypeScript. Both are component-based and call the same .NET Web APIs.
+- A thin web shell owns login, top navigation and routes; each module (Angular or React) is mounted under its own route. One SSO session.
+- One design system: shared design tokens (CSS variables) for colours, spacing and fonts; common components have one written behaviour spec, built in React first, Angular follows.
+- TypeScript types for both front ends are generated from the same OpenAPI documents.
+- Reasons for React: team and hiring skills, lightweight libraries (React Query, React Hook Form, Redux Toolkit), older Angular code on an older version with NgModules that needed redesign anyway.
+- Your part: typed API client (token, correlation id, ProblemDetails mapping), reusable React components (configurable data table, import error grid), short guidelines on typing, hooks and testing; you keep maintaining Angular modules (the ~40-link tabnabbing fix covered both).
+- Woven into: Tell me about yourself, Walk me through your resume, Explain IRT to a non-technical person, Your role, Architecture, Front-end work, Backend vs frontend split, Full-stack, Angular vs React, Why React over Angular, Production-ready API, Platform design, Technology choice.
+
+**IRT domain**
+- Client-facing modules: Screening, Randomisation, Re-randomisation, eConsent, DARM (Drug Accountability and Return Management); internal Admin console builds and configures studies.
+- Assumed module split: Screening and Randomisation screens are older Angular; eConsent and DARM screens are newer React modules.
+- Admin console flow: create, configure, validate (config checks + UAT), transfer to production (protected by the study-transfer guard), go live. The CSV site import is described as part of study setup in the Admin console.
+- Screening details entered (date of birth, gender, consent date) are typical examples, not confirmed for your product.
+- Backend: same as the existing architecture answer (ASP.NET Core microservices on AWS ECS, SQL Server on RDS, Kafka for events, RabbitMQ work queues, outbox, SFTP vendor integrations).
+- The one-sentence "what a study is" definition was added to answers that talk about studies (CSV import, study-transfer guard, randomisation design, IRT meaning, security, integrations, platform design and others).
+
+
 Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.
 
 Facts that come from the resume (not invented): deployments 6 hours to 2, 6 people to 1, about 77 MCP tools, the CIRT MCP server, the ~100-member engineering organisation.
@@ -680,3 +703,61 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - about an hour to a few minutes
 - **p10-9** What is rate limiting, and how do you implement it in ASP.NET Core?
   - 2
+- **p11-7** What are services and dependency injection in Angular?
+  - In our IRT Angular screens, for example, a study service wraps the HTTP calls for study data and caches reference lists
+- **p11-9** switchMap vs mergeMap vs concatMap vs exhaustMap in RxJS?
+  - In our Angular screens, the save button on a form uses exhaustMap
+- **p11-12** How does change detection work in Angular, and what is OnPush?
+  - On a large grid screen in our Angular UI, switching row components to OnPush noticeably reduced lag when filtering.
+- **p11-15** How do routing and route guards work in Angular?
+  - In our IRT UI, for example, guards check that the user has a role on the selected study before showing an admin screen, and a canDeactivate guard protects forms with unsaved changes.
+- **p11-21** How do you optimise Angular application performance?
+  - A real example from our Angular UI: a large grid felt slow when filtering. Adding trackBy, OnPush on the row component, and server-side paging made it responsive again.
+- **p11-23** What are AOT compilation and the Ivy engine in Angular?
+  - We keep strictTemplates switched on in our Angular projects
+- **p12-8** How do you share API types between a .NET backend and a React TypeScript front end?
+  - Both front ends generate their types from the same OpenAPI documents
+- **p13-1** What front-end stack does your project use: Angular or React?
+  - both parts sit behind one login and one navigation shell
+- **p13-2** Why did your team move from Angular to React?
+  - Most of the developers joining the team, and most of the existing team, were more experienced with React
+  - an older Angular version with NgModules
+- **p13-3** How do you run Angular and React side by side in one product?
+  - a thin web shell owns the login, the top navigation and the URL space, and each module, Angular or React, is mounted under its own route
+- **p13-4** How do you keep one design system across Angular and React?
+  - as CSS variables in a shared stylesheet package
+  - The React version is built first for new work, and the Angular version follows the same specification.
+- **p13-5** Tell me about the Angular to React migration in your project.
+  - the Angular code was on an older version with NgModules
+  - A thin web shell handles login and navigation, and each module is mounted under its own route, either Angular or React
+  - a typed API client generated from our .NET OpenAPI documents
+  - about 40
+  - New modules have been delivered in React since then without any change to the backend APIs
+- **p13-7** What does a study contain in IRT?
+  - All of this is configured by internal study teams in our Admin console
+- **p13-9** What is Screening in IRT, and how does it work end to end?
+  - like date of birth, gender and consent date
+  - an older Angular screen
+- **p13-12** What is re-randomisation in IRT?
+  - A double re-randomisation is exactly the kind of bug the design must make impossible.
+- **p13-13** What is eConsent in IRT?
+  - In our product, the newer eConsent screens are built in React with TypeScript.
+- **p13-14** What is DARM (Drug Accountability and Return Management)?
+  - Our DARM screens are among the newer React modules.
+- **p13-24** Tell me about a time you prevented a double randomisation or re-randomisation.
+  - In 2024, while we were adding re-randomisation support for a study with a second treatment stage, we found in testing that if a site user double-clicked, or the network retried a slow request, the patient could, in rare cases, be re-randomised twice.
+  - The concurrency tests that previously produced a duplicate now always produce exactly one assignment
+  - The same pattern was then reused for the first randomisation and for kit dispensing.
+- **p13-25** Tell me about a time you improved study setup in the Admin console.
+  - Configuration mistakes, like a visit that dispensed a kit type not assigned to any arm, or a site without a depot, were often only found late, in user acceptance testing, which meant rework and delayed go-lives.
+  - I was asked to help catch these problems earlier, inside the Admin console, before the study reached UAT.
+  - Configuration defects found in UAT dropped noticeably
+- **p13-26** Tell me about a feature you built for drug accountability (DARM).
+  - Monitors reconciling kits at large sites were exporting data to spreadsheets and comparing counts by hand, which took hours per site and caused mistakes.
+  - I worked on a reconciliation view and API, so monitors could see, per site, every kit's status and any mismatch, and confirm reconciliation in the system.
+  - Reconciliation for a site went from hours of spreadsheet work to minutes in the system
+- **p13-27** Tell me about a time you worked on eConsent versioning and re-consent.
+  - Sites were tracking who needed to re-consent manually, and there was a risk of a patient having a visit without valid consent on the current version.
+  - I worked on the backend that tracks consent versions per patient and flags re-consent automatically.
+  - The site-facing screens are in React with TypeScript.
+  - Sites now get a clear list of patients to re-consent at their next visit

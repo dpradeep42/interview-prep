@@ -4,11 +4,11 @@ import fs from 'fs';
 import crypto from 'crypto';
 const J = f => JSON.parse(fs.readFileSync(f, 'utf8'));
 const d = J('data.json'), L = J('list.json');
-d.p10 = J('p10.json');
+for (const k of ['p10', 'p11', 'p12', 'p13']) d[k] = fs.existsSync(k + '.json') ? J(k + '.json') : { T: {}, ORDER: [], QS: [], VIS: {} };
 const E = J('enrich.json'), AL = J('aliases.json');
 const TITLES = fs.existsSync('titles.json') ? J('titles.json') : {};
 const DUPS = fs.existsSync('dups.json') ? J('dups.json') : {};
-const KEYS = ['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10'];
+const KEYS = ['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13'];
 const nrm = t => (' ' + String(t).toLowerCase().replace(/c#/g,' csharp ').replace(/c\+\+/g,' cpp ').replace(/[^a-z0-9\u00c0-\uffff]+/g,' ') + ' ').replace(/\s+/g,' ');
 const words = s => (s.match(/[A-Za-z0-9][A-Za-z0-9'’.\-]*/g) || []).length;
 // list item -> canonical cards
@@ -102,7 +102,19 @@ const aka = {};
 items.forEach(it => it.refs.forEach(r => { const tgt = byId[r] && byId[r].dup ? byId[r].dup : r; (aka[tgt] = aka[tgt] || []).push(it.text); }));
 cards.forEach(c => { if (c.dup) (aka[c.dup] = aka[c.dup] || []).push(c.q); });
 cards.forEach(c => { const seen = new Set([nrm(c.q)]); const a = (aka[c.id] || []).filter(x => { const n = nrm(x); if (seen.has(n)) return false; seen.add(n); return true; }); if (a.length && !c.dup) c.a = a; });
-const index = { v: '', topics, cards, items: items.length };
+// home list: your question-list sections first (first occurrence wins), then every other card by topic
+const home = [], placed = new Set(), canon = id => (byId[id] && byId[id].dup) || id;
+L.forEach(sec => { const ids = []; sec.items.forEach(it => (map[it.id] || []).forEach(r => { const c = canon(r); if (byId[c] && !placed.has(c)) { placed.add(c); ids.push(c); } })); if (ids.length) home.push([sec.n + '. ' + sec.title.replace(/\s+[—-]+\s+.*$/, '').replace(/[“”]/g, '"'), ids]); });
+const REST = [['p13', 'fe'], ['p13', 'irt'], ['p13', 'irts'], ['p11', 'ng'], ['p12', 'rts'],
+  ['.NET, C# and ASP.NET Core deep dives', ['p10:mw', 'p10:net', 'p1:cs', 'p1:api', 'p1:ef', 'p1:sql']],
+  ['More: testing, front end and other languages', ['p1:test', 'p1:fe', 'p1:poly']],
+  ['More: cloud, DevOps, messaging, security and AI', ['p2:aws', 'p2:iac', 'p2:k8s', 'p2:cicd', 'p2:obs', 'p2:msg', 'p2:sec', 'p2:ai', 'p2:sd']],
+  ['More: projects, scenarios and behavioural', ['p3:intro', 'p3:proj', 'p3:scen', 'p3:star', 'p3:agile', 'p3:hr']]];
+REST.forEach(([a, b]) => { const keys = Array.isArray(b) ? b : [a + ':' + b], label = Array.isArray(b) ? a : topics[a + ':' + b];
+  const ids = cards.filter(c => keys.includes(c.p + ':' + c.t) && !c.dup && !placed.has(c.id)).map(c => c.id); ids.forEach(i => placed.add(i)); if (ids.length) home.push([label, ids]); });
+const unplaced = cards.filter(c => !c.dup && !placed.has(c.id)); if (unplaced.length) { console.error('HOME missing', unplaced.map(c => c.id).join(' ')); process.exit(1); }
+console.log('home sections', home.length, 'questions', placed.size);
+const index = { v: '', topics, cards, items: items.length, home };
 fs.writeFileSync('itemmap.json', JSON.stringify(items.map(it => [it.id, it.text, [...new Set(it.refs.map(r => byId[r] && byId[r].dup ? byId[r].dup : r))]])));
 // write
 const OUT = '..';
@@ -121,7 +133,7 @@ fs.writeFileSync(OUT + '/index.html', shell.replace(/__V__/g, hash).replace('<!-
 const inline = {}; for (const f in files) inline[f] = JSON.parse(files[f]);
 fs.writeFileSync(OUT + '/interview-prep.html', shell.replace(/__V__/g, hash).replace('<!--CSS-->', () => '<style>' + css + '</style>')
   .replace('<!--JS-->', () => '<script>window.__V="' + hash + '";window.__SINGLE=1;window.__INLINE=' + JSON.stringify(inline).replace(/</g, '\\u003c') + ';</script><script>' + js.replace(/<\/script/gi, '<\\/script') + '</script>'));
-if (process.env.NOTES) fs.writeFileSync(OUT + '/NOTES-invented-details.md', '# Invented details (private notes)\n\n' +
+if (process.env.NOTES) fs.writeFileSync(OUT + '/NOTES-invented-details.md', '# Invented details (private notes)\n\n' + fs.readFileSync('notes-shared.md', 'utf8') + '\n' +
   'Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. ' +
   'On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.\n\n' +
   'Facts that come from the resume (not invented): deployments 6 hours to 2, 6 people to 1, about 77 MCP tools, the CIRT MCP server, the ~100-member engineering organisation.\n\n' +

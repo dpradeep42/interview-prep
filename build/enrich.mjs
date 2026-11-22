@@ -17,7 +17,7 @@ for (const f of files) {
       const id = ln.slice(1).trim();
       if (E[id]) console.warn('DUP', id, f);
       cur = E[id] = { q: '', i: [], c: [], f: [], w: [] };
-      if (id.startsWith('p10-')) NEW.push({ id, cur });
+      if (/^p1[0-9]-/.test(id)) NEW.push({ id, cur });
       continue;
     }
     if (!cur || !ln.trim()) continue;
@@ -40,18 +40,29 @@ for (const f of files) {
   }
   if (code) console.warn('UNCLOSED CODE', f);
 }
-// build part 10 tuples
-const p10 = { T: { mw: 'ASP.NET Core deep dives', net: '.NET and C# deep dives' }, ORDER: ['mw', 'net'], QS: [], VIS: {} };
+// build new-question parts (p10 deep dives, p11 Angular, p12 React + TypeScript, p13 front end in IRT + IRT domain)
+const NEWPARTS = {
+  p10: { T: { mw: 'ASP.NET Core deep dives', net: '.NET and C# deep dives' }, ORDER: ['mw', 'net'] },
+  p11: { T: { ng: 'Angular' }, ORDER: ['ng'] },
+  p12: { T: { rts: 'React and TypeScript' }, ORDER: ['rts'] },
+  p13: { T: { fe: 'Front end in IRT: Angular and React', irt: 'IRT: clinical studies and modules', irts: 'IRT stories' }, ORDER: ['fe', 'irt', 'irts'] }
+};
 const vis10 = fs.existsSync('vis10.json') ? JSON.parse(fs.readFileSync('vis10.json', 'utf8')) : {};
-NEW.sort((a, b) => +a.id.split('-')[1] - +b.id.split('-')[1]).forEach(({ id, cur }, i) => {
-  if (+id.split('-')[1] !== i + 1) console.warn('P10 GAP at', id);
-  const t = [cur._S, cur._D, cur._T, cur._A || '', cur._H || '', cur._V || '', '', cur._L || ''];
-  if (!t[0] || !t[1] || !t[2]) console.warn('P10 MISSING HEADER', id);
-  p10.QS.push(t);
-  if (cur._V) { if (!vis10[cur._V]) console.warn('NO VIS', cur._V); p10.VIS[cur._V] = vis10[cur._V]; }
-  for (const k of ['_S', '_D', '_T', '_A', '_H', '_V', '_L']) delete cur[k];
-});
+const OUTP = {};
+for (const key in NEWPARTS) {
+  const P = OUTP[key] = { T: NEWPARTS[key].T, ORDER: NEWPARTS[key].ORDER, QS: [], VIS: {} };
+  NEW.filter(x => x.id.split('-')[0] === key).sort((a, b) => +a.id.split('-')[1] - +b.id.split('-')[1]).forEach(({ id, cur }, i) => {
+    if (+id.split('-')[1] !== i + 1) console.warn(key + ' GAP at', id);
+    const t = [cur._S, cur._D, cur._T, cur._A || '', cur._H || '', cur._V || '', '', cur._L || ''];
+    if (!t[0] || !t[1] || !t[2]) console.warn(key + ' MISSING HEADER', id);
+    if (!P.T[t[0]]) console.warn(key + ' BAD TOPIC', id, t[0]);
+    P.QS.push(t);
+    if (cur._V) { if (!vis10[cur._V]) console.warn('NO VIS', cur._V); P.VIS[cur._V] = vis10[cur._V]; }
+    for (const k of ['_S', '_D', '_T', '_A', '_H', '_V', '_L']) delete cur[k];
+    if (!cur.q && key !== 'p10') cur.q = (cur.x || [''])[0];
+  });
+}
 for (const k in E) { const e = E[k]; if (!e.q) console.warn('NO QUICK', k); if (!e.c.length) delete e.c; if (!e.f.length) delete e.f; if (!e.w.length) delete e.w; }
 fs.writeFileSync('enrich.json', JSON.stringify(E));
-fs.writeFileSync('p10.json', JSON.stringify(p10));
-console.log('enriched', Object.keys(E).length, 'p10', p10.QS.length, 'bytes', JSON.stringify(E).length);
+for (const key in OUTP) fs.writeFileSync(key + '.json', JSON.stringify(OUTP[key]));
+console.log('enriched', Object.keys(E).length, Object.keys(OUTP).map(k => k + ' ' + OUTP[k].QS.length).join(' '), 'bytes', JSON.stringify(E).length);

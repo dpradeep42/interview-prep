@@ -8,6 +8,13 @@ const CASES = [
  ['rabbitmq dlq', ['p2-43']], ['sql index', ['p1-44']], ['deadlock sql', ['p1-50']], ['ef core tracking', ['p1-33']], ['ef core', ['p5-1']], ['n+1', ['p1-34']],
  ['docker vs vm', ['p6-6']], ['k8s pod', ['p2-18']], ['ci cd pipeline', ['p2-25', 'p2-24']], ['solid', ['p1-7']], ['singleton pattern', ['p1-8']], ['react hooks', ['p1-66']],
  ['tell me about yourself', ['p3-1']], ['why leave', ['p3-57']], ['mcp server', ['p3-8']], ['what is mcp', ['p2-54']], ['gxp', ['p7-49']], ['sftp', ['p7-34']],
+ ['angular change detection', ['p11-12']], ['onpush', ['p11-12']], ['ngmodule vs standalone', ['p11-3']], ['angular lifecycle hooks', ['p11-13']], ['switchmap vs mergemap', ['p11-9']],
+ ['angular signals', ['p11-19']], ['reactive forms vs template driven', ['p11-17']], ['http interceptor angular', ['p11-18']], ['angular lazy loading', ['p11-16']], ['angular route guards', ['p11-15']],
+ ['behaviorsubject', ['p11-10']], ['angular pipes', ['p11-6']], ['angular directives', ['p11-5']], ['angular services dependency injection', ['p11-7']], ['observable vs promise', ['p11-8']],
+ ['ngrx', ['p11-20']], ['angular vs react', ['p1-71']], ['error boundary', ['p12-4']], ['react query', ['p12-3']], ['custom hooks', ['p12-2']], ['typescript props', ['p12-1']], ['redux toolkit typescript', ['p12-10']], ['react testing library', ['p12-5']],
+ ['angular to react migration', ['p13-5']], ['angular and react side by side', ['p13-3']], ['design system angular react', ['p13-4']],
+ ['what is a clinical trial', ['p13-6']], ['what does a study contain', ['p13-7']], ['screening', ['p13-9']], ['re-randomisation', ['p13-12']], ['rerandomization', ['p13-12']], ['econsent', ['p13-13']], ['darm', ['p13-14']],
+ ['drug accountability', ['p13-14', 'p13-26']], ['admin console', ['p13-17']], ['emergency unblinding', ['p13-15']], ['stratification', ['p13-11']], ['visit schedule', ['p13-20']], ['protocol amendment', ['p13-18']], ['irt modules', ['p13-8']],
  ['outbox', ['p2-44']], ['cors', ['p1-29']], ['salary', ['p3-60']], ['strengths', ['p3-55']], ['weakness', ['p3-56']], ['clustered index', ['p1-44']], ['idempotent consumer', ['p2-42']]
 ];
 const b = await puppeteer.launch({executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox']});
