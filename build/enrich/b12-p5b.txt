@@ -1,0 +1,373 @@
+@p5-18
+Q: A primary key uniquely identifies each row, can't be null, and there's one per table (clustered by default in SQL Server). A foreign key is a column referencing another table's primary or unique key, enforcing referential integrity so you can't have orphan rows.
+- Surrogate keys (identity, sequence, GUID) vs natural keys (kit number).
+- GUID PKs: use sequential GUIDs (NEWSEQUENTIALID, or Guid.CreateVersion7 in .NET 9) to avoid fragmentation.
+- Index foreign key columns; SQL Server doesn't do it automatically.
+? Should every FK be indexed? :: Usually, for joins and to avoid locking scans on deletes of the parent.
+? What is Guid.CreateVersion7? :: A .NET 9 API creating time-ordered UUIDv7 values, better for index locality.
+
+@p5-19
+Q: A unique constraint forbids duplicate values and is backed by a unique index. A table has one primary key but can have many unique keys; the PK can't be null, while a unique key in SQL Server allows one NULL (use a filtered unique index to allow many).
+- Unique constraints enforce business rules regardless of app bugs or races.
+- Composite unique keys (StudyId, KitNumber).
+```sql
+CREATE UNIQUE INDEX UX_Users_Email ON dbo.Users(Email) WHERE Email IS NOT NULL;
+```
+? Why enforce uniqueness in the database too? :: Concurrent requests can both pass an app check.
+? Can a FK reference a unique key? :: Yes, not only primary keys.
+
+@p5-20
+Q: A composite index covers several columns, such as (StudyId, Status, ShipmentDate). Column order matters: it supports seeks on the leading column(s), so put equality-filtered columns first and range or sort columns after. It can serve queries on StudyId alone or StudyId plus Status, but not Status alone.
+- Leftmost prefix rule.
+- INCLUDE columns make it covering without widening the key.
+- Our shipment fix used exactly (StudyId, Status, ShipmentDate) INCLUDE, cutting reads from [400,000 to 2,000].
+? Why equality before range? :: After a range column, later key columns can't be used for seeking.
+? Can SQL Server use a skip scan? :: Not generally; it would scan instead.
+
+@p5-21
+Q: A filtered index is a non-clustered index with a WHERE clause (e.g. only Pending shipments): smaller, cheaper to maintain and faster for queries on a hot subset. The query predicate must match the filter, and parameterised queries may not use it unless the optimizer can prove the match.
+- Great for status columns where few rows are "active".
+- Filtered unique indexes allow uniqueness only among non-null or active rows.
+- Requires specific SET options (QUOTED_IDENTIFIER, ANSI_NULLS).
+? Why might a parameterised query ignore it? :: The plan must be valid for any parameter value, so it can't rely on the filter.
+? Fix? :: Use a literal for the filtered value or OPTION (RECOMPILE).
+
+@p5-22
+Q: Indexes help because the B-tree lets SQL Server seek rows in logarithmic time instead of scanning, cover queries without lookups, and avoid sorts. They hurt when there are too many: every insert, update and delete must maintain them, they use storage and memory, and unused or duplicate indexes add cost without benefit.
+- Check sys.dm_db_index_usage_stats for unused indexes.
+- Key lookups on many rows can make a seek slower than a scan.
+- Fragmentation matters less on SSDs; statistics freshness matters more.
+? How many indexes are too many? :: There's no fixed number; judge by write workload and usage stats.
+? What is a key lookup? :: Fetching extra columns from the clustered index for each row found in a non-clustered index.
+
+@p5-23
+Q: An execution plan is the optimizer's recipe for a query: operators (seeks, scans, join types, sorts), estimated vs actual row counts and costs. I read the actual plan to find scans, key lookups, bad estimates, spills and implicit conversions, and use Query Store to see plan history and regressions.
+- Read right to left, top to bottom; thick arrows mean many rows.
+- Warnings: implicit conversion, missing index, tempdb spills.
+- Join types: nested loops (small inputs), hash (large unsorted), merge (sorted inputs).
+- Query Store can force a known good plan.
+? Estimated vs actual plan? :: Estimated shows the plan without running; actual adds real row counts.
+? What does a big estimate vs actual gap mean? :: Stale statistics or parameter sniffing; investigate cardinality.
+
+@p5-24
+Q: A table scan reads every row of a heap; an index scan reads all or a large range of an index (clustered index scan reads the whole table); an index seek navigates the B-tree directly to matching rows. Seeks are best for selective queries; scans can be fine for large portions of data.
+- Non-SARGable predicates (functions on columns, leading wildcards, implicit conversions) force scans.
+- Range scans are seeks with a range predicate.
+```sql
+-- Non-SARGable: WHERE YEAR(ShipmentDate) = 2025
+-- SARGable:    WHERE ShipmentDate >= '2025-01-01' AND ShipmentDate < '2026-01-01'
+```
+? Is a scan always bad? :: No, reading most of a small table is cheaper by scan.
+? What is SARGable? :: A predicate that can use an index seek (Search ARGument able).
+
+@p5-25
+Q: A cardinality estimate is how many rows the optimizer expects at each plan step; statistics are histograms of column value distributions (up to 200 steps) used to make those estimates. Bad estimates from stale or missing statistics lead to bad plans, like nested loops over millions of rows.
+- Auto update statistics triggers after a threshold of changes (dynamic threshold since SQL Server 2016).
+- UPDATE STATISTICS ... WITH FULLSCAN for skewed data.
+- Table variables historically estimated 1 row (improved with deferred compilation in SQL 2019).
+? Why did a plan change overnight in your incident? :: A statistics update caused recompilation with an unrepresentative parameter value.
+? What is the cardinality estimator version? :: The model tied to compatibility level; changes can shift plans after upgrades.
+
+@p5-26
+Q: UNION removes duplicates, which costs a sort or hash; UNION ALL keeps every row and is faster. Use UNION ALL unless you truly need de-duplication.
+- Column count and types must match; names come from the first query.
+- ORDER BY applies to the whole result, at the end.
+? When is UNION needed? :: When overlapping sources may return the same row and duplicates are wrong.
+? UNION vs JOIN? :: UNION stacks rows vertically; JOIN combines columns horizontally.
+
+@p5-27
+Q: EXISTS stops at the first match; IN compares against a list or subquery. Modern optimizers often produce the same semi-join plan for both, but NOT IN with NULLs in the subquery returns no rows, so I prefer NOT EXISTS for anti-joins.
+- Large IN lists from apps create plan cache bloat; use table-valued parameters or JSON (OPENJSON).
+- EF Core 8+ translates Contains on lists using OPENJSON parameters.
+```sql
+SELECT s.* FROM Sites s WHERE NOT EXISTS (SELECT 1 FROM Shipments sh WHERE sh.SiteId = s.Id);
+```
+? Why does NOT IN fail with NULL? :: Comparison with NULL is unknown, so the whole predicate isn't true.
+? How did EF Core 8 change Contains? :: It sends the list as a JSON parameter, keeping one cached plan.
+
+@p5-28
+Q: A CTE is a named query for one statement: not materialised, readable, and supports recursion. A temp table (#t) is materialised in tempdb, can be indexed, has statistics and can be reused across statements in the session. Use CTEs for readability, temp tables for large intermediate results reused or needing indexes.
+- Table variables (@t) have limited statistics; good for small sets.
+- CTE referenced twice is evaluated twice.
+- Recursive CTEs for hierarchies (MAXRECURSION default 100).
+? Is a CTE faster than a subquery? :: No, it's the same; it's about readability.
+? Temp table vs table variable? :: Temp tables have statistics and are better for larger data.
+
+@p5-29
+Q: ROW_NUMBER gives a unique sequence even for ties; RANK gives ties the same rank and leaves gaps (1,1,3); DENSE_RANK gives ties the same rank without gaps (1,1,2). All need OVER (ORDER BY ...), optionally PARTITION BY.
+- Deterministic ROW_NUMBER needs a unique ORDER BY (add a tie-breaker).
+- NTILE splits into buckets; LAG/LEAD access neighbouring rows.
+```sql
+SELECT SiteId, KitCount,
+  ROW_NUMBER() OVER (ORDER BY KitCount DESC) rn,
+  RANK()       OVER (ORDER BY KitCount DESC) rnk,
+  DENSE_RANK() OVER (ORDER BY KitCount DESC) drnk
+FROM SiteStock;
+```
+? Which for nth-highest distinct value? :: DENSE_RANK.
+? Can you filter on a window function in WHERE? :: No, wrap it in a CTE or subquery first.
+
+@p5-30
+Q: Group and count: SELECT KitNumber, COUNT(*) FROM Kits GROUP BY KitNumber HAVING COUNT(*) > 1. To see or delete the duplicate rows themselves, use ROW_NUMBER() OVER (PARTITION BY KitNumber ORDER BY Id) and keep rn = 1.
+- Delete duplicates via a CTE where rn > 1, then add a unique constraint to prevent recurrence.
+```sql
+WITH d AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY StudyId, KitNumber ORDER BY Id) rn FROM Kits)
+DELETE FROM d WHERE rn > 1;
+```
+? Why can you delete from a CTE? :: SQL Server allows DML through a CTE over a single base table.
+? What prevents new duplicates? :: A unique constraint or index.
+
+@p5-31
+Q: SELECT DISTINCT Salary FROM Emp ORDER BY Salary DESC OFFSET N-1 ROWS FETCH NEXT 1 ROWS ONLY; or DENSE_RANK() OVER (ORDER BY Salary DESC) in a CTE and filter on rank = N, which handles ties correctly.
+- The classic MAX with subquery works for second highest only.
+- Return NULL when there's no nth value if required.
+```sql
+WITH r AS (SELECT Salary, DENSE_RANK() OVER (ORDER BY Salary DESC) dr FROM Emp)
+SELECT DISTINCT Salary FROM r WHERE dr = @N;
+```
+? Why DENSE_RANK not ROW_NUMBER? :: Ties would otherwise count as separate positions.
+? Per department? :: Add PARTITION BY DepartmentId.
+
+@p5-32
+Q: Use ROW_NUMBER with PARTITION BY: WITH r AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY SiteId ORDER BY ShipDate DESC) rn FROM Shipments) SELECT * FROM r WHERE rn <= 3. CROSS APPLY with TOP is an alternative that can be faster with a good index.
+- Index (SiteId, ShipDate DESC) supports both.
+```sql
+SELECT s.Id, x.* FROM Sites s
+CROSS APPLY (SELECT TOP (3) Id, ShipDate FROM Shipments sh WHERE sh.SiteId = s.Id ORDER BY ShipDate DESC) x;
+```
+? When is CROSS APPLY better? :: When there are few groups and an index allows a seek per group.
+? Ties? :: Use RANK or DENSE_RANK if ties should all be included.
+
+@p5-33
+Q: A dirty read reads uncommitted data that may be rolled back; a non-repeatable read gets different values for the same row within a transaction because another transaction updated it; a phantom read finds new rows on re-running a range query because another transaction inserted them.
+- Read Uncommitted (NOLOCK) allows dirty reads; Read Committed prevents them; Repeatable Read prevents non-repeatable reads; Serializable prevents phantoms; Snapshot gives a consistent versioned view.
+- NOLOCK can also skip or double-read rows, not just read dirty data.
+? Why avoid NOLOCK? :: It can return wrong results, including missing or duplicated rows.
+? Which isolation does RCSI give? :: Read Committed using row versions, so readers don't block writers.
+
+@p5-34
+Q: ACID: Atomicity (all or nothing), Consistency (rules and constraints hold after each transaction), Isolation (concurrent transactions don't interfere beyond the isolation level) and Durability (committed data survives crashes, via the transaction log).
+- Write-ahead logging gives durability and rollback.
+- Distributed systems trade some ACID across services (sagas, eventual consistency).
+? How does SQL Server guarantee durability? :: Log records are hardened to disk before commit returns.
+? ACID vs BASE? :: BASE (Basically Available, Soft state, Eventually consistent) describes many NoSQL systems.
+
+@p5-35
+Q: Optimistic locking takes no locks; it detects conflicts at write time with a rowversion and fails the second writer, best for low contention (EF Core concurrency tokens). Pessimistic locking locks the row while working (SELECT ... WITH (UPDLOCK)), best for high contention like allocating the next randomization slot.
+- EF Core throws DbUpdateConcurrencyException; reload and retry or show a conflict.
+- APIs expose the version as an ETag with If-Match.
+```csharp
+public class Shipment { public int Id { get; set; } [Timestamp] public byte[] RowVersion { get; set; } = []; }
+```
+? What does EF do with [Timestamp]? :: Adds the version to the UPDATE WHERE clause and checks rows affected.
+? Risk of pessimistic locking? :: Blocking and deadlocks if transactions are long.
+
+@p5-36
+Q: Measure first (Query Store, wait stats, slow query logs), then fix the top queries (indexes, SARGable predicates, less data fetched, better joins), keep statistics fresh, shorten transactions, consider RCSI, cache hot reads, and scale hardware only after.
+- Wait stats tell where time goes (PAGEIOLATCH = I/O, LCK = blocking, CXPACKET = parallelism).
+- Batch and set-based operations instead of row by row.
+- Archive old data, partition very large tables.
+? What do you check first? :: Top queries by total CPU and duration in Query Store.
+? When would you partition? :: Very large tables where sliding windows or maintenance per partition help.
+
+@p5-37
+Q: Start from real query patterns. The clustered key should be narrow, unique, static and ever-increasing; add non-clustered indexes on foreign keys and frequent filters with equality columns first, INCLUDE columns to cover hot queries, filtered indexes for hot subsets, and remove unused or duplicate indexes. Verify with execution plans.
+- Avoid wide clustered keys: they're copied into every non-clustered index.
+- Consider write cost on busy tables.
+- Review missing index DMVs critically; they often over-suggest.
+? Why ever-increasing clustered keys? :: Inserts go to the end, reducing page splits and fragmentation.
+? Are missing index suggestions reliable? :: They're hints; combine and validate them.
+
+@p5-38
+Q: Microservices are small, independently deployable services, each owning one business capability and its data, communicating over APIs or messages. Teams can build, deploy and scale them separately.
+- Characteristics: database per service, decentralised governance, automated deployment, design for failure.
+- Size by business capability, not lines of code.
+- IRT services: randomization, supply, shipments, notifications.
+? Must each service have its own database? :: Logically its own data, at least separate schemas with no cross-service access.
+? Microservices vs SOA? :: Microservices are finer-grained, with smart endpoints and dumb pipes rather than an ESB.
+
+@p5-39
+Q: Advantages: independent deploys and scaling, fault isolation, team autonomy and technology choice per service. Disadvantages: distributed-system complexity (network failures, eventual consistency), harder testing and debugging, operational overhead (many pipelines, monitoring, tracing) and data consistency challenges.
+- Needs mature DevOps and observability.
+- Latency from network hops.
+? Biggest hidden cost? :: Operational complexity and data consistency across services.
+? How do you mitigate it? :: Platform automation, templates, tracing and clear contracts.
+
+@p5-40
+Q: I wouldn't use microservices for a small team or early product, unclear domain boundaries, low scale, no DevOps maturity (CI/CD, monitoring), or when strong transactional consistency across the whole domain matters. A modular monolith is the better default.
+- Premature splitting creates a distributed monolith.
+- Extract services later along proven boundaries.
+? What is a modular monolith? :: One deployable with strongly separated modules and boundaries.
+? Signal it's time to split? :: Teams blocking each other or different scaling needs.
+
+@p5-41
+Q: I use Domain-Driven Design: split by business capability and bounded context, the area where one model and its language are consistent (Randomization, Supply, Shipments). Signals include different data ownership, change frequency, team ownership and scaling needs; Event Storming workshops help find them.
+- A "Kit" means different things in Supply vs Dispensing: separate models.
+- Context maps describe relationships (customer-supplier, anti-corruption layer).
+- Avoid splitting by technical layer (a "data service").
+? What is an anti-corruption layer? :: A translation layer protecting your model from another system's model.
+? What is ubiquitous language? :: Shared terms between developers and domain experts within a context.
+
+@p5-42
+Q: Synchronous REST or gRPC when the caller needs an immediate answer; asynchronous events or commands (Kafka, RabbitMQ) when it doesn't, to decouple services and absorb load. Prefer async for state changes others react to, and keep synchronous chains short.
+- gRPC for internal high-performance calls with contracts (Protobuf).
+- Events carry facts ("ShipmentDelivered"); commands request actions.
+- Always with timeouts, retries and idempotency.
+? Why avoid long synchronous chains? :: Latency adds up and one failure breaks the whole chain.
+? Events vs commands? :: Events notify many about something that happened; commands tell one handler to do something.
+
+@p5-43
+Q: Synchronous (REST/gRPC) is simple with an immediate result but creates temporal coupling: a slow or down callee affects the caller. Asynchronous messaging decouples in time and absorbs spikes, enabling independent scaling, but adds eventual consistency, duplicate handling and harder debugging.
+- Request/reply over messaging exists but adds complexity.
+- Choose per interaction, not per system.
+? Example of each in IRT? :: REST to randomize a subject (needs an answer); Kafka events for shipment status changes.
+? How do you debug async flows? :: Correlation ids, tracing and message logs.
+
+@p5-44
+Q: Service discovery is how services find each other's current addresses: DNS-based (Kubernetes Services, ECS Service Connect / Cloud Map) or registry-based (Consul, Eureka), often behind load balancers. Clients call a stable name instead of IPs that change with scaling.
+- Client-side vs server-side discovery.
+- .NET Aspire provides service discovery for HttpClient (Microsoft.Extensions.ServiceDiscovery).
+? Why not hardcode IPs? :: Containers come and go with changing IPs.
+? ECS Service Connect? :: Managed service discovery and proxy for ECS services with metrics.
+
+@p5-45
+Q: Retrying non-idempotent operations duplicates side effects; retrying permanent errors (400, 401, validation) wastes resources; and retry storms from many clients amplify an outage. So I retry only transient errors (timeouts, 408, 429, 5xx), with exponential backoff and jitter, limited attempts, idempotency keys, and a circuit breaker.
+- Retry budgets limit total retries.
+- Respect Retry-After headers.
+- Retries at multiple layers multiply (3 × 3 × 3 = 27).
+? Why jitter? :: To spread retries so clients don't retry in sync.
+? Example? :: The Copilot retry suggestion that would have duplicated release creation (Part 3 Q35).
+
+@p5-46
+Q: Bulkhead isolation uses separate resource pools per dependency (connection pools, concurrency limits, queues) so one slow dependency can't exhaust all threads or connections and take the whole service down. The name comes from ship compartments that contain flooding.
+- Polly concurrency limiter or ASP.NET Core rate limiting per dependency.
+- Separate HttpClients with their own handlers per downstream.
+- Separate worker pools or queues per workload type.
+? Bulkhead vs circuit breaker? :: Bulkhead limits resources used; circuit breaker stops calling a failing dependency.
+? Example in IRT? :: [Separate consumer pools for vendor file processing and notifications].
+
+@p5-47
+Q: Distributed tracing follows one request across services with a trace id and spans (timing per hop), using OpenTelemetry and W3C traceparent headers, visualised in X-Ray, Jaeger or Grafana Tempo. It shows where latency and errors occur in a multi-service flow.
+- .NET has built-in Activity/ActivitySource; HttpClient and ASP.NET Core propagate context automatically.
+- Propagate through messages by putting traceparent in headers.
+- Sampling controls cost.
+```csharp
+builder.Services.AddOpenTelemetry().WithTracing(t => t
+    .AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddSource("Irt.Shipments").AddOtlpExporter());
+```
+? Trace id vs correlation id? :: Similar purpose; trace ids are standardised and include parent-child spans.
+? How do you trace through RabbitMQ? :: Inject traceparent into message headers and start a consumer span from it.
+
+@p5-48
+Q: Eventual consistency means data across services becomes consistent after a short delay rather than instantly, accepted for availability and decoupling. Design for it with idempotent consumers, clear UI states (Pending), versioning and reconciliation jobs.
+- Read-your-writes can be provided for the user who made the change.
+- Monitoring lag between services.
+? Where is it unacceptable in IRT? :: Randomization slot allocation and kit assignment within a transaction.
+? How do you show it in a UI? :: Status like "Processing" and refresh or push updates.
+
+@p5-49
+Q: Timeouts, retries with backoff, circuit breakers and fallbacks for synchronous calls; asynchronous messaging with durable queues and DLQs; idempotent handlers; sagas with compensation for multi-step workflows; and health checks with alerts.
+- Graceful degradation: show cached data when a dependency is down.
+- .NET 8 standard resilience handler bundles these for HttpClient.
+? What is a fallback? :: An alternative response when the call fails, like cached or default data.
+? What timeout values? :: Based on the dependency's p99 plus margin, always less than the caller's own timeout.
+
+@p5-50
+Q: Version APIs (URL segment or header) and message contracts (additive changes, a schema version field), stay backward compatible, use consumer-driven contract tests, and deprecate old versions with notice. Prefer additive, non-breaking changes so versions rarely change.
+- Tolerant reader: consumers ignore unknown fields.
+- Asp.Versioning library for ASP.NET Core.
+- Schema registry for Kafka (Avro/Protobuf compatibility rules).
+? What's a breaking change? :: Removing or renaming fields, changing types or meanings, new required inputs.
+? How long do you keep old versions? :: Per agreement with consumers, with monitoring of usage.
+
+@p5-51
+Q: Each service has its own pipeline: build, test, image, IaC; deployments are independent to ECS or Kubernetes with rolling or blue-green strategies, health checks and automatic rollback, with configuration per environment and the same image promoted everywhere.
+- Shared pipeline templates for consistency.
+- Feature flags decouple release from deploy.
+- Contract tests prevent breaking consumers.
+? How do you deploy a change spanning two services? :: Make it backward compatible and deploy in order (provider first).
+? ECS deployment circuit breaker? :: Stops and rolls back a deployment when tasks fail to become healthy.
+
+@p5-52
+Q: Golden signals per service, centralised structured logs with correlation ids, distributed tracing, Grafana or CloudWatch dashboards, SLOs with alerts, and business metrics such as shipments processed.
+- Same telemetry conventions across services (OpenTelemetry semantic conventions).
+- Dependency maps from traces.
+- Synthetic checks for critical flows.
+? What's an SLO? :: A target like 99.9 percent of requests under 500 ms over 30 days.
+? Synthetic monitoring? :: Scripted checks simulating user flows on a schedule (CloudWatch Synthetics).
+
+@p5-53
+Q: Private networking (VPC, security groups) plus mTLS where required; service identities (OAuth client credentials tokens or IAM roles) with authorization per call; secrets from a vault; and zero trust: never assume the internal network is safe.
+- Validate tokens audience-scoped per service.
+- Service mesh can provide mTLS automatically.
+- Least-privilege security group rules.
+? Client credentials flow? :: A service authenticates with its own credentials to get an access token for another API.
+? Why not trust internal traffic? :: A compromised service could otherwise reach everything.
+
+@p5-54
+Q: Timeouts everywhere, circuit breakers, bulkheads, rate limiting and load shedding, async queues to absorb spikes, graceful degradation and fallbacks, and avoiding deep synchronous call chains.
+- Retry with backoff and budgets to avoid amplification.
+- Health checks shouldn't call dependencies deeply (avoid cascading restarts).
+? What is load shedding? :: Rejecting excess requests early (503/429) to protect the system.
+? How do circuit breakers help? :: They stop calls to a failing dependency, giving it time to recover and failing fast.
+
+@p5-55
+Q: Unit tests; integration tests with a real database and broker in containers (Testcontainers); consumer-driven contract tests (Pact) between services; a few end-to-end tests on critical flows; plus performance and resilience tests.
+- Test pyramid: many unit, fewer integration, few E2E.
+- WebApplicationFactory for in-memory API tests.
+- .NET Aspire testing for distributed app tests.
+? Why contract tests? :: They catch breaking API changes without full end-to-end environments.
+? Why not EF Core InMemory provider? :: It behaves differently from real databases; use SQLite or Testcontainers.
+
+@p5-56
+Q: Environment variables plus central stores (AWS Parameter Store / Secrets Manager, Azure App Configuration), per-environment values, validation at startup (ValidateOnStart), no secrets in code, and feature flags for runtime toggles.
+- Configuration providers layered in .NET: appsettings, environment, secrets, command line.
+- IOptionsMonitor for reload without restart.
+- Version and review config changes like code.
+? How do you change config without redeploying? :: Central store with reload (IOptionsMonitor) or feature flags.
+? Why validate at startup? :: Missing config fails the deployment, not live requests (the UAT lesson).
+
+@p5-57
+Q: Structured JSON logs with correlation ids shipped to one place (CloudWatch Logs, OpenSearch, Loki), common fields (service, environment, version, trace id), retention policies, no PHI or secrets, and queries and alerts on top.
+- Serilog or built-in JSON console logger.
+- Log levels set per category; avoid noisy debug in production.
+- Source-generated logging ([LoggerMessage]) for performance.
+? Why structured logs? :: Fields can be queried and aggregated instead of parsing text.
+? How do you avoid logging PHI? :: Redaction (Microsoft.Extensions.Compliance), reviewed log templates, and tests.
+
+@p5-58
+Q: An API gateway in front of stateless services on ECS or Kubernetes with autoscaling; database per service with Redis caching; async messaging for events; observability (logs, metrics, traces); CI/CD per service; resilience patterns; and multi-AZ deployment.
+- Start with clear bounded contexts.
+- Platform templates for new services.
+- Security: identity provider, mTLS or tokens between services.
+? What's the first bottleneck usually? :: The database; plan indexing, caching and read replicas.
+? How do you handle cross-service queries? :: API composition or read models built from events (CQRS).
+
+@p5-59
+Q: For synchronous request/response needs: UI and partner calls that need an immediate answer (get a study, randomize a subject). REST is simple, widely understood, works with gateways, caches and tools, and has standard semantics for status codes.
+- gRPC considered for internal high-throughput calls, but browser support and tooling favoured REST.
+- OpenAPI contracts for clients.
+? Why not GraphQL? :: Our clients have stable, known needs; GraphQL adds complexity for little gain.
+? When would you pick gRPC? :: Internal, high-volume service-to-service calls with streaming.
+
+@p5-60
+Q: Kafka fits when producers shouldn't wait for or know their consumers, several consumers need the same events, replay and retention matter, and throughput is high, as with shipment status events consumed by several services.
+- Decoupling: new consumers added without changing producers.
+- Ordering per key (ShipmentId).
+- Replay for rebuilding read models or recovering.
+? Downside? :: Eventual consistency and operational complexity.
+? Why not RabbitMQ for that? :: RabbitMQ deletes messages after consumption; Kafka keeps them for replay by multiple groups.
+
+@p5-61
+Q: Producers buffer and retry (idempotent producer, delivery timeout) and then fail, so I write events to an outbox in the same transaction as the data and a relay publishes when Kafka is back; consumers resume from committed offsets; alerts fire on producer errors and consumer lag.
+- MSK multi-AZ with replication factor 3 and min.insync.replicas 2 reduces outages.
+- acks=all for durability.
+? What does acks=all mean? :: The leader waits for all in-sync replicas before acknowledging.
+? How do you avoid losing events? :: Outbox pattern plus idempotent consumers.
+
+@p5-62
+Q: True end-to-end exactly-once across systems is rarely possible; I achieve effectively-once with at-least-once delivery plus idempotent consumers (inbox table or upserts), the outbox pattern on the producer side, and Kafka transactions for read-process-write within Kafka.
+- Store offsets with data in the same transaction for Kafka-to-DB.
+- Deduplicate by message id with a unique constraint.
+? What is Kafka EOS? :: Exactly-once semantics using idempotent producers and transactions within Kafka.
+? Why isn't it end-to-end? :: External side effects (DB writes, emails) aren't part of Kafka's transaction.

@@ -97,7 +97,7 @@ public class SftpHealthCheck(ISftpClientFactory f) : IHealthCheck
 ? What is Degraded used for? :: Partial health that alerts without removing the instance.
 
 @p4-75
-Q: On SIGTERM the host stops accepting new requests, lets in-flight ones finish within the shutdown timeout (30 seconds by default since .NET 8; previously 5 seconds), signals ApplicationStopping and cancels BackgroundService tokens, then disposes services. Orchestrators must allow enough time (ECS stopTimeout, Kubernetes terminationGracePeriodSeconds) and load balancers should deregister first.
+Q: On SIGTERM the host stops accepting new requests, lets in-flight ones finish within the shutdown timeout (30 seconds by default since .NET 6; previously 5 seconds), signals ApplicationStopping and cancels BackgroundService tokens, then disposes services. Orchestrators must allow enough time (ECS stopTimeout, Kubernetes terminationGracePeriodSeconds) and load balancers should deregister first.
 - HostOptions.ShutdownTimeout configures the wait.
 - Background workers: stop taking new messages, finish or nack the current one.
 - ALB deregistration delay should be shorter than the stop timeout.

@@ -1,0 +1,194 @@
+@p5-63
+Q: Requests come through API Gateway or an ALB to .NET services in Docker on ECS, in private subnets across availability zones; data lives in RDS SQL Server and DynamoDB, with ElastiCache for caching; events go through Kafka (MSK) and RabbitMQ; Lambda handles event-driven tasks; S3 stores files; secrets come from Secrets Manager; CloudWatch and Grafana monitor; and IaC plus Azure DevOps pipelines deploy it.
+- Draw layers: edge (Route 53, WAF, ALB/API Gateway), compute (ECS Fargate), data, messaging, observability.
+- Security: task roles, security groups, VPC endpoints, KMS encryption.
+- HA: multi-AZ for ALB, ECS, RDS and MSK.
+- Only describe what you can defend; say which parts you worked on most.
+? Why both RDS and DynamoDB? :: Relational data with transactions in RDS; high-scale key-value access patterns (idempotency, sessions) in DynamoDB.
+? How do vendors connect? :: SFTP integrations and APIs through the gateway.
+
+@p5-64
+Q: AWS was the company's chosen cloud for IRT; its managed services (ECS, RDS, Lambda, DynamoDB) reduce operational work, it has strong compliance programmes for life sciences, global regions for data residency, and mature IaC and security tooling.
+- Managed services let small teams focus on features.
+- Compliance: HIPAA eligibility, GxP guidance from AWS.
+- Honest answer: it was an organisational decision; I can explain the benefits.
+? Would you pick Azure instead? :: Either works; choose by company skills, existing contracts and services.
+? What's the biggest AWS benefit for you? :: Managed infrastructure with fine-grained IAM.
+
+@p5-65
+Q: ECS is AWS-native, simpler, with deep IAM and ALB integration and no control-plane fee; EKS is managed Kubernetes, portable across clouds with a large ecosystem, but more complex and with a control-plane fee. Both can run on Fargate or EC2.
+- ECS fits AWS-only teams wanting less operational load.
+- EKS fits Kubernetes skills, multi-cloud, or ecosystem needs (Helm, operators, service mesh).
+- EKS Auto Mode (2024) reduces node management.
+? Which does IRT use? :: ECS for production services.
+? Can you move from ECS to EKS later? :: Yes; containers are portable, but deployment definitions change.
+
+@p5-66
+Q: Fargate is serverless compute for containers on ECS or EKS: you set CPU and memory per task and AWS runs it, with no EC2 instances to patch, scale or secure. You pay per vCPU and GB per second.
+- Each task gets its own isolated kernel boundary and ENI.
+- Fargate Spot for interruptible workloads at a discount.
+- Limits: no privileged containers or daemon sets; ephemeral storage up to 200 GB.
+? Fargate vs EC2 launch type cost? :: Fargate costs more per unit but saves operations; EC2 is cheaper at steady high utilisation.
+? Can you SSH into Fargate? :: Use ECS Exec for a shell instead.
+
+@p5-67
+Q: API Gateway provides API management: auth (JWT, Lambda authorizers), throttling, usage plans, request validation, transformations and direct Lambda integration, priced per request. ALB is a layer 7 load balancer for containers and instances: cheaper at high steady traffic, path and host routing, WebSockets and long connections, priced per hour and LCU.
+- Use both: API Gateway for external APIs, ALB for internal services.
+- API Gateway has a default 29-second integration timeout; ALB idle timeout is configurable up to 4000 seconds.
+? Which for high-volume internal traffic? :: ALB, for cost and simplicity.
+? Can ALB authenticate users? :: Yes, with OIDC or Cognito authentication actions.
+
+@p5-68
+Q: Lambda runs functions on events (API Gateway, S3, SQS, DynamoDB Streams, EventBridge schedules); you pay per request and duration, and AWS manages servers and scaling. It supports .NET 8 (managed) and newer versions via custom runtimes or container images, up to 15 minutes per invocation and 10 GB memory.
+- Event source mappings poll SQS, Kinesis and DynamoDB Streams.
+- Cold starts; mitigate with SnapStart, provisioned concurrency, AOT.
+- Lambda Powertools for .NET for logging, metrics, tracing and idempotency.
+? Is Lambda good for APIs? :: For spiky or low traffic, yes; for steady high traffic, containers are often cheaper.
+? What runs your Lambda .NET code? :: The managed .NET runtime or a container image with the Lambda runtime interface.
+
+@p5-69
+Q: Lambda concurrency is the number of executions running at the same time. Accounts have a regional limit (1,000 by default, raisable); reserved concurrency guarantees and caps a function's share; provisioned concurrency keeps environments initialised to avoid cold starts.
+- Throttling returns 429 for sync calls; async events retry.
+- Reserved concurrency of 0 disables a function (an emergency stop).
+- Protect downstream databases by capping concurrency.
+? How do you protect RDS from Lambda scaling? :: Reserved concurrency plus RDS Proxy for connection pooling.
+? Reserved vs provisioned? :: Reserved limits and guarantees capacity; provisioned pre-warms environments for latency.
+
+@p5-70
+Q: The timeout is the maximum run time per invocation, configurable up to 15 minutes. Set it a little above the expected duration, set downstream timeouts below it, and move long work to queues, Step Functions or ECS.
+- SQS visibility timeout should be at least 6x the function timeout (AWS guidance).
+- API Gateway caps synchronous calls at its integration timeout.
+- Monitor Duration p99 against the timeout.
+? What happens on timeout? :: The invocation is stopped; async events retry; stream batches retry.
+? Why set downstream timeouts lower? :: So the function can handle failures cleanly instead of being killed.
+
+@p5-71
+Q: DynamoDB is a fully managed NoSQL key-value and document database with single-digit millisecond latency at any scale, on-demand or provisioned capacity, global tables, streams, TTL and transactions. You design tables around access patterns.
+- Partition key plus optional sort key; GSIs and LSIs for other access patterns.
+- Strongly consistent reads optional (not on GSIs).
+- On-demand pricing cut significantly in late 2024, making it the default choice for many.
+? When not to use DynamoDB? :: Ad-hoc queries, complex joins and reporting; use relational or analytics stores.
+? Does it support transactions? :: Yes, TransactWriteItems across up to 100 items.
+
+@p5-72
+Q: A GSI (global secondary index) has a different partition and sort key, its own capacity, can be created any time and is eventually consistent; an LSI (local secondary index) keeps the same partition key with a different sort key, must be created with the table, supports strong consistency and limits each partition key's item collection to 10 GB.
+- Project only needed attributes to save cost.
+- Sparse indexes: only items with the attribute appear.
+- GSI throttling can back-pressure writes to the base table.
+? When use an LSI? :: Rarely; when you need strongly consistent alternate sort orders within a partition.
+? What is a sparse index? :: A GSI on an attribute that only some items have, giving a cheap filtered view.
+
+@p5-73
+Q: RDS is a managed relational database (SQL Server, PostgreSQL, MySQL, MariaDB, Oracle, plus Aurora) with automated backups, patching, Multi-AZ failover, read replicas and monitoring. An EC2-hosted database gives full control (OS, unsupported features, custom agents) but you own backups, HA, patching and scaling.
+- RDS Custom for SQL Server when you need OS-level access.
+- Point-in-time restore from automated backups.
+- Performance Insights for query analysis.
+? When choose EC2? :: Features RDS doesn't support or special licensing needs.
+? What does Multi-AZ do? :: Maintains a synchronous standby in another AZ with automatic failover.
+
+@p5-74
+Q: Redis is in-memory with sub-millisecond reads, rich data structures and TTLs, ideal for caches, sessions, rate limits, locks and leaderboards; a database is the durable system of record with queries, transactions and constraints. Redis complements a database rather than replacing it.
+- Redis persistence (RDB/AOF) exists but isn't a substitute for a primary DB in most designs.
+- Valkey is the open-source fork after Redis licence changes in 2024; ElastiCache supports it.
+- Cache invalidation and consistency need design.
+? Can Redis lose data? :: Yes, on failover or eviction, so cache data must be rebuildable.
+? Why Valkey? :: An open-source, Linux Foundation fork, cheaper on ElastiCache.
+
+@p5-75
+Q: Block Public Access, least-privilege bucket policies and IAM, encryption at rest (SSE-KMS) and in transit (HTTPS-only policy with aws:SecureTransport), versioning and Object Lock where needed, short-lived presigned URLs, access logging or CloudTrail data events, and VPC endpoint policies.
+- Disable ACLs (Object Ownership: bucket owner enforced, default since 2023).
+- New objects are encrypted with SSE-S3 by default since 2023.
+- Macie to find sensitive data.
+```json
+{ "Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": ["arn:aws:s3:::irt-imports", "arn:aws:s3:::irt-imports/*"],
+  "Condition": { "Bool": { "aws:SecureTransport": "false" } } }
+```
+? SSE-S3 vs SSE-KMS? :: KMS adds key policies, audit and rotation control.
+? What is Object Lock? :: WORM retention that prevents deletion or overwrite for a period.
+
+@p5-76
+Q: IAM controls who can do what on which AWS resources through users, groups, roles and policies. A user is a long-term identity with credentials (password, access keys); a role is assumed temporarily by services, apps or people and gives short-lived credentials, the preferred approach.
+- Workloads use roles (ECS task role, Lambda execution role, EC2 instance profile).
+- People use IAM Identity Center (SSO) instead of IAM users.
+- STS AssumeRole for cross-account access.
+? Why avoid access keys? :: They're long-lived and leak easily; roles rotate credentials automatically.
+? What is a trust policy? :: The part of a role defining who can assume it.
+
+@p5-77
+Q: CloudWatch Logs holds detailed event records, searchable with Logs Insights; CloudWatch Metrics are numeric time series (CPU, latency, errors) for graphs and alarms. Logs explain what happened; metrics show trends and trigger alerts cheaply.
+- Metric filters derive metrics from logs.
+- Embedded Metric Format: emit metrics inside structured logs.
+- Logs cost per GB ingested; metrics per metric and API call.
+? How long are metrics kept? :: Up to 15 months with decreasing resolution.
+? How do you search logs across services? :: Logs Insights queries across multiple log groups.
+
+@p5-78
+Q: CloudWatch alarms watch a metric against a threshold over periods (e.g. 5xx over 1 percent for 5 minutes) and move between OK, ALARM and INSUFFICIENT_DATA, triggering actions like SNS notifications, autoscaling or EC2 actions.
+- Composite alarms combine conditions to reduce noise.
+- Anomaly detection bands for seasonal metrics.
+- "M out of N" datapoints to avoid flapping.
+- Treat missing data deliberately (notBreaching, breaching).
+? How do you avoid alert noise? :: Composite alarms, sensible periods and alerting on symptoms.
+? Missing data setting for a heartbeat metric? :: Treat as breaching so silence triggers the alarm.
+
+@p5-79
+Q: Check scope and recent changes; CloudWatch dashboards and alarms (ALB 5xx, target health, ECS task restarts, RDS CPU and connections, queue depth); Logs Insights by correlation id; traces; then mitigate (rollback, scale) and fix the root cause.
+- Check AWS Health Dashboard for service issues.
+- CloudTrail for configuration changes.
+- ECS stopped task reasons (OOM, health check failures).
+? Where do you see why an ECS task stopped? :: The stopped reason in the ECS console or DescribeTasks.
+? How do you find who changed a security group? :: CloudTrail events.
+
+@p5-80
+Q: Agree RTO and RPO with the business, then pick a strategy: backup and restore (cheapest, slowest), pilot light, warm standby or active-active (fastest, most expensive). Automate infrastructure with IaC, replicate data cross-region, and test restores and failovers regularly.
+- AWS Backup for centralised, cross-region, cross-account copies.
+- RDS cross-region read replicas or snapshots; S3 cross-region replication; DynamoDB global tables.
+- Runbooks and game days.
+? What's the most common DR failure? :: Untested backups that don't restore.
+? Why cross-account backups? :: Protection against account compromise or ransomware.
+
+@p5-81
+Q: Autoscaling adjusts capacity to load automatically: EC2 Auto Scaling groups, ECS service scaling, DynamoDB capacity, Lambda concurrency. Target tracking (keep CPU near a target) is simplest; step scaling reacts to alarm thresholds; scheduled scaling handles known peaks; predictive scaling uses forecasts.
+- Scale on the right metric (requests per target, queue depth).
+- Warm-up and cooldown settings matter.
+? Why scale in slowly? :: To avoid flapping and keep capacity for returning load.
+? What is predictive scaling? :: Using ML forecasts of traffic to add capacity ahead of time.
+
+@p5-82
+Q: A security group is stateful, attached to instances or ENIs, and has allow rules only; a NACL is stateless, attached to subnets, with allow and deny rules evaluated in number order, so return traffic needs explicit rules. Security groups are the main control; NACLs add a coarse subnet-level guard.
+- Security groups can reference other security groups.
+- NACLs need ephemeral port ranges for return traffic.
+? Which to use to block a specific IP? :: A NACL deny rule (or WAF).
+? Stateful meaning? :: Return traffic for allowed connections is automatically allowed.
+
+@p5-83
+Q: A NAT Gateway lets resources in private subnets make outbound internet calls (package downloads, external APIs) without being reachable inbound. It's managed and highly available within an AZ, so deploy one per AZ, and watch data processing costs.
+- VPC endpoints avoid NAT costs for AWS services (S3 gateway endpoint is free).
+- IPv6 uses an egress-only internet gateway instead.
+? Why one per AZ? :: An AZ failure would otherwise cut outbound access for other AZs, plus cross-AZ charges.
+? How do you reduce NAT cost? :: VPC endpoints for AWS services and caching dependencies.
+
+@p5-84
+Q: With an ECS task role (or EKS Pod Identity/IRSA): the SDK credential chain gets temporary credentials automatically, with no access keys in code or images; least-privilege policies scope access, and VPC endpoints keep traffic private.
+- Credentials are served by the container credentials endpoint and rotated automatically.
+- Separate execution role (ECS agent) from task role (your code).
+```csharp
+var s3 = new AmazonS3Client();   // picks up task role credentials automatically
+```
+? What is IRSA? :: IAM Roles for Service Accounts: Kubernetes service accounts mapped to IAM roles via OIDC.
+? How do you test locally? :: Use an SSO profile or assumed role with the same permissions.
+
+@p5-85
+Q: Secrets Manager is built for secrets: automatic rotation (RDS integration), cross-account sharing, versioning, priced per secret per month. Parameter Store holds config and secrets (SecureString with KMS) cheaply with hierarchy, but rotation is manual. I use Secrets Manager for credentials and Parameter Store for configuration.
+- Both integrate with ECS task definitions and .NET configuration providers.
+- Cache secrets in the app to reduce API calls and cost.
+? Can ECS inject Parameter Store values? :: Yes, both can be referenced in the secrets section.
+? How does rotation affect apps? :: Apps must re-read secrets on auth failure or periodically.
+
+@p5-86
+Q: Right-size tasks and instances, use autoscaling and scale-to-zero for dev, Savings Plans or Reserved capacity for steady load, Spot for non-critical work, S3 lifecycle and tiering, log retention, VPC endpoints to cut NAT costs, Graviton (ARM) instances, and Cost Explorer with tags and budgets to find waste.
+- Turn off non-production environments outside working hours.
+- Delete unattached volumes, old snapshots, idle load balancers.
+- .NET runs well on ARM64 (Graviton) for 20-40 percent better price-performance.
+? Quick win you'd check first? :: CloudWatch log retention and idle non-production resources.
+? How do you make teams cost-aware? :: Tag resources by team and share monthly cost reports.

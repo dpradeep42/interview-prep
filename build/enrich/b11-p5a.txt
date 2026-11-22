@@ -1,0 +1,172 @@
+@p5-1
+Q: Entity Framework Core is Microsoft's open-source ORM for .NET: it maps classes to tables, translates LINQ to SQL, tracks changes to entities and writes them back in SaveChanges, and manages schema through migrations. It supports SQL Server, PostgreSQL, SQLite, Cosmos DB and more through providers.
+- Core pieces: DbContext (unit of work), DbSet (tables), change tracker, model built from conventions, attributes and Fluent API.
+- EF Core 8: complex types, raw SQL for unmapped types, JSON columns; EF Core 9/10: better LINQ translation, named query filters (10), LeftJoin operator (10), vector search for SQL Server.
+- Performance tools: AsNoTracking, compiled models, compiled queries, ExecuteUpdate/Delete, DbContext pooling.
+- In IRT: EF Core for most CRUD and domain writes, Dapper or raw SQL for heavy reporting.
+? Is EF Core slow? :: Not inherently; most problems come from query shape (N+1, over-fetching, tracking).
+? What's new in EF Core 10? :: LeftJoin/RightJoin LINQ operators, named query filters, JSON and vector improvements.
+
+@p5-2
+Q: ADO.NET gives raw connections, commands and data readers: fastest and full control, but manual SQL and mapping. EF Core adds LINQ, change tracking, migrations and relationships for productivity, with some overhead. Dapper sits between: you write SQL, it maps results fast.
+- EF Core itself uses ADO.NET underneath.
+- Choose EF Core for domain writes and typical queries; Dapper/raw SQL for complex reports or bulk paths.
+- SqlBulkCopy for very large inserts.
+- Both must use parameters to avoid SQL injection.
+? Can you mix EF Core and Dapper? :: Yes, even sharing the same connection and transaction.
+? When is raw ADO.NET justified? :: Extreme performance paths, streaming large results, or special features like table-valued parameters.
+
+@p5-3
+Q: DbContext is a session with the database combining unit of work, change tracker and connection management; the model is configured in OnModelCreating. DbSet<T> represents a table you query with LINQ and add or remove entities from.
+- DbContext is not thread-safe and is registered as scoped; one per request or unit of work.
+- AddDbContextPool reuses instances for performance; IDbContextFactory for background or Blazor.
+- Configurations split into IEntityTypeConfiguration<T> classes and ApplyConfigurationsFromAssembly.
+```csharp
+public class IrtDbContext(DbContextOptions<IrtDbContext> o) : DbContext(o)
+{
+    public DbSet<Shipment> Shipments => Set<Shipment>();
+    protected override void OnModelCreating(ModelBuilder b) => b.ApplyConfigurationsFromAssembly(typeof(IrtDbContext).Assembly);
+}
+```
+? What happens if two threads use one DbContext? :: EF throws "A second operation was started on this context"; use separate contexts.
+? Context pooling caveat? :: State must be reset; don't store per-request data in context fields.
+
+@p5-4
+Q: Include loads a navigation of the root entity; ThenInclude loads the next level from that navigation, e.g. Studies.Include(s => s.Sites).ThenInclude(site => site.Shipments). Filtered includes (EF Core 5+) restrict loaded children with Where, OrderBy and Take.
+- Multiple collection includes can cause a cartesian explosion; AsSplitQuery runs separate queries.
+- Projection with Select is often better than Include for read-only views.
+- Include is ignored if you project to a non-entity type.
+```csharp
+var study = await db.Studies
+    .Include(s => s.Sites.Where(x => x.IsActive)).ThenInclude(x => x.Shipments)
+    .AsSplitQuery().SingleAsync(s => s.Id == id, ct);
+```
+? What is a cartesian explosion? :: Joining several collections multiplies rows, sending huge duplicate data.
+? Split query downside? :: Multiple round-trips and possible inconsistency without a transaction.
+
+@p5-5
+Q: dotnet ef migrations add AddShipmentIndex generates Up and Down code from model changes, which I review like any code; then I generate an idempotent SQL script (dotnet ef migrations script --idempotent) or a migration bundle for the pipeline, so DBAs and the regulated release process can review and run it.
+- Don't call Database.Migrate() at app startup in production with multiple instances (race conditions); run migrations as a pipeline step.
+- Migration bundles (efbundle) are self-contained executables.
+- Data migrations and expand/contract for zero-downtime.
+- Model snapshot file must be committed and merged carefully.
+? Why idempotent scripts? :: They can run against any environment state safely, checking applied migrations.
+? How do you resolve migration conflicts between branches? :: Remove and re-create the later migration after merging, or merge snapshots carefully.
+
+@p5-6
+Q: In Code First the C# model is the source of truth and migrations create and evolve the schema; in Database First you scaffold entities from an existing database (dotnet ef dbcontext scaffold) and the database stays the source of truth. IRT uses [Code First for newer services and scaffolding for legacy schemas].
+- Code First suits greenfield services owning their data.
+- Database First suits shared or DBA-owned databases.
+- EF Core Power Tools helps with reverse engineering.
+? Can you switch later? :: Yes, by creating a baseline migration from the existing schema.
+? How do you keep scaffolded code customisable? :: Partial classes and templates (T4) so re-scaffolding doesn't overwrite custom code.
+
+@p5-7
+Q: LINQ-to-Entities is LINQ over DbSet/IQueryable that EF Core translates into SQL and runs in the database; only translatable methods are allowed in filters (Where, Select, OrderBy, string Contains/StartsWith, EF.Functions). The query is an expression tree until enumerated.
+- ToQueryString() shows the SQL without running it.
+- EF.Functions.Like, DateDiffDay and others map to SQL functions.
+- Final Select projections can call client code (top-level only).
+? What triggers execution? :: Enumeration: ToList, First, Count, foreach, await ToListAsync.
+? How do you see generated SQL quickly? :: query.ToQueryString() or logging.
+
+@p5-8
+Q: Client-side evaluation happens when you use methods EF can't translate (custom C# functions, some string or date operations) inside a filter. Since EF Core 3, it throws instead of silently loading everything into memory; only the final projection may run client code.
+- Fixes: rewrite with translatable methods, EF.Functions, computed columns, or map a database function with HasDbFunction.
+- AsEnumerable() explicitly switches to in-memory after filtering in SQL.
+? Why did EF Core 3 change this? :: Silent client evaluation loaded whole tables and caused serious performance issues.
+? Is AsEnumerable dangerous? :: Only if used before filtering, which loads too much data.
+
+@p5-9
+Q: I use AsNoTracking for reads, project to DTOs with Select, filter and page in SQL, avoid N+1 with Include or projections, use AsSplitQuery for multiple collections, add the right indexes, batch writes, use ExecuteUpdate/ExecuteDelete for set-based changes, and measure with logged SQL and execution plans.
+- DbContext pooling and compiled models reduce startup and per-request overhead.
+- Avoid lazy loading in APIs.
+- Check for implicit conversions and non-SARGable predicates in generated SQL.
+- The shipment-list fix: index (StudyId, Status, ShipmentDate) INCLUDE plus projection took [9 s to under 300 ms].
+? How do you detect N+1? :: Log SQL and look for repeated similar queries per row, or use MiniProfiler.
+? AsNoTracking vs AsNoTrackingWithIdentityResolution? :: The latter de-duplicates entity instances without tracking.
+
+@p5-10
+Q: SaveChanges detects changes in tracked entities and writes all pending INSERT, UPDATE and DELETE statements in one transaction, batching them where possible. SaveChangesAsync does the same without blocking a thread during I/O, which is what I use in ASP.NET Core.
+- Returns the number of affected rows; throws DbUpdateConcurrencyException or DbUpdateException.
+- Interceptors (SaveChangesInterceptor) for auditing and soft delete.
+- ChangeTracker.AutoDetectChangesEnabled can be turned off for bulk adds.
+? Is SaveChanges transactional? :: Yes, each call is one transaction unless you've started an explicit one.
+? Why call SaveChanges once per unit of work? :: Fewer round-trips and all-or-nothing behaviour.
+
+@p5-11
+Q: EF Core 7+ ExecuteUpdate and ExecuteDelete run set-based SQL without loading entities; AddRange with batching handles moderate inserts. For very large loads I use SqlBulkCopy (or a library like EFCore.BulkExtensions) into a staging table, then MERGE set-based.
+- ExecuteUpdate bypasses the change tracker and interceptors; handle auditing separately.
+- Batch size (MaxBatchSize) affects round-trips.
+- Wrap staging plus merge in a transaction.
+```csharp
+await db.Shipments.Where(s => s.Status == ShipmentStatus.Pending && s.CreatedAt < cutoff)
+    .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, ShipmentStatus.Expired), ct);
+```
+? Downside of ExecuteUpdate? :: Tracked entities in memory aren't updated, and SaveChanges interceptors don't run.
+? How fast is SqlBulkCopy? :: Hundreds of thousands of rows per second, depending on table and indexes.
+
+@p5-12
+Q: EF.CompileAsyncQuery caches the LINQ-to-SQL translation of a query shape so very hot paths skip translation cost. EF already caches translations internally, so compiled queries give only small gains; compiled models (dotnet ef dbcontext optimize) help startup for large models.
+- EF Core 9+ supports precompiled queries for native AOT (experimental).
+- Use only after profiling shows translation cost matters.
+```csharp
+static readonly Func<IrtDbContext, int, Task<Shipment?>> ById =
+    EF.CompileAsyncQuery((IrtDbContext db, int id) => db.Shipments.FirstOrDefault(s => s.Id == id));
+```
+? When are compiled queries worth it? :: Extremely hot, simple queries in high-throughput services.
+? What is a compiled model? :: A generated model that avoids building the model at startup.
+
+@p5-13
+Q: Use LogTo(Console.WriteLine) on the options builder, or the Microsoft.EntityFrameworkCore.Database.Command log category at Information, which logs SQL and timing. EnableSensitiveDataLogging shows parameter values, for development only.
+- ToQueryString() for one query.
+- Interceptors (DbCommandInterceptor) can log slow queries or add query tags.
+- TagWith("ShipmentList") adds comments to SQL to find it in Query Store.
+? Why not enable sensitive data logging in production? :: It logs parameter values that may contain personal data.
+? How do you find which code issued a slow query? :: TagWith or TagWithCallSite to add identifying comments.
+
+@p5-14
+Q: Relationships are configured with navigations and foreign keys by convention or Fluent API (HasOne/WithMany, HasMany/WithMany). One-to-one: Subject and Consent; one-to-many: Study and Sites; many-to-many: Users and Studies, with EF Core 5+ creating the join table automatically or using an explicit join entity with extra data.
+- Delete behaviour: Cascade, Restrict, SetNull, configured per relationship.
+- Required vs optional by FK nullability.
+- Explicit join entities when the join has data (role, assigned date).
+```csharp
+b.Entity<Site>().HasOne(s => s.Study).WithMany(st => st.Sites).HasForeignKey(s => s.StudyId).OnDelete(DeleteBehavior.Restrict);
+b.Entity<User>().HasMany(u => u.Studies).WithMany(s => s.Users).UsingEntity<StudyAssignment>();
+```
+? Why Restrict on delete? :: To avoid accidental cascades deleting regulated data.
+? What are multiple cascade paths? :: SQL Server rejects schemas where deletes can cascade by more than one path.
+
+@p5-15
+Q: Shadow properties exist in the EF model and table but not in the C# class, such as LastModifiedBy or a foreign key; they're accessed with EF.Property<T>(entity, "Name") in queries and through the change tracker. They keep infrastructure concerns like audit columns out of domain classes.
+- Set them in a SaveChanges interceptor.
+- Query filters can use them (soft delete IsDeleted).
+```csharp
+b.Entity<Shipment>().Property<DateTimeOffset>("LastModifiedAt");
+db.Entry(shipment).Property("LastModifiedAt").CurrentValue = clock.GetUtcNow();
+var recent = db.Shipments.Where(s => EF.Property<DateTimeOffset>(s, "LastModifiedAt") > since);
+```
+? When would EF create a shadow FK? :: When a navigation exists without an FK property in the class.
+? Downside? :: Less discoverable in code.
+
+@p5-16
+Q: Owned entities map value objects as part of their owner with OwnsOne/OwnsMany, e.g. an Address inside Site stored in the Site table's columns; they have no identity of their own. EF Core 8 complex types (ComplexProperty) are a newer option for value objects with value semantics, and owned types can be mapped to JSON columns.
+- Value objects: immutable, compared by value (Money, Address, TemperatureRange).
+- OwnsMany can map to a separate table or JSON.
+```csharp
+b.Entity<Site>().OwnsOne(s => s.Address);   // Address_City, Address_Country columns
+b.Entity<Site>().ComplexProperty(s => s.StorageRange);  // EF Core 8 complex type
+```
+? Owned type vs complex type? :: Owned types are entity types with hidden keys; complex types are true value types without identity.
+? Why JSON columns? :: Flexible nested data queried with JSON functions without extra tables.
+
+@p5-17
+Q: Fluent API HasIndex(s => new { s.StudyId, s.Status }) with IsUnique, HasFilter or IncludeProperties (SQL Server), or the [Index] attribute on the class; migrations then create the index. I base indexes on real query patterns and verify with execution plans.
+- Unique indexes enforce business rules (one kit number per study).
+- Filtered indexes for hot subsets.
+- Name indexes explicitly for stable migrations.
+```csharp
+b.Entity<Shipment>().HasIndex(s => new { s.StudyId, s.Status, s.ShipmentDate })
+ .IncludeProperties(s => new { s.SiteId, s.KitCount }).HasDatabaseName("IX_Shipments_Study_Status_Date");
+```
+? What does IncludeProperties do? :: Adds INCLUDE columns so the index covers the query.
+? Unique index vs unique constraint? :: Functionally similar in SQL Server; a constraint expresses intent and is backed by an index.
