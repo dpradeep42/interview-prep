@@ -27,6 +27,8 @@ h1{font-size:26px;margin:0 0 6px}
 .chk{display:inline-flex;gap:6px;align-items:center;color:var(--muted);font-size:14px;white-space:nowrap}
 .btn{font:inherit;font-size:14px;border:1px solid var(--border);background:var(--card);color:var(--text);padding:6px 11px;border-radius:8px;cursor:pointer}
 .count{color:var(--muted);font-size:14px;margin:12px 0}
+.where{font-size:12px;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:1px 8px;white-space:nowrap}
+.inans{font-size:12px;color:var(--accent);white-space:nowrap}
 .callout{border:1px solid var(--border);background:var(--accentbg);border-radius:12px;padding:12px 14px;margin:12px 0}
 .toc{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
 .toc a{font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--border);padding:3px 9px;border-radius:999px}
@@ -36,6 +38,7 @@ details{border:1px solid var(--border);border-radius:12px;background:var(--card)
 summary{cursor:pointer;list-style:none;padding:12px 14px;display:flex;gap:10px;align-items:flex-start}
 summary::-webkit-details-marker{display:none}
 summary .q{flex:1;font-weight:600}
+@media (max-width:520px){summary{flex-wrap:wrap;gap:6px}summary .q{flex:1 1 100%}}
 summary .num{color:var(--faint);font-weight:500;margin-right:4px}
 .tag{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
 .tag.A{color:var(--accent);border-color:var(--accent)}
@@ -91,6 +94,7 @@ details.impress{margin:12px 0;border:1px solid var(--accent);background:var(--ca
 <select id="topic" aria-label="Topic"></select>
 <div class="seg bankonly" id="diff"></div>
 <input type="search" id="search" placeholder="Search, e.g. middleware, JWT, MCP, or a list number like 512" aria-label="Search">
+<label class="chk" title="Also match words inside the answers (ranked below question matches)"><input type="checkbox" id="inans"> Also search answers</label>
 <label class="chk bankonly"><input type="checkbox" id="pics"> Only with pictures</label>
 <label class="chk bankonly"><input type="checkbox" id="stories"> Only with stories</label>
 <label class="chk"><input type="checkbox" id="deep"> Open "Impress" by default</label>
@@ -135,10 +139,40 @@ PARTS.forEach(function(p, pi){
 });
 var BYID = {}; ALL.forEach(function(x){ BYID[x.id] = x; });
 function stext(x){ if (x._s===undefined){ var e=EN[x.id]||{}; x._s=(x.q+' '+x.a+' '+x.hook+' '+x.fu+' '+(e.q||'')+' '+(e.i||[]).join(' ')+' '+(e.f||[]).map(function(f){return f.join(' ');}).join(' ')+' '+(e.c||[]).map(function(c){return c[1];}).join(' ')).toLowerCase(); } return x._s; }
+// ---------- search: question text first, answers only when asked ----------
+function norm(t){ return (' ' + String(t).toLowerCase().replace(/c#/g, ' csharp ').replace(/c\+\+/g, ' cpp ').replace(/f#/g, ' fsharp ').replace(/[^a-z0-9\u00c0-\uffff]+/g, ' ') + ' ').replace(/\s+/g, ' '); }
+var LEAD = /^ (what is|what are|what does|how do you|how does|how do|how to|how would you|explain|define|describe|why do we need|why use)( (a|an|the|write|create|build|implement|use|add|register|configure))? /;
+function parseQ(raw){
+  var t = norm(raw).trim();
+  return t ? {t: t, toks: t.split(' ')} : null;
+}
+// lower score = better; null = no match
+function titleScore(title, Q){
+  var n = norm(title), core = n.replace(LEAD, ' '), term = ' ' + Q.t + ' ';
+  if (n.trim() === Q.t || core.trim() === Q.t) return [0, 0, 0, n.length];
+  var w = n.indexOf(term);
+  if (w >= 0) {
+    // definitional boost: "what is X", "how do you write custom X" (term is the subject)
+    var cw = core.indexOf(term), off = cw < 0 ? 99 : core.slice(0, cw).trim().split(' ').filter(Boolean).length;
+    var boost = (n !== core && off <= 2) ? 0 : 1;
+    return [1, boost, off, n.length];
+  }
+  var sh = Q.t.length < 3;
+  if (!sh && n.indexOf(' ' + Q.t) >= 0) return [2, 0, n.indexOf(' ' + Q.t), n.length];
+  if (!sh && n.indexOf(Q.t) >= 0) return [3, 0, n.indexOf(Q.t), n.length];
+  if (Q.toks.length > 1 && Q.toks.every(function(k){ return n.indexOf(' ' + k + (k.length < 3 ? ' ' : '')) >= 0; })) return [4, 0, 0, n.length];
+  return null;
+}
+function answerHit(txt, Q){
+  var n = norm(txt);
+  return n.indexOf(' ' + Q.t + (Q.t.length < 3 ? ' ' : '')) >= 0 || (Q.toks.length > 1 && Q.toks.every(function(k){ return n.indexOf(' ' + k + (k.length < 3 ? ' ' : '')) >= 0; }));
+}
+function cmpScore(a, b){ for (var i = 0; i < 4; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; }
+function ntext(x){ if (x._n === undefined) x._n = norm(stext(x)); return x._n; }
 var total = ALL.length, picTotal = ALL.filter(function(x){return x.vis;}).length, fuTotal = ALL.filter(function(x){return x.fu;}).length;
 document.getElementById('sub').textContent = total + ' questions in 10 parts, each with a quick answer and an Impress-the-interviewer deep dive, ' + picTotal + ' with a diagram or table and ' + fuTotal + ' full stories with follow-up questions. All ' + LISTN + ' questions from your list are answered: see the Your list tab. Tap a question to reveal the answer.';
 
-var state = {deep:false, part:'list', topic:'all', diff:'all', q:'', pics:false, stories:false};
+var state = {inans:false, deep:false, part:'list', topic:'all', diff:'all', q:'', pics:false, stories:false};
 var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 var mermaidOK = typeof window.mermaid !== 'undefined';
 if (mermaidOK) { try { mermaid.initialize({startOnLoad:false, theme: dark ? 'dark' : 'default', securityLevel:'strict', flowchart:{htmlLabels:true, curve:'basis'}}); } catch(e){ mermaidOK=false; } }
@@ -286,8 +320,47 @@ function listItemHTML(sec, it){
   return '<details data-lid="' + esc(it.id) + '"><summary><span class="q"><span class="num">' + esc(idLabel(it.id)) + '</span>' + fmt(it.text) + '</span>' +
     '<span class="tag part">' + esc(parts.filter(function(v,i,a){return v && a.indexOf(v)===i;}).join(', ')) + '</span></summary><div class="body"></div></details>';
 }
+function renderListSearch(){
+  var raw = state.q.trim(), Q = parseQ(raw), num = raw.replace(/^#/, '').trim().toLowerCase();
+  var hits = [];
+  LIST.forEach(function(sec){
+    if (state.topic!=='all' && state.topic!=='list:'+sec.n) return;
+    sec.items.forEach(function(it, ix){
+      var sc = null, ans = false;
+      if (it.id.toLowerCase() === num || idLabel(it.id).toLowerCase() === raw.toLowerCase()) sc = [-1, 0, 0, 0];
+      else if (Q) sc = titleScore(it.text, Q);
+      if (!sc && Q && state.inans) {
+        var txt = it.refs.map(function(r){ var x = BYID[r]; return x ? x.q + ' ' + stext(x) : ''; }).join(' ');
+        if (answerHit(txt, Q)) { sc = [5, 0, 0, 0]; ans = true; }
+      }
+      if (sc) hits.push({sec: sec, it: it, sc: sc, ans: ans, ord: sec.n * 10000 + ix});
+    });
+  });
+  hits.sort(function(a, b){ return cmpScore(a.sc, b.sc) || a.ord - b.ord; });
+  var tN = hits.filter(function(h){ return !h.ans; }).length;
+  var html = hits.length ? '<h2>Results for “' + esc(raw) + '”</h2>' + hits.map(function(h){
+    return listItemHTML(h.sec, h.it).replace('</span></summary>', '</span><span class="where">' + esc('Sec ' + h.sec.n) + '</span>' + (h.ans ? '<span class="inans">in answer</span>' : '') + '</summary>');
+  }).join('') : '<p class="count">No questions match “' + esc(raw) + '”.' + (state.inans ? '' : ' Try turning on “Also search answers”.') + '</p>';
+  document.getElementById('list').innerHTML = html;
+  document.getElementById('toc').innerHTML = '';
+  document.getElementById('count').textContent = searchCount(hits.length, tN, LISTN, 'questions in your list', countListAns(Q, hits));
+  wireDetails(document.getElementById('list'));
+}
+function countListAns(Q, hits){
+  if (state.inans || !Q) return 0;
+  var seen = {}; hits.forEach(function(h){ seen[h.it.id] = 1; }); var m = 0;
+  LIST.forEach(function(sec){ if (state.topic!=='all' && state.topic!=='list:'+sec.n) return; sec.items.forEach(function(it){ if (seen[it.id]) return; var txt = it.refs.map(function(r){ var x = BYID[r]; return x ? x.q + ' ' + stext(x) : ''; }).join(' '); if (answerHit(txt, Q)) m++; }); });
+  return m;
+}
+function searchCount(n, tN, of, what, more){
+  var s = n + (n === 1 ? ' result' : ' results') + ' of ' + of + ' ' + what;
+  if (state.inans) s += ' (' + tN + ' in question text, ' + (n - tN) + ' only in answers)';
+  else s += ', matching question text. Best matches first.' + (more ? ' ' + more + ' more mention it in answers: tick “Also search answers”.' : '');
+  return s;
+}
 function renderList(){
   var s = state.q.trim().toLowerCase();
+  if (s) { renderListSearch(); document.getElementById('callout').classList.remove('hidden'); document.getElementById('partsum').textContent = 'Every question from your list, numbered as in your file. Each one shows the answer that covers it, from any part.'; return; }
   var html = '', toc = '', n = 0;
   LIST.forEach(function(sec){
     if (state.topic!=='all' && state.topic!=='list:'+sec.n) return;
@@ -325,7 +398,6 @@ function filtered(){
     if (state.diff!=='all' && x.diff!==state.diff) return false;
     if (state.pics && !x.vis) return false;
     if (state.stories && !x.fu) return false;
-    if (s && stext(x).indexOf(s)<0) return false;
     return true;
   });
 }
@@ -334,6 +406,30 @@ function render(){
   document.querySelectorAll('.bankonly').forEach(function(e){ e.style.display = listMode ? 'none' : ''; });
   if (listMode) { renderList(); return; }
   var items = filtered();
+  var raw = state.q.trim(), Q = parseQ(raw);
+  if (Q) {
+    var hits = [], more = 0;
+    items.forEach(function(x){
+      var sc = titleScore(x.q, Q), ans = false;
+      if (!sc && answerHit(ntext(x), Q)) { if (state.inans) { sc = [5, 0, 0, 0]; ans = true; } else more++; }
+      if (sc) hits.push({x: x, sc: sc, ans: ans});
+    });
+    hits.sort(function(a, b){ return cmpScore(a.sc, b.sc) || a.x.pi - b.x.pi || a.x.n - b.x.n; });
+    var tN = hits.filter(function(h){ return !h.ans; }).length;
+    var TL = {}; topicsFor('all').forEach(function(g){ TL[g.part + ':' + g.t] = g.label; });
+    document.getElementById('list').innerHTML = hits.length ? '<h2>Results for “' + esc(raw) + '”</h2>' + hits.map(function(h){
+      var x = h.x;
+      return qHTML(x).replace('</span></summary>', '</span><span class="where" title="' + esc(TL[x.part + ':' + x.topic] || '') + '">' + esc('Part ' + x.part.slice(1)) + '</span>' + (h.ans ? '<span class="inans">in answer</span>' : '') + '</summary>');
+    }).join('') : '<p class="count">No questions match “' + esc(raw) + '”.' + (state.inans ? '' : ' Try turning on “Also search answers”.') + '</p>';
+    document.getElementById('toc').innerHTML = '';
+    var scope0 = state.part==='all' ? total : DATA[state.part].QS.length;
+    document.getElementById('count').textContent = searchCount(hits.length, tN, scope0, 'questions', more);
+    document.getElementById('callout').classList.toggle('hidden', state.part==='p1' || state.part==='p2');
+    var P0 = PARTS.filter(function(p){return p.key===state.part;})[0];
+    document.getElementById('partsum').textContent = P0 ? P0.sum : 'All ten parts in one list.';
+    wireDetails(document.getElementById('list'));
+    return;
+  }
   var groups = topicsFor(state.part);
   var html = '', toc = '';
   groups.forEach(function(g){
@@ -372,6 +468,7 @@ function buildDiff(){
 }
 document.getElementById('topic').onchange = function(e){ state.topic = e.target.value; render(); };
 document.getElementById('search').oninput = function(e){ state.q = e.target.value; render(); };
+document.getElementById('inans').onchange = function(e){ state.inans = e.target.checked; render(); };
 document.getElementById('pics').onchange = function(e){ state.pics = e.target.checked; render(); };
 document.getElementById('deep').onchange = function(e){ state.deep = e.target.checked; document.querySelectorAll('#list details.impress').forEach(function(d){ d.open = state.deep; }); };
 document.getElementById('stories').onchange = function(e){ state.stories = e.target.checked; render(); };
