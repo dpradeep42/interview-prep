@@ -1,0 +1,144 @@
++@p4-51
+Y: A dependency is anything a class needs to do its job, like a repository, an HTTP client, a logger, configuration or even the current time. If a class creates these itself, it's tightly tied to them and hard to test. With dependency injection, they're passed in, so I can swap them, for example a fake time provider in tests.
+K: dependency, di, coupling
++@p4-52
+Y: Inversion of control means the framework controls the flow and calls my code, instead of my code controlling everything. ASP.NET Core calls my middleware, controllers and services. An IoC container is the part that creates objects, injects their dependencies, and manages their lifetimes and disposal. The built-in .NET container does this for us.
+K: inversion of control, ioc, ioc container, di
++@p4-53
+Y: Constructor injection passes dependencies through the constructor, so required dependencies are obvious and the object is always fully ready. Property injection sets them through public properties after creation, which hides what's required and allows half-ready objects. The built-in .NET container supports constructor injection, and that's what I always use.
+K: constructor injection, property injection, di
++@p4-54
+Y: IServiceProvider is the interface of the built-in DI container. It's what actually resolves services, using GetService or GetRequiredService. The root provider is created when the app is built, and each request gets its own scoped provider. In normal code I don't use it directly, I just use constructor injection. I use it mainly in factories or when creating scopes.
+K: iserviceprovider, di container, getservice, resolve
++@p4-55
+Y: The rule is that a service should only depend on services that live as long or longer. A singleton can depend only on singletons. A scoped service can depend on scoped and singleton services. A transient can depend on anything. A singleton depending on a scoped service, like DbContext, is a captive dependency bug, and ASP.NET Core catches it in development with scope validation.
+K: di lifetimes, captive dependency, singleton, scoped, transient
++@p4-56
+Y: GetService returns null if the service isn't registered, so it's for optional services. GetRequiredService throws a clear exception naming the missing type, so it's for services that must exist. I prefer GetRequiredService, because a clear error at startup is much easier to fix than a NullReferenceException later.
+K: getservice, getrequiredservice, di, iserviceprovider
++@p4-57
+Y: When a request comes in, ASP.NET Core creates the controller through the DI container. The container looks at the constructor, picks the one with the most parameters it can satisfy, resolves each dependency, and their dependencies, in the request scope. Scoped services are shared within that request. At the end of the request, the scope disposes them.
+K: constructor injection, controller dependencies, di, request scope
++@p4-58
+Y: I can register several implementations of the same interface, then inject IEnumerable of that interface to get all of them, in registration order, which is good for things like a list of validators. If I need one specific implementation, I use keyed services from .NET 8 with the FromKeyedServices attribute, or a small factory. We use keyed services to pick an SFTP library per vendor.
+K: multiple implementations, keyed services, ienumerable, di
++@p4-59
+Y: Yes. I inject IServiceScopeFactory and call CreateScope, then resolve services from that scope and dispose it when done. I use it in singletons like background services, where there's no request scope, but I need scoped services like DbContext. For example, our SFTP poller creates a new scope for each polling run.
+K: iservicescopefactory, createscope, background service, scoped
++@p4-60
+Y: The service locator anti-pattern is when a class asks the container for its dependencies itself, by injecting IServiceProvider and calling GetService everywhere. It hides the real dependencies, so you can't see them in the constructor, and tests become harder. It's fine in factories or framework code, but in business classes I always use constructor injection.
+K: service locator, anti-pattern, di, iserviceprovider
++@p4-61
+Y: Because dependencies come through the constructor, I just create the class in the test and pass mocks or fakes, for example a mocked ISftpClient with Moq and a fake time provider. Then I test the behaviour, like which file was uploaded or which error was returned. For bigger tests, I use WebApplicationFactory and replace only the external services.
+K: unit testing, di, mocking, moq, testing
++@p4-62
+Y: Our vendor exchange service gets an SFTP client factory, its settings through IOptions, and a logger, all through the constructor. The factory returns the Rebex, SSH.NET or ComponentPro client based on each vendor's configuration. The service is scoped, the factory is a singleton, and the clients are created and disposed for each transfer.
+K: di example, real example, sftp, story
++@p4-63
+Y: Not everything should be singleton, because one shared instance must be thread-safe and must never hold per-request data, and it can't use scoped things like DbContext. Not everything should be transient either, because creating objects over and over wastes memory, and disposable transients can pile up. So I choose: singleton for stateless shared things, scoped for per-request, transient for light helpers.
+K: di lifetimes, singleton, transient, scoped, choosing lifetime
++@p4-64
+Y: When a request ends, the response is completed, and the request's DI scope is disposed, which disposes all scoped and transient services created in it, like DbContext, closing connections. If the client disconnected early, the request's cancellation token was already triggered, so well-written code stops work sooner. Then the HttpContext is released.
+K: request end, dispose, scope, request lifecycle
++@p4-65
+Y: The container disposes what it creates. Scoped services, and transients resolved in a scope, are disposed when the scope ends, usually at the end of the request. Singletons are disposed when the application shuts down. If I create an object myself and register the instance, the container won't dispose it, so I must. And disposable transients resolved from the root stay alive until shutdown, which is a leak.
+K: dispose, idisposable, di, scoped, singleton
++@p4-66
+Y: ASP.NET Core is Microsoft's modern, open-source and cross-platform framework for building web APIs, websites and real-time apps. It has built-in dependency injection, a middleware pipeline, configuration and logging, and it's one of the fastest web frameworks. It runs on Windows, Linux and in containers. All our IRT APIs are built on it.
+K: asp.net core, web framework, .net
++@p4-67
+Y: Kestrel is the built-in, cross-platform web server in ASP.NET Core. It's very fast and supports HTTP 1, 2 and 3. It can face the internet directly, but often sits behind a reverse proxy or load balancer like an ALB, Nginx or IIS, which handles TLS and routing. Our containers run Kestrel behind an ALB.
+K: kestrel, web server, reverse proxy, asp.net core
++@p4-68
+Y: Middleware runs in the order it's added, so wrong order causes real bugs. For example, if authorization is added before authentication, the user isn't known yet and every request fails. If the exception handler is added late, earlier errors aren't caught. And if CORS is added after the endpoints, preflight requests don't get the right headers and the browser blocks the call.
+K: middleware order, pipeline order, bugs, cors, authentication
++@p4-69
+Y: Use adds middleware that can do work and then call the next one. Run adds terminal middleware that ends the pipeline, so nothing after it runs. Map branches the pipeline based on the path, so requests to, say, /health go down a separate pipeline. For normal routes I use endpoint routing like MapGet or MapControllers.
+K: use, run, map, middleware, pipeline branching
++@p4-70
+Y: With endpoint routing, the routing middleware matches the request to an endpoint early and stores it on the HttpContext. So middleware in between, like CORS, authentication, authorization and rate limiting, can read the endpoint's metadata, such as the Authorize attribute or a rate limit policy. Then the endpoint itself runs at the end.
+K: endpoint routing, userouting, endpoints, metadata
++@p4-71
+Y: Since .NET 6, the separate Startup class and Program class were merged into one Program.cs using the minimal hosting model. Service registrations that were in ConfigureServices go on builder.Services, and the pipeline that was in Configure goes on the app object. Startup still works if you want it, but new projects don't use it.
+K: startup.cs, program.cs, minimal hosting, .net 6
++@p4-72
+Y: No, CORS is not a security feature for the API. It's a browser rule that relaxes the same-origin policy, telling the browser which other sites may read responses. Tools like Postman or a server can call the API regardless of CORS. So real security still comes from authentication and authorization. CORS only protects users in the browser.
+K: cors, security, same-origin policy, browser
++@p4-73
+Y: In development I use the dev certificate. In production, HTTPS is usually terminated at the load balancer, like our ALB, with a certificate from AWS Certificate Manager. In the app I add UseHttpsRedirection and HSTS, and configure forwarded headers so the app knows the original request was HTTPS. Traffic between services is also encrypted.
+K: https, tls, certificates, hsts, ssl
++@p4-74
+Y: Health checks are endpoints that report if the app and its dependencies are healthy. In ASP.NET Core I add AddHealthChecks with checks for things like the database and the message broker, and map them to endpoints. I keep a simple liveness endpoint and a readiness endpoint that checks dependencies. The load balancer and ECS use them to route traffic only to healthy instances.
+K: health checks, liveness, readiness, monitoring, load balancer
++@p4-75
+Y: When a container is stopped, it gets a SIGTERM signal. ASP.NET Core stops accepting new requests, lets current ones finish within the shutdown timeout, which is 30 seconds by default, and cancels the stopping token for background services. I make my background loops respect that token and finish or save their work. The load balancer also drains connections first.
+K: graceful shutdown, sigterm, shutdown timeout, stopping token
++@p4-76
+Y: I accept a CancellationToken in my async methods and pass it all the way down, to EF Core queries and HTTP calls. In APIs, ASP.NET Core gives a token that's cancelled if the client disconnects, so we stop wasting work. In background services I use the stopping token. I never ignore it, and I treat a cancellation exception as normal, not an error.
+K: cancellation token, cancellation, async, requestaborted
++@p4-77
+Y: PUT replaces the whole resource with what I send, so missing fields can be cleared, and it's idempotent. PATCH updates only the fields I send, which is better for small changes. For PATCH, I use JSON Merge Patch or JSON Patch. In our APIs, we use PATCH for things like updating only a shipment's status.
+K: put, patch, http verbs, rest, partial update
++@p4-78
+Y: 200 OK means the request succeeded and the result is in the body. 201 Created means a new resource was created, and the response should include a Location header pointing to it, usually with the created item. So for a POST that creates a shipment, I return 201 with the link to the new shipment.
+K: 200, 201, status codes, created, rest
++@p4-79
+Y: 400 Bad Request means the request itself is wrong, like invalid JSON or failed validation. 401 Unauthorized actually means not authenticated: no token, or an invalid or expired one. 403 Forbidden means we know who you are, but you're not allowed to do this. So a logged-in user trying to open another study's data gets 403.
+K: 400, 401, 403, status codes, unauthorized, forbidden
++@p4-80
+Y: 404 Not Found means the resource or route doesn't exist, like asking for a shipment id that isn't there. 405 Method Not Allowed means the route exists, but not for that HTTP method, like sending DELETE to an endpoint that only supports GET. ASP.NET Core returns 405 automatically in that case.
+K: 404, 405, status codes, not found, method not allowed
++@p4-81
+Y: 409 Conflict means the request conflicts with the current state, like creating a site number that already exists, or a concurrency conflict when someone else changed the record. 422 means the request is well-formed but breaks a business rule, like asking for more kits than the depot has. Both tell the client exactly what kind of problem to fix.
+K: 409, 422, status codes, conflict, validation
++@p4-82
+Y: 500 means something broke inside our service. 502 Bad Gateway means a proxy or load balancer got an invalid response from the service behind it, for example the container crashed. 503 Service Unavailable means the service is temporarily overloaded or in maintenance, ideally with a Retry-After header. When I troubleshoot, these tell me which layer to look at first.
+K: 500, 502, 503, status codes, server error
++@p4-83
+Y: A DTO, or data transfer object, is a simple class that defines exactly what the API sends or receives. It keeps the API contract separate from the database entities. So I can change the database without breaking clients, avoid exposing sensitive fields, and prevent over-posting. I use C# records for DTOs.
+K: dto, data transfer object, api contract, records
++@p4-84
+Y: Returning EF entities directly ties the API to the database design, so a schema change breaks clients. It can also leak sensitive or internal fields, create circular references when serializing, trigger lazy loading, and allow over-posting on input. In a clinical system, accidentally exposing an unblinding field would be serious, so we always map to DTOs.
+K: ef entities, dto, security, over-posting, api design
++@p4-85
+Y: A DTO carries data across a boundary, like an API request or response, and has no behaviour. A ViewModel is shaped for a specific screen in server-rendered MVC or Razor pages, and can include display-specific data. With a React front end, our APIs return DTOs, and the client shapes its own view state.
+K: dto, viewmodel, mvc, api
++@p4-86
+Y: The ApiController attribute turns on API-friendly behaviours: it automatically returns a 400 with validation errors when the model is invalid, infers where parameters come from, like body or route, requires attribute routing, and returns errors as ProblemDetails. It removes a lot of repetitive code from every action.
+K: apicontroller, attribute, model validation, problemdetails
++@p4-87
+Y: Routing maps an incoming URL and HTTP method to the code that handles it. Attribute routing puts the route on the controller or action, like Route api slash shipments, which is clear and flexible, and it's the standard for APIs. Conventional routing uses one central pattern, like controller slash action slash id, which is common in older MVC apps.
+K: routing, attribute routing, conventional routing, endpoints
++@p4-88
+Y: I accept filter and sort parameters in the query string, but only for a known list of fields, never raw SQL or any column name. I build the query step by step on IQueryable, adding Where clauses for each filter and an OrderBy for the sort, then apply paging. Everything runs in the database, and the most used filters have indexes.
+K: filtering, sorting, paging, iqueryable, query parameters
++@p4-89
+Y: OpenAPI is a standard way to describe an API: endpoints, parameters, request and response models and status codes. Swagger is the tooling around it, like the interactive Swagger UI. In .NET, I generate the document from the code, and since .NET 9 it's built in. We share it with front-end and vendor teams and generate clients from it.
+K: swagger, openapi, api documentation, swagger ui
++@p4-90
+Y: I secure an API in layers: HTTPS everywhere, authentication with JWT from our identity provider, authorization with policies and per-record checks, input validation, and DTOs so we don't leak data. Then rate limiting, secure headers, secrets in Secrets Manager, logging without sensitive data, and regular dependency and security scans.
+K: api security, authentication, authorization, jwt, owasp
++@p4-91
+Y: An access token is short-lived, maybe [15 minutes], and is sent with every API call to prove who you are. A refresh token lives longer and is used only to get a new access token from the identity provider, without logging in again. If an access token leaks, it expires soon, and refresh tokens can be revoked. That's how we fixed our logout issue.
+K: access token, refresh token, jwt, oauth, token lifetime
++@p4-92
+Y: Role-based authorization checks if the user is in a role, like Admin. Policy-based authorization is more flexible: a policy is a set of requirements, like a claim, a role, or custom logic, written in a handler. I register policies with AddAuthorization, then use them on endpoints. We use policies for things like checking the user has access to a specific study.
+K: role-based authorization, policy-based authorization, policies, authorization handler
++@p4-93
+Y: Over-posting is when a client sends extra fields, like isAdmin, and the server saves them because it binds directly to the entity. I prevent it by binding only to request DTOs that contain just the allowed fields, then mapping them to entities myself. I also have tests that send extra fields and check they're ignored.
+K: over-posting, mass assignment, dto, security
++@p4-94
+Y: First I set sensible size limits, in Kestrel and per endpoint, so huge requests are rejected early. For large data, I don't buffer everything in memory, I stream the request body. For really large files, the client uploads directly to S3 with a presigned URL, and the API only receives a reference. For big imports, I process them in the background.
+K: large payloads, request size limit, streaming, s3, upload
++@p4-95
+Y: For small files, I accept IFormFile with a size limit, check the extension and the actual content, and never trust the file name. I store files outside the web root, like S3, and scan them if needed. For large files, I use presigned S3 uploads or stream the multipart body. Our CSV import checks size, format and content before processing.
+K: file upload, iformfile, multipart, s3, validation
++@p4-96
+Y: A production-ready API needs clear contracts with DTOs and OpenAPI, validation and consistent ProblemDetails errors, and security with authentication, authorization and rate limits. It needs logging with correlation ids, metrics and health checks, resilience with timeouts and retries, and paging for lists. Plus startup checks for configuration, versioning, and automated tests in the pipeline.
+K: production ready api, api design, best practices, checklist
++@p4-97
+Y: Validation happens at several layers, each with its own job. The API checks the shape and format of the request. The service layer checks business rules, like a site must belong to an active depot. The database enforces constraints, like unique site numbers, as the final safety net. That way bad data is stopped as early as possible, but nothing slips through.
+K: validation, layers, business rules, constraints
++@p4-98
+Y: For requests that create something, I use an idempotency key: the client sends a unique key, and the server stores it with the result, so a repeated request returns the same result instead of creating a duplicate. I also add unique constraints in the database. Our CSV import uses a file hash to block importing the same file twice.
+K: duplicate requests, idempotency key, idempotency, unique constraint

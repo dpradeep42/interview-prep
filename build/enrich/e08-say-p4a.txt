@@ -1,0 +1,150 @@
++@p4-1
+Y: Roughly [70 percent] of my work is backend: .NET services, APIs, messaging, SQL and AWS. About [15 percent] is frontend, React components and Angular modules, and the other [15 percent] is release, DevOps and tooling, like the MCP server. So I call myself backend-first full-stack: I can deliver a feature end to end, but my real depth is APIs, data and distributed systems.
+K: backend vs frontend, work split, full stack, hr
++@p4-2
+Y: My strongest technology is C# with ASP.NET Core Web API, EF Core and SQL Server. I've used them every day for over four years on IRT, including upgrading our services to .NET 10 in [early 2026]. Close behind are messaging with RabbitMQ and Kafka, AWS deployments, CI/CD and release automation, and AI-assisted engineering with MCP.
+K: strongest technology, c#, .net, skills, hr
++@p4-3
+Y: Every day I use C# and .NET, ASP.NET Core, EF Core and SQL Server for features, and Git with Azure DevOps for pull requests and pipelines. I check CloudWatch and Grafana for monitoring, work with RabbitMQ and Kafka for events, and write tests with xUnit, Moq and Playwright. I also use Copilot and Cursor, along with our MCP server, for coding and deployments.
+K: daily technologies, tech stack, tools, hr
++@p4-4
+Y: The most challenging was the CIRT MCP server. Deployments on our on-premise Azure DevOps were across many nodes, took about 6 hours and needed about 6 people. I had to automate them safely, in a regulated product, on my own, without disturbing live releases. I mapped [about 30] manual steps, built about 77 tools step by step with approvals unchanged, and drove adoption. Deployments went to 2 hours and 1 person.
+K: challenging project, mcp, story, hr
++@p4-5
+Y: For our CSV bulk import, I had to choose between partial imports and all-or-nothing saves. I compared the GxP audit and rollback risk against the user experience. I proposed a validate-only preview first, followed by an all-or-nothing save, and agreed it with the BA and QA lead. It's live, users see every error before saving, and we never get half-configured studies.
+K: technical decision, csv import, trade-off, story
++@p4-6
+Y: Our vendor file transfers were tied to one SFTP library, ComponentPro, and in [2024] a vendor hardened their server and broke our connection. I put all transfers behind an ISftpClient interface, with a factory that picks the library per vendor from configuration, and added Rebex alongside the others. We moved vendors one at a time. No business code changed, and no transfers failed.
+K: system improvement, sftp, refactoring, story
++@p4-7
+Y: I'm looking for a senior backend or API engineer role on .NET, with AWS and event-driven systems, where I own the design and delivery of services. I'd like room to use AI-assisted engineering, build developer tools and mentor others, on a product with real scale and high quality standards. I'm not looking for a pure maintenance role.
+K: role expectations, job preference, hr
++@p4-8
+Y: I'm expecting bigger ownership of design decisions and production systems, and a strong engineering culture with code reviews, CI/CD, good monitoring and time to learn. I'd like a modern stack that is open to AI tools, honest blameless post-mortems, and a clear growth path to senior or lead.
+K: expectations, next organization, culture, hr
++@p4-9
+Y: My first job was in C# and .NET, and I stayed because it is great for enterprise backends. It has strong typing, excellent tooling, high performance, built-in async and dependency injection, and it runs cross-platform in containers. Microsoft's predictable long-term support releases also fit regulated products like ours very well.
+K: why .net, c#, technology choice, hr
++@p4-10
+Y: I didn't move away from backend, AI multiplies it. Our deployments took 6 people and 6 hours, and MCP let AI agents run those steps safely, so I built the CIRT MCP server. I use AI where it removes repetitive work, like deployments, tests and log triage, and I keep humans in charge of approvals and design decisions.
+K: why ai, ai motivation, mcp, hr
++@p4-11
+Y: I build backend services and APIs, but also React and TypeScript components and Angular modules in our UI, Playwright tests, and deployment pipelines. So I can take a feature from the database to the screen and into production. That said, my real depth is in the backend.
+K: full stack, frontend, backend, hr
++@p4-12
+Y: I'm strongest in C# and .NET backend work: ASP.NET Core, EF Core and SQL Server, along with distributed system basics like messaging, retries and idempotency. A close second is CI/CD and release automation, since I own release integration for our team.
+K: strongest technology, .net, skills, hr
++@p4-13
+Y: I'd say Java and Spring Boot. I've worked on services and I can read, fix and extend Spring code, but I'm much stronger in .NET. The concepts map almost one to one, so I'd ramp up quickly. I'm also lighter on Kubernetes cluster administration: I deploy to it, but platform teams run the clusters.
+K: weakest technology, weakness, java, spring boot, hr
++@p4-14
+Y: It depends on the team and the workload, but for a core business service, I'd choose ASP.NET Core on .NET 10, EF Core with SQL Server, containers on ECS, Terraform for infrastructure, and RabbitMQ or Kafka for events. For lightweight tools I might use Node with TypeScript, Python for data and scripts, and React for the UI.
+K: technology choice, new project, tech stack, architecture
++@p4-15
+Y: Without AI, my core strength is shipping reliable .NET backend services in a regulated environment. That covers APIs, data and messaging, solving production problems like the RabbitMQ outage, the slow SQL query and the SSO cookie issue, and owning releases through FV, UAT and production.
+K: core strength, without ai, backend, hr
++@p4-16
+Y: Some work was individual: I built the CIRT MCP server on my own, owned the SFTP component and the Rebex release, built the study transfer guard, and led several production investigations. Other work was team-based: our IRT microservices, the .NET upgrade where I owned [three] services, and the CSV import, which I built end to end with the BA and QA.
+K: individual vs team, contribution, ownership, hr
++@p4-17
+Y: The four main OOP principles are encapsulation, abstraction, inheritance and polymorphism. Encapsulation hides data behind methods, abstraction shows only what is needed, inheritance reuses behaviour from a base class, and polymorphism lets one interface have many implementations. In my SFTP component, all libraries implement one interface, which uses abstraction and polymorphism together.
+K: oop, object oriented programming, four pillars, principles
++@p4-18
+Y: Encapsulation means keeping an object's data private and allowing changes only through its methods, so the object protects its own rules. For example, a Shipment class doesn't let anyone set the status directly. It has methods like MarkDispatched that check the change is allowed. This keeps the data valid and makes the code safer to change.
+K: encapsulation, oop, private fields, data hiding
++@p4-19
+Y: Inheritance lets a class reuse and extend the behaviour of a base class, which is an "is-a" relationship. In C#, a class can inherit from only one class but implement many interfaces. I use it carefully, for real shared behaviour. For example, our SFTP providers inherit from a base class that has the common retry and logging logic.
+K: inheritance, oop, base class, derived class
++@p4-20
+Y: Polymorphism means one interface, many forms. The same method call behaves differently depending on the actual object. In C#, that's done with virtual and override, or with interfaces. For example, I call Upload on an ISftpClient, and depending on configuration it runs the Rebex, SSH.NET or ComponentPro version, without the calling code knowing which.
+K: polymorphism, oop, virtual, override, interfaces
++@p4-21
+Y: Abstraction means showing only what a user of a class needs and hiding the details. An interface like ISftpClient only exposes connect, upload and download, while each library deals with its own complex details inside. Callers work with the simple idea of a file transfer, which makes the code easier to use, test and change.
+K: abstraction, oop, interface, hiding complexity
++@p4-22
+Y: A class is the blueprint, it defines the properties and methods. An object is an actual instance created from that class at runtime, with its own data in memory. For example, Shipment is the class, and each shipment loaded from the database is a separate object.
+K: class, object, instance, oop
++@p4-23
+Y: Overloading means the same method name with different parameters in the same class, and the compiler picks the right one at compile time. Overriding means a derived class provides its own version of a virtual method from the base class, and the right one is chosen at runtime based on the actual object. So overloading is compile-time, overriding is runtime polymorphism.
+K: overloading, overriding, polymorphism, compile time, runtime
++@p4-24
+Y: The virtual keyword on a base class method says derived classes are allowed to replace it. The override keyword in the derived class actually replaces it. Then even if I call the method through a base class reference, the derived version runs. Without virtual, the method can't be overridden.
+K: virtual, override, polymorphism, inheritance
++@p4-25
+Y: Override replaces a virtual method, so the derived version runs even through a base reference. The new keyword hides the base method instead: if I call through a base reference, the base version runs, and through the derived reference, the new one runs. That's method hiding, and it is usually confusing, so I avoid it and treat that compiler warning as an error.
+K: new keyword, method hiding, override, inheritance
++@p4-26
+Y: A sealed class can't be inherited, which protects its design and can even let the runtime optimise calls. A sealed method is an override that stops further overriding in deeper classes. I seal classes by default when they aren't designed for inheritance, like most of our service classes.
+K: sealed class, sealed method, inheritance
++@p4-27
+Y: The stack stores method calls and their local variables, it's very fast and is cleared automatically when the method returns. The heap stores objects created with new, which live until the garbage collector removes them. Reference types live on the heap, while value types live wherever they are declared, so a local int is on the stack but an int field of a class is on the heap.
+K: stack, heap, memory, value types, reference types
++@p4-28
+Y: Boxing is when a value type, like an int, is wrapped into an object on the heap, for example when you put it into an object variable or an old non-generic collection. Unboxing is getting the value back with a cast. It costs memory and time, so in hot code I avoid it by using generics, like List of int instead of ArrayList.
+K: boxing, unboxing, value types, performance, generics
++@p4-29
+Y: IDisposable is for objects that hold resources the garbage collector doesn't manage, like files, database connections or streams, and its Dispose method releases them. The using statement calls Dispose automatically at the end of the block, even if there's an exception. The newer using declaration does the same at the end of the current scope, with less nesting.
+K: idisposable, using statement, using declaration, dispose, resources
++@p4-30
+Y: A const is fixed at compile time and copied into any code that uses it, so it's only for values that never change, like pi. A readonly field is set once, in the declaration or constructor, and can differ per object. A static readonly is set once for the whole class at runtime. I use static readonly for things like configuration defaults, because changing a const needs every caller recompiled.
+K: const, readonly, static readonly, constants
++@p4-31
+Y: These are ways to pass parameters by reference. ref means the variable must be set before the call and the method can change it. out means the method must set it, like in int.TryParse. in passes a read-only reference, which avoids copying large structs without letting the method change them.
+K: ref, out, in, parameters, by reference
++@p4-32
+Y: Nullable reference types, turned on with a project setting, make the compiler warn me when a reference might be null and I use it without checking. I mark things that can be null with a question mark, like string question mark. It catches many NullReferenceException bugs at compile time. All our newer projects have it enabled.
+K: nullable reference types, null safety, null reference exception
++@p4-33
+Y: Pattern matching lets me check the shape or type of a value and pull data out of it in one step, using is, switch expressions, property patterns and relational patterns. It makes branching code shorter and clearer. For example, I use a switch expression on shipment status to decide the next allowed status, and the compiler warns me if I miss a case.
+K: pattern matching, switch expression, is, c#
++@p4-34
+Y: An extension method is a static method that looks like a method on an existing type, by using the this keyword on its first parameter. All of LINQ is built this way. I use them for small helpers, like a ToPagedResult method on IQueryable, and for clean service registration, like AddSftpClients on IServiceCollection.
+K: extension methods, static, linq, helpers
++@p4-35
+Y: An enum is a set of named constants, backed by numbers, like ShipmentStatus with Created, Dispatched and Delivered. It makes code readable and type-safe compared with magic numbers. With the Flags attribute, values can be combined. I always validate enums coming from APIs, because any number can be cast into an enum.
+K: enum, constants, flags
++@p4-36
+Y: An async deadlock happens when code blocks on async work, like calling .Result or .Wait, in an environment with a synchronization context, such as old ASP.NET or a UI app. The blocked thread waits for the task, but the task needs that same thread to continue, so both wait forever. The fix is to use async all the way and never block on tasks.
+K: async deadlock, result, wait, synchronization context, async all the way
++@p4-37
+Y: ConfigureAwait false tells an await that it doesn't need to continue on the original synchronization context, so it can continue on any thread pool thread. It avoids deadlocks and is slightly faster. ASP.NET Core has no synchronization context, so in app code it doesn't matter, but in reusable libraries I still use ConfigureAwait false.
+K: configureawait, async, synchronization context, libraries
++@p4-38
+Y: LINQ is Language Integrated Query, a way to query collections and databases with C# methods like Where, Select, OrderBy and GroupBy. It works on in-memory collections and, through EF Core, gets translated into SQL. It makes data code short and readable. I use it every day, being careful about what runs in the database and what runs in memory.
+K: linq, query, where, select, ef core
++@p4-39
+Y: IEnumerable only lets you loop over items. ICollection adds Count, Add and Remove. IList adds access by index, like item number five. So each one adds more abilities. For method parameters, I accept the simplest one I need, often IEnumerable or IReadOnlyCollection, which keeps the method flexible.
+K: ienumerable, icollection, ilist, collections, interfaces
++@p4-40
+Y: First returns the first match and throws if there's none, while FirstOrDefault returns null or default instead. Single expects exactly one match and throws if there are none or more than one, and SingleOrDefault allows zero but still throws for more than one. I use Single when duplicates would be a bug, like finding by a unique code, and FirstOrDefault when nothing found is normal.
+K: first, firstordefault, single, singleordefault, linq
++@p4-41
+Y: Any stops as soon as it finds one item, so it's the right way to check if something exists. Count goes through everything to count it, unless the collection already knows its count. In EF Core, Any becomes an EXISTS query, which is much cheaper than SELECT COUNT. So I use Any for existence checks.
+K: any, count, linq, exists, performance
++@p4-42
+Y: A closure is a lambda or function that captures variables from the surrounding code and keeps using them later. C# does this by moving those variables into a hidden class. A classic bug is capturing a loop variable in old for loops and all lambdas seeing the last value. I also watch for closures accidentally keeping large objects alive.
+K: closure, lambda, captured variables
++@p4-43
+Y: Liskov says a derived class must work anywhere the base class is expected, without surprises. The classic violation is a Square inheriting from Rectangle, where setting width also changes height. In my SFTP component, every provider passes the same contract tests for upload, list, overwrite and errors, so any library can replace another safely.
+K: liskov substitution principle, lsp, solid
++@p4-44
+Y: Interface segregation says don't force classes to depend on methods they don't use, so prefer small, focused interfaces over one big one. For example, a report service that only reads shipments should depend on a reader interface, not a full repository with update and delete. Microsoft does the same with IReadOnlyList separate from IList.
+K: interface segregation principle, isp, solid
++@p4-45
+Y: Dependency inversion means high-level business code depends on abstractions, not on concrete classes. Without it, our vendor exchange service would create the Rebex client directly, so changing libraries means editing business code. With it, the service depends on ISftpClient, and the infrastructure layer provides the implementation through dependency injection. Changing the library becomes a configuration change.
+K: dependency inversion principle, dip, solid, abstractions
++@p4-46
+Y: I chose an interface because I needed several interchangeable implementations, Rebex, SSH.NET and ComponentPro, behind one contract, and I wanted to mock it in unit tests. Interfaces also let me add decorators like retry and logging without changing the implementations. Where they shared a lot of code, I used an abstract base class as well.
+K: interface, design decision, abstraction, testing
++@p4-47
+Y: I avoid inheritance when the relationship isn't really "is-a", or when I just want to reuse some code. Deep hierarchies become fragile, because changing a base class can break everything below it. I prefer composition. For example, I wrap any SFTP client in a retry decorator, instead of making a retrying subclass for each library.
+K: composition over inheritance, inheritance, design
++@p4-48
+Y: Garbage collection pauses or slows the app while it cleans up, so lots of allocations mean more frequent collections and higher latency. Generation 2 and large object collections are the expensive ones. So in hot paths, I reduce allocations with things like Span, pooling and avoiding unnecessary LINQ. For servers, .NET uses server GC, which is tuned for throughput.
+K: garbage collection, gc, performance, allocations, latency
++@p4-49
+Y: The exception doesn't crash immediately, it's stored inside the returned Task. When I await the task, the exception is thrown again at that point, so normal try-catch works around the await. If nobody awaits the task, the exception can be lost. And with async void, it can crash the process, so I only use async void for event handlers.
+K: async exception, task, await, async void, error handling
++@p4-50
+Y: Dependency injection means a class receives the objects it needs, usually through its constructor, instead of creating them itself. ASP.NET Core has a built-in container that creates and injects them. It makes code loosely coupled and easy to test, because in tests I can pass mocks. For example, our vendor exchange service gets its SFTP client factory and logger injected.
+K: dependency injection, di, ioc, constructor injection, loose coupling
