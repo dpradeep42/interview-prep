@@ -1,0 +1,198 @@
++@p8-1
+Y: Before MCP, every AI app had to build its own custom integration for every tool or data source, which doesn't scale. MCP, the Model Context Protocol, is an open standard introduced by Anthropic in late 2024 that standardises how AI apps discover and call tools. So one MCP server works with many AI apps. In December 2025 it was donated to the Linux Foundation, and it now has broad industry support.
+K: mcp, model context protocol, why mcp, ai integration
++@p8-2
+Y: An MCP host, like Cursor or Claude, contains an MCP client, which connects to an MCP server. First they agree on capabilities, then the client asks the server for its list of tools, each with a name, description and input schema. When the AI decides to use a tool, the client sends a call with the arguments, and the server runs it and returns the result. Ours runs locally over standard input and output.
+K: mcp architecture, mcp server, mcp client, tools, stdio
++@p8-3
+Y: A REST API is designed for programs written by developers. MCP is designed for AI agents: tools come with descriptions the model can read, discovery is automatic, and the same server works in any MCP app. Instead of giving the AI every raw endpoint, I expose a smaller set of task-focused tools, like deploy release to UAT, with safety checks built in. Behind the scenes, my server still calls the Azure DevOps REST APIs.
+K: mcp vs rest, api, ai agents, tool design
++@p8-4
+Y: The client calls the server's list-tools method and gets each tool's name, description and input schema. The host passes these to the model as available functions. The model reads the user's request and the descriptions, and picks the best tool and arguments. That's why clear names and descriptions matter so much, and with about 77 tools, I made sure they don't overlap.
+K: tool discovery, tool selection, mcp, agent
++@p8-5
+Y: Each tool's parameters are defined with a JSON schema: names, types, which are required, and allowed values. In the C# SDK, I just write a method with attributes and descriptions, and the schema is generated automatically. The server returns results as content, and I keep them short and structured: a summary, ids, status and next steps, so the AI can use them reliably.
+K: tool parameters, json schema, mcp, tool response
++@p8-6
+Y: I return tool errors as clear results the AI can understand, not crashes, with what went wrong and what to do next, like this release is waiting for approval, please ask the approver. I never put secrets or internal details in error messages. The full error is logged on the server side with a correlation id, so I can investigate.
+K: tool errors, error handling, mcp
++@p8-7
+Y: The server uses each user's own Azure DevOps token, so the agent can never do more than that person is allowed to. Most tools are read-only. Write tools need explicit confirmation, and environment names are checked against an allow-list. Production approvals stay with named humans in Azure DevOps, and there are no destructive tools at all.
+K: unauthorized deployments, security, approvals, mcp safety
++@p8-8
+Y: I never trust what the model sends just because it matches the schema. The server validates every input in code: the environment must be on the allow-list, the version must have the right format, and the release or build must actually exist. If something is wrong, it rejects it with a clear message listing the valid values.
+K: input validation, ai parameters, mcp, validation
++@p8-9
+Y: Our server runs locally on each engineer's machine, and authenticates to Azure DevOps with that person's own personal access token from their credential store. So authorization is Azure DevOps permissions, plus extra rules in the server, like the environment allow-list. For a shared HTTP version, the MCP spec uses OAuth, which is what I'd use.
+K: mcp authentication, authorization, pat, oauth
++@p8-10
+Y: Every tool call is logged as structured data: who called it, which tool, the parameters with secrets removed, the result and how long it took, with a correlation id. And Azure DevOps keeps its own history of every build, release and approval, which remains the official record. That's important for GxP traceability.
+K: audit, ai usage, logging, traceability, mcp
++@p8-11
+Y: Secrets never go into prompts, tool outputs, logs or config files in Git. Each user's personal access token is stored in their operating system's credential store or an environment variable, with the smallest scope needed, only build and release, and an expiry date. Tools never return credentials, even if asked.
+K: secrets, mcp security, pat, credentials
++@p8-12
+Y: I used C# and .NET with the official C# MCP SDK, calling the Azure DevOps Server REST APIs, and packaged it as a .NET global tool. The team already knew .NET, our deployment code is .NET, and the SDK gives dependency injection, logging and configuration out of the box. Installing it is one command.
+K: mcp technology, c# mcp sdk, .net, design decision
++@p8-13
+Y: The about 77 tools are grouped by job. Builds, about 15, like queue a build, check status and get logs. Releases, about 20, like create a release and check pending approvals. Deployments and nodes, about 25, like deploy to an environment and check each node. And diagnostics, about 17, like health checks, versions per node and log summaries. Read-only tools came first, and write tools are clearly named and need confirmation.
+K: 77 tools, tool categories, mcp, tool groups
++@p8-14
+Y: The server calls the on-premise Azure DevOps Server REST APIs with the user's token. For a build, it queues the build definition for a branch and returns the build id, which a status tool polls. For a release, it creates a release from the release definition and artifact version, then starts the deployment to an environment. Pending approvals stay with humans.
+K: azure devops, builds, releases, rest api, mcp
++@p8-15
+Y: A deploy tool starts the release stage for an environment, and that stage runs our Ansible, Python and Shell install scripts across [4 to 6] nodes. Status tools poll each node's steps and return a table showing pending, running, succeeded or failed per node. At the end, a version check confirms every node runs the same version.
+K: multi-node deployment, nodes, mcp, ansible
++@p8-16
+Y: When something fails, the status tool shows which node and step failed with the key log lines summarised. The agent suggests options, and after the user confirms, a retry-node tool reruns only that node. For rollback, we redeploy the previous approved release through the same tools, and our database scripts are backward compatible, so the old version works on the new schema.
+K: deployment failure, rollback, retry node, mcp
++@p8-17
+Y: Before, one person from each area, like release, database, application nodes, UI, monitoring and verification, joined a long call to run and check their own steps by hand. Now the tools run each step, poll status and verify versions across nodes, so one engineer drives the deployment, and others join only if something fails. It was possible because the steps were repeatable.
+K: 6 people to 1, automation, impact, mcp
++@p8-18
+Y: We automated queuing builds, creating releases, starting deployments, polling each node, checking versions across nodes, summarising logs and smoke checks. What stays manual is approvals for controlled environments, change requests, FV and UAT validation, and decisions when something fails. Keeping those clear human steps is why it was accepted in our GxP environment.
+K: automated vs manual, human in the loop, mcp, gxp
++@p8-19
+Y: The biggest challenge was giving an AI agent the power to deploy, without giving it more power than the person using it. I solved it with each user's own token instead of a shared account, allow-listed environments, confirmation on write tools, no destructive tools at all, the existing Azure DevOps approvals, and an audit log of every call.
+K: security challenge, mcp security, least privilege
++@p8-20
+Y: I'd reduce the number of tools by combining common steps into fewer composite tools, since 77 is a lot for the model to choose from. I'd make all outputs structured, move to a shared HTTP version with OAuth and central audit logs, add automated tests that check the AI picks the right tool, and build dashboards on usage and failures.
+K: improvements, mcp, future work
++@p8-21
+Y: Today it runs locally for each engineer. For a shared version, I'd run it as a stateless HTTP service with several instances across availability zones behind a load balancer, with health checks. Sessions would need sticky routing or shared state, plus rate limiting per user and central logging.
+K: mcp scaling, high availability, http transport
++@p8-22
+Y: I'd unit test each tool's validation and output, and run integration tests against a test Azure DevOps project. MCP Inspector is useful for manually checking tools. I'd also run evaluations that check the AI picks the right tool for sample requests whenever descriptions change. For monitoring, I'd track calls, failures and latency per tool.
+K: mcp testing, mcp monitoring, mcp inspector, evals
++@p8-23
+Y: I treat everything the AI reads, like logs and tool outputs, as data, not instructions. Write actions need user confirmation, and environments are allow-listed. The agent uses the user's own limited permissions, so even if it's tricked, the damage is limited. And I avoid combining private data, untrusted content and the ability to send data out in one agent.
+K: prompt injection, tool misuse, ai security
++@p8-24
+Y: If it picks a read-only tool by mistake, nothing bad happens, it just gets the wrong information. If it picks a write tool, the confirmation step shows exactly what will happen, so the user catches it. Input validation also rejects wrong parameters. And I log wrong picks to improve the tool names and descriptions.
+K: wrong tool, tool selection, safety, mcp
++@p8-25
+Y: Approvals stay in Azure DevOps with named approvers, exactly as before. The agent can't approve anything, it can only check whether an approval is pending and tell the user who needs to approve. Approver, time and change request are recorded by Azure DevOps. This keeps separation of duties for GxP.
+K: human approval, production, approvals, gxp
++@p8-26
+Y: Tool calling, or function calling, is when the model replies with a structured request, a tool name and JSON arguments, which my application then runs and sends the result back. Function calling is the vendor API feature for this. MCP is an open protocol on top, so tools work across any app. Plugins were earlier, platform-specific ways to package tools.
+K: function calling, tool calling, plugins, mcp
++@p8-27
+Y: Agentic AI means the AI works toward a goal by itself in a loop: it plans, uses tools, checks the results and decides the next step. A chatbot mainly answers questions in a conversation. Our deployment agent is agentic: it queues builds, deploys, polls status and summarises failures, with humans confirming key steps.
+K: agentic ai, agent vs chatbot, ai agents
++@p8-28
+Y: Multi-agent architecture means several specialised agents, like a planner, a coder and a reviewer, pass work between them, coordinated by an orchestrator with limits on steps and permissions. I used AutoGen in an [experiment] where a coder agent and a reviewer agent drafted unit tests. For production work, I keep a single agent with tools, because it's more predictable.
+K: multi-agent, autogen, agents, story
++@p8-29
+Y: RAG adds current, private knowledge at question time, with citations, while fine-tuning changes the model's behaviour or style and needs training data and retraining. For facts that change, like runbooks, RAG is better. To build it, I split documents into chunks, store their embeddings in a vector store, retrieve the most relevant chunks for each question, and give them to the model to answer with citations.
+K: rag vs fine-tuning, rag, embeddings, vector store
++@p8-30
+Y: I build an evaluation set of real questions with expected answers, like the [30] questions for our runbook assistant, and run it on every prompt or model change. I check correctness, whether the answer is supported by the sources, and whether it refuses when it doesn't know. I use automated scoring plus human spot checks.
+K: llm evaluation, evals, quality, testing ai
++@p8-31
+Y: I use enterprise endpoints, like Azure OpenAI in our own tenant, where prompts aren't used for training, and I keep patient data out of prompts. I treat model output as untrusted, validate it before acting, enforce permissions in the tools, not the prompt, and log prompts and tool calls for audit.
+K: llm security, sensitive data, enterprise ai, data privacy
++@p8-32
+Y: Azure OpenAI runs inside our company's Azure tenant with enterprise security and compliance, so it's our first choice for features built into company products. Claude is very strong at coding and agent work, so we use it in developer tools like Claude Code, through enterprise agreements. Using both lets us pick the best model for each job.
+K: azure openai, claude, model choice, llm
++@p8-33
+Y: AI code can contain insecure patterns, like SQL built from strings or missing authorization, made-up packages, licence issues, and subtle bugs. I prevent it by reviewing AI code exactly like human code, running tests, SonarQube and dependency scans in the pipeline, and making each developer responsible for every line they commit.
+K: ai generated code risks, security, code review
++@p8-34
+Y: I'd give the agent only the user's own permissions, keep production tools separate with explicit confirmation, and validate the environment against an allow-list, never guessing it. Production approvals stay with humans in Azure DevOps. A dry-run mode shows what would happen first. And every action is logged.
+K: ai deployment agent security, production safety, approvals
++@p8-35
+Y: I'd use the platform's existing approval gates, like Azure DevOps release approvals, rather than building a separate system. The agent can only request a deployment and check approval status, never approve. Each approval records the approver, the time and the change request reference.
+K: approval workflows, approvals, azure devops
++@p8-36
+Y: I'd log every tool call as structured data: the user, tool, parameters with secrets removed, result, duration and a correlation id, in a central, append-only store. The platform, like Azure DevOps, remains the official record of builds, releases and approvals. Together they show exactly what the agent did and who asked.
+K: audit trail, ai agent, logging
++@p8-37
+Y: Tools return clear, structured errors with suggested next steps, so the agent reports the problem instead of guessing. Only safe steps, like status checks or retrying a single node, are retried, and never a blind redeploy of everything. The user decides what to do next, and the failure is logged.
+K: failed agent actions, error handling, retries
++@p8-38
+Y: The environment is always an explicit parameter, checked against an allow-list, never guessed by the AI. Each environment has its own settings, and the rules get stricter as we move toward production, with more confirmations and human approvals for controlled environments.
+K: multiple environments, agent design, environments
++@p8-39
+Y: The agent acts with the user's own identity and permissions, never a shared super-user account. Tools are grouped by risk and checked against the user's role. And no tool can change permissions or approvals, so the agent can't be used to escalate privileges.
+K: rbac, ai agents, privilege escalation, permissions
++@p8-40
+Y: Secrets stay in the operating system's credential store or a vault, never in prompts, tool outputs or logs. I use short-lived, least-privilege tokens with expiry and rotation. The agent never sees the secret value, only the server uses it to call the API.
+K: secrets, ai agent, credentials, vault
++@p8-41
+Y: I classify tools by risk: read-only, write, and destructive. Read tools run freely, write tools need confirmation, and destructive actions need human approval or aren't offered at all. Before running anything, deterministic checks validate the environment, version and that the target exists.
+K: ai safety, action safety, risk classification
++@p8-42
+Y: I'd use a few specialised agents, like a planner, a coder and a reviewer, each with only the tools it needs, and a coordinator that passes work between them. I'd add limits on steps and cost, and clear stopping conditions. Our [AutoGen experiment] used a coder and a reviewer agent to draft unit tests.
+K: multi-agent architecture, design, autogen
++@p8-43
+Y: OAuth 2.0 is about authorization: it lets an app get an access token to call an API on the user's behalf, without the user's password. OpenID Connect is built on top and adds authentication: an ID token that tells the app who the user is. For browser apps, I use the authorization code flow with PKCE.
+K: oauth, openid connect, oidc, authorization, authentication
++@p8-44
+Y: SSO, single sign-on, lets a user log in once and access many applications. The app redirects the user to the identity provider, the user signs in there, and the provider sends back a token that the app trusts. Other apps trust the same provider, so no new login is needed. Our SSO cookie fix came from storing too many claims in that cookie.
+K: sso, single sign-on, identity provider, oidc, saml
++@p8-45
+Y: SQL injection is when user input is put directly into a SQL query, so an attacker can change the query, for example to read or delete data. I prevent it by always using parameterized queries. EF Core and Dapper do this by default, and with raw SQL I use interpolated or explicit parameters, never string concatenation.
+K: sql injection, security, parameterized queries, owasp
++@p8-46
+Y: HttpOnly stops JavaScript from reading the cookie, which protects it from XSS. Secure means it's only sent over HTTPS. SameSite controls whether the cookie is sent with requests from other sites: Lax or Strict help prevent CSRF, and None requires Secure. For auth cookies, I set all three properly.
+K: secure cookies, httponly, secure, samesite, cookie security
++@p8-47
+Y: I authenticate every request, at the gateway and in each service, and authorize with policies and per-record checks. Traffic is encrypted with TLS, inputs are validated, and rate limiting protects against abuse. Services talk using their own identities with least privilege, and secrets are in a vault.
+K: api security, microservices security, zero trust
++@p8-48
+Y: I use IAM roles with least privilege, keep services and databases in private subnets with tight security groups, and encrypt data at rest with KMS and in transit with TLS. CloudTrail and GuardDuty monitor activity, and all infrastructure changes go through code and review.
+K: aws security, iam, encryption, cloudtrail, guardduty
++@p8-49
+Y: The pipeline scans dependencies on every build, using tools like dotnet list package vulnerable, npm audit, or Dependabot, and fails the build on serious issues. I also scan container images. We update packages regularly, and central package management made it easy to update the same package across all projects.
+K: dependency scanning, vulnerabilities, npm audit, dependabot
++@p8-50
+Y: First I assess how serious and exploitable it is. Then I reduce the risk quickly, for example with a configuration change or a WAF rule, and release a proper fix through an emergency change, still documented. Afterwards I find the root cause and add a test or scan rule so it doesn't come back.
+K: security vulnerability, production, incident response
++@p8-51
+Y: I'd keep the API stateless behind a load balancer so I can add instances, with autoscaling. I'd add caching for hot reads, pagination for lists, async processing for heavy work, and rate limits. For the database, indexes first, then read replicas, and partitioning if needed. And I'd monitor p95 latency and errors.
+K: scalable api, high volume, system design
++@p8-52
+Y: The service takes a long URL and returns a short code, like a base62 version of a unique id, and stores the mapping in a database. When someone opens the short link, it looks up the code and redirects, using a cache like Redis for popular links. I'd add expiry, abuse protection, and click analytics if needed.
+K: url shortener, system design, base62, redis
++@p8-53
+Y: Other services publish a notification request to a queue. Workers for each channel, like email, SMS and push, pick it up, apply templates and the user's preferences, and send through providers. Failed sends are retried with backoff and then go to a dead-letter queue. An idempotency key prevents duplicate messages.
+K: notification service, system design, queues, email, sms
++@p8-54
+Y: I'd model the order as a state machine with clear allowed transitions, like created, paid, shipped and delivered. Placing an order reserves stock and takes payment through a saga, with compensating actions if a step fails. Events are published through an outbox, and APIs use idempotency keys so retries don't create duplicate orders.
+K: order management, system design, saga, state machine
++@p8-55
+Y: The client asks the API for a presigned S3 URL and uploads directly to S3, so large files don't go through our servers. An S3 event then triggers processing, like virus scanning and extracting metadata. I'd use multipart upload for big files, size limits, and store file details in a database with access control.
+K: file upload service, system design, s3, presigned url
++@p8-56
+Y: Jobs go into a queue, and a pool of workers picks them up. Each job is idempotent, so retries are safe, failed jobs are retried with backoff and then sent to a dead-letter queue. I track each job's status in a database so users can see progress, and scale the workers based on the queue length.
+K: job processing, distributed jobs, workers, queues, system design
++@p8-57
+Y: Every payment request carries an idempotency key, so a retry never charges twice. I'd keep a ledger with double-entry records and reconcile it with the payment provider daily. Card data is never stored by us, we use a PCI-compliant provider with tokens. Payment status updates come through provider webhooks.
+K: payment system, system design, idempotency, ledger
++@p8-58
+Y: Clients connect with WebSockets, using SignalR in .NET, for live messages. Messages are stored per conversation with an ordering id, and delivered to online users instantly, while offline users get a push notification and fetch messages later. To scale across servers, I'd use a backplane like Redis.
+K: chat system, messaging, system design, websockets, signalr
++@p8-59
+Y: Services publish events when something important happens, and other services react to them. Events are versioned contracts with schemas, published reliably through an outbox, and consumers are idempotent. For simple flows, services react on their own, and for longer business processes, an orchestrator saga gives better visibility.
+K: event-driven, microservices, system design, events, outbox
++@p8-60
+Y: I wouldn't build my own, I'd use a proven identity provider with OpenID Connect. Apps use short-lived access tokens with refresh token rotation, and MFA for users. For logout or revocation, a denylist of token ids in Redis works, like our fix with [15-minute] tokens and about [1 millisecond] checks.
+K: authentication system, system design, oidc, tokens
++@p8-61
+Y: I'd use cache-aside with expiry times, spread keys across nodes with consistent hashing, and invalidate entries when data changes. To avoid a stampede, where many requests rebuild the same entry at once, I'd use request coalescing, which HybridCache in .NET does for us. Redis cluster is the usual choice.
+K: distributed cache, caching, redis, system design
++@p8-62
+Y: Users and vendors come in through a gateway with SSO. Behind it are services for study setup, randomization, supply, shipments and subjects, each with its own SQL Server database and audit tables. Kafka and RabbitMQ carry events and work queues, vendor integrations use SFTP and APIs, everything runs on ECS across availability zones, and GxP controls like validation and audit trails apply throughout.
+K: clinical trial platform, irt design, system design, architecture
++@p8-63
+Y: I'd scale services horizontally since they're stateless, cache reference data, and move heavy work to queues. For the database, first tune queries and indexes, then add read replicas for reporting, and finally partition data, for example by study, if one database can't keep up.
+K: scaling, database scaling, read replicas, partitioning
++@p8-64
+Y: I'd use caching for reference data and permissions, in Redis. Kafka for shipment status events that many services consume and we may need to replay. RabbitMQ for task-style work like notifications and reports, with retries per message. And synchronous APIs for user-facing reads and commands that need an immediate answer, like randomizing a patient.
+K: caching, kafka, rabbitmq, synchronous apis, design choices
++@p8-65
+Y: I'd use timeouts on every call, retries with backoff for temporary errors, circuit breakers, dead-letter queues and the outbox pattern so nothing is lost. Each failure is visible through alerts, with runbooks so the on-call person knows what to do.
+K: failure handling, resilience, outbox, dlq
++@p8-66
+Y: To monitor, I'd use metrics, logs and traces with correlation ids, and alerts based on service level objectives. To secure it, SSO for users, role-based access, encryption everywhere, audit trails for all regulated data, and least-privilege IAM roles for the services.
+K: monitoring, security, observability, system design
