@@ -1,0 +1,265 @@
+@p2-54
+Q: The Model Context Protocol is an open standard (introduced by Anthropic in late 2024, now widely adopted) that lets AI applications connect to external tools and data in a uniform way. An MCP server exposes tools (actions), resources (readable data) and prompts over JSON-RPC 2.0; any MCP host such as Cursor, Claude, VS Code Copilot or ChatGPT can discover and call them, so one integration works with many AI clients.
+- Transports: stdio for local servers launched by the host, and Streamable HTTP for remote servers (it replaced the older HTTP+SSE transport).
+- Lifecycle: initialize handshake with capability negotiation, then tools/list and tools/call.
+- Tools have a name, description and JSON Schema input; results are content blocks, optionally structured output.
+- Remote servers use OAuth 2.1 based authorization in the spec.
+- Official SDKs exist for C#/.NET (ModelContextProtocol package), TypeScript, Python and more.
+- Analogy: "USB-C for AI tools": the host is the laptop, servers are peripherals.
+```csharp
+[McpServerToolType]
+public static class BuildTools
+{
+    [McpServerTool, Description("Get the status of an Azure DevOps build by id.")]
+    public static async Task<BuildStatus> GetBuildStatus(AdoClient ado, [Description("Build id")] int buildId)
+        => await ado.GetBuildStatusAsync(buildId);
+}
+```
+? MCP vs function calling? :: Function calling is a model feature inside one app; MCP standardises how tools are packaged and discovered across apps.
+? Tools vs resources? :: Tools perform actions with side effects; resources are data the host can read into context.
+
+@p2-55
+Q: The CIRT MCP server lets AI agents run build, release and multi-node deployment operations on our on-prem Azure DevOps Server. About 77 tools are grouped by domain (builds, releases, approvals, multi-node deployments, artifacts, environment checks, logs), each with a precise name, description and typed schema, wrapping the Azure DevOps REST APIs with the caller's own permissions; it cut deployment time from 6 hours to 2 and people per deployment from 6 to 1.
+- Naming convention verb_noun by domain (queue_build, get_release_status, deploy_release_stage) so the model picks correctly.
+- Descriptions say when to use the tool and what it returns; parameters have enums and examples [for environments FV, TechOps, UAT, Prod].
+- Outputs are short structured summaries (status, failing step, link), not raw JSON dumps, to save context.
+- Long operations return an id and a status tool to poll, avoiding timeouts.
+- Composite tools [for "deploy to environment and verify versions on all nodes"] reduce many-step mistakes.
+- Built in [C# with the official MCP SDK over stdio], packaged so teammates install with one command.
+W: I spot a manual, error-prone process and automate it end to end.
+W: I design tools for both the AI and the humans who must trust it.
+? Why so many tools instead of a few generic ones? :: Specific tools with tight schemas are easier for the model to use correctly and easier to secure than one "run any API call" tool.
+? How did you test it? :: Unit tests for each tool's validation and mapping, plus dry runs against non-production environments before UAT.
+
+@p2-56
+Q: I make it safe through least privilege (each user's own Azure DevOps credentials, no shared admin token), separating read-only from write tools, requiring explicit confirmation and keeping human approval gates for production, validating every input against schemas and allow-lists, adding timeouts and idempotency, logging every tool call, and never returning secrets.
+- Prompt injection risk: logs or work items can contain text that tries to instruct the agent, so tools treat outputs as data and sensitive actions always need confirmation.
+- Allow-lists for environments, pipelines and nodes; reject anything else.
+- Dry-run modes show what would happen first.
+- Rate limits and concurrency limits avoid accidental floods (one deployment per environment at a time).
+- Audit log: who, which tool, which parameters, result, timestamp; supports GxP traceability.
+- MCP hosts also ask the user to approve tool calls; we do not rely on that alone.
+? What is the confused deputy problem here? :: A server with broad rights doing things on behalf of a user who should not have them; using the caller's own token avoids it.
+? Could the agent deploy to production by mistake? :: No; production stages still require Azure DevOps approvals by authorised people.
+
+@p2-57
+Q: A good tool definition has a clear, unique, action-oriented name; a description saying what it does, when to use it (and when not), and what it returns; a small, strongly typed input schema with enums, defaults and examples; concise, structured output with actionable error messages; and predictable, safe behaviour (idempotent where possible).
+- Fewer, well-scoped tools beat many overlapping ones; overlapping tools confuse models.
+- Errors should tell the agent what to do next ("Release 123 is waiting for approval by QA").
+- Keep outputs small: summaries and ids, with separate tools for details.
+- Annotations like readOnlyHint and destructiveHint in MCP help hosts decide on confirmation.
+- Test with real prompts and watch which tool the model chooses.
+? What is the most common mistake? :: Vague descriptions and huge raw outputs that waste context and lead to wrong tool choices.
+? How do you version tools? :: Add new tools or optional parameters rather than changing behaviour of existing ones.
+
+@p2-58
+Q: I use Copilot inline completions for boilerplate, mappings and tests, and Cursor chat and agent mode for explaining unfamiliar code, multi-file refactors, upgrade chores and drafting SQL, YAML and scripts, guided by project rules for our conventions. I always review, build and test the output, because I own every line I commit.
+- Cursor rules files hold our coding standards and architecture notes so suggestions match the codebase.
+- MCP servers (including ours) let the agent check builds and deployments from the editor.
+- Good uses: test generation, regex and LINQ drafts, log summarisation, migration scaffolding, PR descriptions.
+- Avoid pasting secrets or patient data; use company-approved tools and settings.
+- Example: the [.NET 10 upgrade] used agent mode for repetitive package and API changes, reviewed file by file.
+? Has AI ever produced wrong code for you? :: Yes, for example plausible but non-existent APIs or missing null checks; tests and review caught them.
+? Does it make you less skilled? :: No, I use it for speed on known work and still reason through design and correctness myself.
+
+@p2-59
+Q: I treat AI code like code from a new teammate: read every line, check it compiles and passes tests (and write tests for edge cases), verify APIs and packages exist and are current, run static analysis and security scans (SonarQube, dependency checks), and look for the common AI mistakes: injection, missing authorization, hardcoded secrets, swallowed exceptions and outdated patterns.
+- Hallucinated packages are a supply-chain risk ("slopsquatting"); confirm every new dependency.
+- Check licences of suggested code and packages.
+- Compare with official documentation for version-specific behaviour (.NET 8 vs 10).
+- Same pull request review and quality gates as all code; no special path for AI code.
+? How do you check accuracy for business logic? :: Against requirements and with tests built from real scenarios, not just the AI's own tests.
+? Who is responsible for AI-written bugs? :: The developer who committed it.
+
+@p2-60
+Q: I give clear context and a specific goal, constraints and the expected output format; provide examples (few-shot); break big tasks into steps and ask for a plan first; give the model the relevant code, docs or errors; ask it to state assumptions and to verify its own output; and iterate based on results.
+- Role and audience: "You are reviewing a .NET 10 API for security issues".
+- Structured outputs (JSON schema) for anything parsed by code.
+- Ground answers in provided documents; ask it to say "unknown" when unsure.
+- Project rule files and reusable prompt templates for the team (the MCP README has [10] example prompts).
+- For agents: clear stopping criteria and limits.
+? Chain-of-thought? :: Asking the model to reason step by step improves complex answers; modern reasoning models do this internally.
+? Zero-shot vs few-shot? :: Zero-shot gives only instructions; few-shot adds examples of input and desired output.
+
+@p2-61
+Q: RAG retrieves relevant pieces of your own documents at question time and gives them to the LLM as context, so answers are grounded in current, private data without retraining. The pipeline: split documents into chunks, create embeddings, store them in a vector index; at query time embed the question, retrieve the most similar chunks (often hybrid with keyword search and re-ranking), and prompt the model to answer from them with citations.
+- Chunking size and overlap strongly affect quality.
+- Hybrid search (BM25 plus vectors) and a re-ranker improve relevance.
+- Access control must apply at retrieval so users only see documents they may see.
+- Evaluate with test questions: retrieval recall, answer faithfulness, citations.
+- Vector stores: Azure AI Search, OpenSearch, pgvector, Qdrant.
+- Example idea: [a RAG assistant over IRT SOPs and release runbooks].
+? RAG vs fine-tuning? :: RAG adds knowledge that changes; fine-tuning changes behaviour or style; they can be combined.
+? Why do RAG systems still hallucinate? :: Poor retrieval or the model ignoring context; fix retrieval and instruct it to answer only from sources.
+
+@p2-62
+Q: An agent is an LLM running in a loop: it plans, calls tools, observes the results and repeats until the goal is met. Agentic orchestration coordinates one or more agents (planner, executor, reviewer) with their tools, memory, step limits and permissions. AutoGen (Microsoft) provides multi-agent conversation patterns; Claude Code is a terminal coding agent that can use MCP servers; I apply these to engineering workflows such as deployments and code tasks.
+- Patterns: single agent with tools, planner-executor, supervisor with specialists, reviewer loops.
+- Guardrails: step and cost limits, allow-listed tools, human-in-the-loop for risky actions.
+- Observability: log every step and tool call for debugging and audit.
+- Microsoft Agent Framework (2025) brings together AutoGen and Semantic Kernel concepts for .NET and Python.
+- Our deployment agent flow: [plan the release, queue builds, deploy stage by stage, verify versions, report].
+? When not to use agents? :: When a fixed script works reliably; agents add value when steps vary or need judgement.
+? Biggest risk? :: Loops and unintended actions, controlled with limits, confirmations and least privilege.
+
+@p2-63
+Q: Azure OpenAI (now part of Azure AI Foundry) runs OpenAI models inside the company's Azure tenant with enterprise controls: Entra ID auth, private endpoints, regional data residency, content filtering, and data not used for training. Direct provider APIs may get new models first and are simpler for prototypes. For a regulated healthcare company the enterprise controls usually decide.
+- Compare: model availability and versions, quotas and rate limits, pricing (provisioned throughput vs pay-as-you-go), compliance certifications, network isolation.
+- Abstraction layers (Microsoft.Extensions.AI IChatClient) make it easy to switch providers in .NET.
+- Monitor cost, latency and token usage either way.
+- Patient data rules (HIPAA, GDPR) and company policy decide what can be sent.
+```csharp
+IChatClient chat = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+    .GetChatClient("gpt-4o").AsIChatClient();
+var reply = await chat.GetResponseAsync("Summarise this release log: ...");
+```
+? What is provisioned throughput? :: Reserved model capacity with predictable latency, billed per unit instead of per token.
+? Can you use Claude in Azure? :: Azure AI Foundry hosts many models; AWS Bedrock offers Claude and others in AWS.
+
+@p2-64
+Q: I ground the model in trusted data (RAG, tool calls for facts), give clear instructions with permission to say "I don't know", use structured outputs validated by code, keep temperature low for factual tasks, check outputs with rules or a second pass, show sources, keep humans approving important actions, and measure quality with evaluation sets over time.
+- Tools for anything factual or current: let the model call an API rather than remember.
+- Validate: JSON schema, business rules, allow-lists before acting.
+- Evals: golden question sets, regression checks when prompts or models change.
+- Narrow tasks are more reliable than open-ended ones.
+- Monitor production: feedback buttons, logs of prompts and outputs (without sensitive data).
+? Can hallucinations be eliminated? :: No, only reduced and contained by validation and human review.
+? Example in your MCP server? :: Build and release status always come from tool calls to Azure DevOps, never from the model's guess.
+
+@p2-65
+Q: Teammates kept the manual, multi-person process out of habit and caution, so I made adoption easy and safe instead of mandatory: a [30-minute] live demo on a real UAT deployment, a README with [10] example prompts, pairing with the first [4] engineers, a chat thread for questions, and adding the tools people asked for. Within [about two months] most release deployments used it: 6 hours to 2, 6 people to 1.
+- Addressed fear directly: own permissions, confirmations before risky steps, existing approvals unchanged, everything logged.
+- Started with low-risk environments (FV, TechOps) before UAT and production.
+- Measured results to show value (time and people per deployment).
+- Feedback loop: the "fetch logs for a failed step" tool came from a teammate's request.
+- Champions: the first users helped others.
+W: I lead change by example and by removing friction, not by authority.
+W: I take people's concerns seriously and design safety in.
+? What would you do differently? :: Involve QA and TechOps earlier so their concerns shaped the design from day one.
+? How do you measure adoption? :: Share of release deployments run through the tool and time per deployment.
+
+@p2-66
+Q: A monolith is one deployable unit: simple to build, test, deploy and debug, with in-process calls and one database. Microservices split the system into independently deployable services around business capabilities, each owning its data, enabling independent scaling and team autonomy at the cost of distributed-system complexity (network failures, eventual consistency, observability, many pipelines).
+- A modular monolith (clear modules, enforced boundaries) is often the best start.
+- Split when teams block each other, parts need different scaling or release cadence.
+- Microservices need automation, monitoring, tracing and contracts before they pay off.
+- Avoid the distributed monolith: services that must deploy together or share a database.
+- IRT has [about a dozen] services such as randomization, supply and shipments, notifications.
+? What is Conway's law? :: Systems mirror the communication structure of the organisation that builds them.
+? How do you split a monolith? :: Strangler fig: route one capability at a time to a new service.
+
+@p2-67
+Q: The core is POST /studies/{studyId}/subjects/{subjectId}/randomize with an idempotency key, allowed only for authorised site users. In one database transaction it loads the study's randomization scheme (blocked or stratified lists), allocates the next free slot with locking so two sites never get the same slot, assigns a drug kit from site inventory, writes an immutable audit record and stores a SubjectRandomized event in the outbox. Non-functionals: blinding, high availability, validation and full audit.
+- Concurrency: SELECT ... WITH (UPDLOCK, ROWLOCK) on the next slot, or a unique constraint on (StudyId, SlotNumber) with retry.
+- Stratification: separate lists per stratum (site, age group); dynamic methods like minimisation need careful algorithms.
+- Blinding: treatment arm hidden from most roles; only unblinded roles or emergency unblinding with reason and audit.
+- Idempotency key stored with the result so retries return the same allocation.
+- Downstream via outbox: resupply checks, notifications, EDC integration.
+- Availability: multi-AZ database, no single points of failure; randomization is the most critical path.
+```sql
+SELECT TOP (1) SlotId, Arm FROM dbo.RandomizationSlots WITH (UPDLOCK, ROWLOCK, READPAST)
+WHERE ListId = @ListId AND SubjectId IS NULL ORDER BY SlotNumber;
+```
+? Why READPAST? :: Concurrent requests skip slots locked by others instead of waiting, while order is preserved per list.
+? What if no kit is available at the site? :: Fail the randomization cleanly or follow the study's rule, and trigger urgent resupply alerts.
+
+@p2-68
+Q: I model shipments from depots to sites with kits, quantities and statuses (Requested, Shipped, In Transit, Delivered, Received, Quarantined); resupply rules (trigger and resupply levels per site, forecast from enrolment) create shipment requests; vendor and courier status updates arrive via SFTP files and APIs, are processed idempotently through events, and the site confirms receipt with temperature data; dashboards and alerts flag delays and low stock.
+- State machine with allowed transitions; reject invalid ones.
+- Integration: [SFTP poller every 5 minutes] for depot files, Kafka events for status updates to several services.
+- Expiry dating and temperature excursions: quarantine kits pending review.
+- Indexes for site and study shipment lists (the [9 s to under 300 ms] fix).
+- Audit every status change with source (vendor file, user).
+? How do you handle duplicate vendor status files? :: File hash dedup and idempotent upserts by shipment id and timestamp.
+? What triggers resupply? :: Site inventory dropping below the trigger level, considering kits in transit and expected enrolment.
+
+@p2-69
+Q: The client uploads the file to S3 with a presigned URL (or to the API for small files), the API creates an import job and returns 202 with a job id; a worker streams and parses rows (CsvHelper), validates schema and business rules collecting per-row errors, then writes valid data in batches inside a transaction (we chose all-or-nothing with the business), reports status and an error file, audits who imported what, and uses a file hash for idempotency.
+- Streaming parse keeps memory flat even for large files; our typical file is [5 MB, ~10,000 rows].
+- Bulk insert with SqlBulkCopy into a staging table, then validate and merge set-based.
+- Concurrency limit [2 per user] and a global worker limit protect the database.
+- Progress endpoint or SignalR for status; error report as CSV with row numbers.
+- Security: size limits, content checks, CSV injection protection in exported files (prefix =, +, -, @).
+? All-or-nothing vs partial? :: All-or-nothing keeps clinical data consistent; partial suits independent rows, with clear reporting.
+? How do you scale to very large files? :: Split into chunks processed in parallel into staging, then one final merge.
+
+@p2-70
+Q: The API gateway pattern puts one entry point in front of many services to handle routing, authentication, rate limiting, TLS and cross-cutting policies. Backend-for-frontend (BFF) gives each client type (web SPA, mobile, partner) its own tailored gateway that aggregates calls and shapes responses for that client, and for SPAs keeps tokens on the server.
+- Tools: AWS API Gateway, YARP (.NET reverse proxy), Azure API Management, Kong, Envoy.
+- Gateway should stay thin: no business logic, or it becomes a bottleneck.
+- BFF reduces chatty calls and over-fetching from mobile clients.
+- BFF security pattern: SPA uses an HttpOnly cookie session; BFF holds OAuth tokens and calls APIs.
+```csharp
+builder.Services.AddReverseProxy().LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
+app.MapReverseProxy();   // YARP routes /api/shipments/** to the shipments cluster
+```
+? Gateway vs service mesh? :: Gateway handles north-south (client to service) traffic; mesh handles east-west traffic between services.
+? One BFF per team or per client? :: Per client experience, usually owned by the team building that client.
+
+@p2-71
+Q: The CAP theorem says that during a network partition a distributed data store must choose between consistency (every read sees the latest write) and availability (every request gets a non-error response); partition tolerance is unavoidable in real networks. So the real choice is CP or AP behaviour when partitions happen.
+- PACELC extends it: Else (no partition) you trade Latency vs Consistency.
+- CP examples: traditional relational with synchronous replication, ZooKeeper, etcd; AP examples: Cassandra, DynamoDB default eventually consistent reads.
+- Many systems are tunable (DynamoDB strongly consistent reads, Cassandra quorum).
+- In IRT, randomization and kit assignment need consistency (CP behaviour); dashboards and notifications tolerate eventual consistency.
+? Is CAP about all consistency models? :: It uses linearizability; weaker models allow different trade-offs.
+? Why is "CA" not realistic? :: Networks do partition, so a distributed system must decide what to do when they do.
+
+@p2-72
+Q: A saga manages a business transaction across several services as a sequence of local transactions, each publishing an event or message that triggers the next; if a step fails, compensating actions undo the earlier steps. It replaces distributed transactions (2PC) in microservices. Sagas are either choreographed (services react to events) or orchestrated (a central coordinator tells each service what to do).
+- Choreography: simple for few steps, but flow is hard to see; orchestration: explicit state, easier to monitor.
+- Compensations are semantic undos (cancel shipment), not database rollbacks, and must be idempotent.
+- Use outbox for reliable messaging and correlation ids per saga.
+- Tools: MassTransit state machines, NServiceBus sagas, AWS Step Functions, Temporal.
+- Example: [randomize subject, reserve kit, create shipment request, notify site]; if kit reservation fails, mark randomization pending and alert.
+? Saga vs 2PC? :: 2PC locks resources across systems and is fragile; sagas accept eventual consistency with compensation.
+? What about isolation? :: Sagas lack it; use semantic locks (status Pending) and design for intermediate states.
+
+@p2-73
+Q: Every create, update and delete records who, what (old and new values), when (synchronised UTC time), where (source system, IP) and why (reason for change when required), in an append-only, tamper-evident store that users cannot edit or delete, captured automatically (EF Core SaveChanges interceptor, temporal tables or triggers) plus business events, searchable for inspections and retained as regulation requires (21 CFR Part 11, EU Annex 11).
+- Electronic signatures: re-authentication, meaning of signature, linked to the record.
+- Tamper evidence: hash chaining of records, WORM storage (S3 Object Lock) for archives, restricted database permissions.
+- Include correlation id so audit entries link to logs and traces.
+- Audit failures should block the change (same transaction), not silently skip.
+- SQL Server temporal tables give automatic history for row versions; combine with user context.
+```csharp
+public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e, InterceptionResult<int> r, CancellationToken ct = default)
+{
+    foreach (var entry in e.Context!.ChangeTracker.Entries().Where(x => x.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        e.Context.Add(AuditRecord.From(entry, _user.Id, _clock.GetUtcNow(), _correlation.Id));
+    return await base.SavingChangesAsync(e, r, ct);
+}
+```
+? Audit log vs application log? :: Audit logs are regulated business records with retention and integrity rules; application logs are for operations.
+? How do you show it is tamper-evident? :: Hash chain verification and restricted permissions shown in validation evidence.
+
+@p2-74
+Q: I decide the key (user, client, IP, tenant), the limit and algorithm (token bucket for bursts, sliding window for smoothness, concurrency limit for expensive work), where to enforce (gateway for coarse limits, service for business limits), and shared state for multiple instances (Redis with atomic scripts). Rejected requests get 429 with Retry-After, and limits are monitored and tuned.
+- Algorithms: fixed window (simple, bursty at edges), sliding window, token bucket, leaky bucket.
+- Distributed: Redis INCR with expiry or Lua scripts; or accept per-instance approximate limits.
+- ASP.NET Core built-in limiter is per instance (Part 10 shows code).
+- Different tiers for different clients; exempt health checks and internal calls.
+- Example: [concurrency limit 2 per user on CSV import].
+? Fail open or closed if Redis is down? :: Usually fail open for availability, with alerts, unless the limit protects something critical.
+? Why Retry-After? :: Well-behaved clients back off correctly instead of hammering.
+
+@p2-75
+Q: AI hosts (Cursor, Claude, Copilot) talk MCP to the CIRT MCP server [over stdio]; the server wraps Azure DevOps Server REST APIs for builds, releases, approvals and environments plus node-level deployment steps; an orchestration layer runs a deployment plan per environment across nodes, polls status, retries safe steps and stops on failure with a clear report; cross-cutting concerns are the user's own credentials, human approvals before production, a log of every action and structured outputs for the agent.
+- Requirements: cut [6-hour, 6-person] deployments, keep GxP approvals, work on on-prem Azure DevOps Server.
+- Components: tool layer (about 77 tools), Azure DevOps client with retries and timeouts, deployment plan model, status poller, audit logger.
+- Long-running work: start returns an id; status tool polls; no tool blocks for hours.
+- Failure handling: idempotent steps, resume from the failed step, clear human-readable reports.
+- Scaling: each user runs their own instance; Azure DevOps remains the source of truth and does the actual work.
+- Result: 6 hours to 2, 6 people to 1.
+? Why not a web portal instead? :: Engineers already work in AI-enabled editors; MCP let them describe intent in plain language while reusing existing pipelines.
+? What would you add next? :: A remote HTTP deployment with central audit and SSO, and richer pre-deployment checks.
+
+@p2-76
+Q: High availability means removing single points of failure and recovering automatically: multiple instances across availability zones behind load balancers with health checks, Multi-AZ databases with automatic failover, stateless services, retries with backoff and circuit breakers, queues to absorb spikes, graceful degradation, and tested backups and disaster recovery with defined RTO and RPO.
+- Availability targets: 99.9 percent is about 8.8 hours downtime a year; 99.99 percent about 53 minutes.
+- Redundancy at every layer: DNS, load balancer, compute, data, messaging (quorum queues, Kafka replication).
+- Deployments without downtime: rolling or blue-green with readiness checks.
+- Bulkheads isolate failures; timeouts everywhere.
+- Test it: failover drills, chaos experiments, game days.
+? RTO vs RPO? :: RTO is how long you can be down; RPO is how much data (time) you can lose.
+? Multi-AZ vs multi-region? :: Multi-AZ covers data-centre failures; multi-region covers regional outages at much higher cost and complexity.
