@@ -1,0 +1,162 @@
++@p9-1
+Y: I processed it synchronously within the request, because files are limited to [5 MB, about 10,000 rows], and parsing is streamed, so validation finishes in [a few seconds] and users see the preview right away. All the file and database work is async, so no threads are blocked. For much bigger files, I'd move it to a background job that returns 202 with a status endpoint.
+K: csv import, synchronous, asynchronous, background job, 202
++@p9-2
+Y: Only authorised users with the right role for that study can upload. I check the size limit, the CSV extension, and that the content really is text CSV. Files are processed in memory or temporary storage, never executed or served back. When we export the error report, I protect against CSV injection, and every upload is audited with who uploaded what.
+K: file upload security, csv injection, validation, audit
++@p9-3
+Y: I read the file as a stream with CsvHelper instead of loading it all into memory. Validation runs in stages and stops early if the headers are wrong. Lookups, like existing sites, countries and depots, are loaded once into dictionaries, instead of a database call per row. Then rows are inserted in batches inside one transaction.
+K: csv performance, streaming, csvhelper, batching, optimization
++@p9-4
+Y: I wrote unit tests for each validation rule, like missing fields, wrong types, duplicates in the file or database, and invalid countries or depots. Integration tests saved a file into a test database and checked that a failure rolls everything back. Playwright tests covered upload, preview, error download and confirm. I also tested a file at the maximum size.
+K: csv import testing, unit tests, integration tests, playwright
++@p9-5
+Y: Only one import per study can run at a time, enforced by a lock row checked inside the transaction, so a second user gets a clear "import in progress" message. A file hash stops the same file being imported twice. And a [limit of 2 imports per user] at a time protects the server.
+K: concurrent imports, locking, concurrency, file hash
++@p9-6
+Y: Nothing is saved. All rows are written in one transaction, so if anything fails, like a database error or timeout, everything is rolled back. The user sees a clear error and can simply try again, and the audit log records the failed attempt. The study is never left half set up.
+K: import failure, transaction, rollback, atomicity
++@p9-7
+Y: For millions of rows, I'd upload directly to S3 with a presigned URL. A background worker would stream and validate the file in chunks, load rows into a staging table with SqlBulkCopy, validate them with set-based SQL, and then merge them into the live tables in controlled batches, with progress reporting and an error file. A file hash and job id keep it idempotent.
+K: large scale import, millions of records, sqlbulkcopy, staging table, s3
++@p9-8
+Y: I wrote unit tests for each of the five checks, both passing and failing, like a live study with randomized patients or a missing change request. Integration tests covered the transaction and the lock, including two transfers at once. Tests confirmed every attempt is audited, and the FV scripts cover each blocking scenario.
+K: testing, study transfer, safety guard, unit tests
++@p9-9
+Y: Every attempt, allowed or blocked, writes an audit record with the user, the source and target study and environment, the change request reference, which check failed and why, and the time. The audit is written separately, so it's saved even when the transfer is blocked. Validators and support can report on blocked attempts.
+K: audit, blocked transfers, audit trail, gxp
++@p9-10
+Y: Release integration means bringing together every team's changes for a release, the application, APIs, database scripts and UI, merging them into the release branch, resolving conflicts, tagging one version, and producing a consistent set of artifacts to install and validate. I'm the release integrator for our team, coordinating with about [5] teams.
+K: release integration, release management, merging, tagging
++@p9-11
+Y: We validate with automated tests, smoke tests after install, version checks on every node, FV scripts with evidence, and UAT sign-off. To promote to production, we take the exact same tagged artifacts that passed UAT, under an approved change request, deploy them through the controlled pipeline, and verify afterwards.
+K: release validation, uat to production, promotion, change request
++@p9-12
+Y: We use one release version and one checklist. The deployment order is backward-compatible database scripts first, then APIs, then application services, then the UI. Incomplete features stay behind feature flags, and I do a daily status check with each team in the days before the release.
+K: release coordination, deployment order, feature flags
++@p9-13
+Y: Our nodes run Linux-based install steps, where Shell is natural. Python handles the logic, like reading manifests, comparing versions and calling APIs. Together with Ansible, they make installs repeatable and identical on every node, which removed a lot of manual steps and mistakes.
+K: python, shell, ansible, automation, scripting
++@p9-14
+Y: Ansible playbooks with Python and Shell scripts run the install steps across [4 to 6] nodes in order, and stop if something fails. Each node reports its installed version, through a version file and a health endpoint, and a check compares them with the release tag. Any mismatch fails the verification.
+K: multi-node deployment, version check, ansible, consistency
++@p9-15
+Y: I check the version on every node, make sure the health endpoints are green, and run smoke tests of key flows, like login, randomizing in a test study, and the shipment list. Then I check logs and dashboards for any new errors, and sign off in the release record.
+K: deployment verification, smoke tests, health checks
++@p9-16
+Y: Agile means delivering in small pieces, getting feedback often and adapting. Scrum uses fixed-length sprints with roles like product owner and scrum master, and events like planning, review and retrospective. Kanban uses a continuous flow with limits on work in progress and no sprints, which suits support and operations work. Our team uses Scrum with [two-week] sprints.
+K: agile, scrum, kanban, methodology
++@p9-17
+Y: In sprint planning, the team picks the top priority, refined stories that fit our capacity, agrees a sprint goal, and breaks stories into tasks. The retrospective happens at the end of the sprint, where we talk about what went well and what didn't, and agree one or two improvements to try next sprint.
+K: sprint planning, retrospective, scrum, agile
++@p9-18
+Y: First I understand why it's changing and how important it is, by talking with the product owner and BA. Then I estimate the impact and we agree what moves out of the sprint, and we update the acceptance criteria and traceability, which matters in GxP. I also write code that's easy to change, with clean boundaries and tests.
+K: changing requirements, scope change, agile
++@p9-19
+Y: I review for correctness, security, readability, tests and design, and I keep comments about the code, not the person, explaining why and marking what's a must-fix versus a suggestion. If we disagree, I bring data, like documentation or our team standards. If comments keep going back and forth, I have a quick call, and if needed, we agree a team rule with the lead.
+K: code review, disagreement, pull requests, feedback
++@p9-20
+Y: Release deployments needed about 6 people and 6 hours. I proposed automating them with an MCP server, built a read-only prototype in [two weeks], and demoed it to my lead and the release manager. I addressed their safety concerns, like using each person's own token and keeping approvals, and measured before and after. The team adopted it: 6 hours to 2, and 6 people to 1.
+K: technical decision, influence, mcp, story
++@p9-21
+Y: I stay calm and structured. First I reduce the impact, then I update people regularly, and split the work clearly if several people are helping. I avoid risky changes under pressure, and do the proper root cause work afterwards. Checklists and runbooks help a lot to avoid panic.
+K: production pressure, stress, incidents, calm
++@p9-22
+Y: I start with the impact: who is affected and how badly. Then what we're doing about it and when the next update will come, in plain language with simple comparisons and no jargon. If they need to decide something, I give two or three options with the trade-offs and my recommendation.
+K: communication, non-technical stakeholders, stakeholder management
++@p9-23
+Y: Spring Boot is a framework on top of Spring for building Java services quickly. It gives auto-configuration, an embedded web server like Tomcat, starter dependencies, and production features like health and metrics with Actuator. It's basically the Java counterpart of ASP.NET Core.
+K: spring boot, java, framework
++@p9-24
+Y: Spring's IoC container, the ApplicationContext, creates objects called beans and injects their dependencies, just like the .NET service provider. Constructor injection is the preferred way. The Autowired annotation marks where to inject, and if a class has only one constructor, it's not even needed.
+K: spring dependency injection, ioc container, autowired, beans
++@p9-25
+Y: All three register a class as a Spring bean through component scanning. Component is the generic one. Service marks business logic, and it's mostly for readability. Repository marks data access classes and also translates database exceptions into Spring's standard data access exceptions.
+K: component, service, repository, spring annotations
++@p9-26
+Y: I create a class with the RestController annotation and a base path with RequestMapping, like api slash shipments. Methods use GetMapping and PostMapping. Parameters come from PathVariable, RequestParam, or RequestBody with Valid for validation. I return ResponseEntity to control the status code, just like returning results in ASP.NET Core.
+K: spring rest controller, restcontroller, getmapping, java api
++@p9-27
+Y: Spring Boot reads configuration from application.yml or properties files, environment variables, and typed ConfigurationProperties classes, which are like the .NET options pattern. Profiles, like dev, uat and prod, load their own application-profile.yml file, and are chosen with spring.profiles.active, similar to ASP.NET Core environments.
+K: spring configuration, profiles, application.yml
++@p9-28
+Y: JPA is the Java standard for persistence, Hibernate is the most common implementation, and Spring Data JPA adds repository interfaces that generate queries from method names. Compared with EF Core, the ideas are very similar, entities, change tracking and lazy loading. But migrations use Flyway or Liquibase, and queries use JPQL instead of LINQ.
+K: spring data jpa, hibernate, jpa vs ef core, orm
++@p9-29
+Y: For exceptions, I use a RestControllerAdvice class with ExceptionHandler methods that return ProblemDetail responses, which is like exception middleware in .NET. For security, Spring Security has a filter chain, the OAuth2 resource server validates JWTs, and method security with PreAuthorize checks roles.
+K: spring exception handling, spring security, controlleradvice
++@p9-30
+Y: Java and C# are very similar: both are statically typed, object-oriented and garbage collected. C# got some features earlier, like LINQ, async-await, properties, records and pattern matching, and has real value types and generics at runtime. Java has a huge ecosystem, many JVM vendors, and virtual threads since Java 21.
+K: java vs c#, comparison, languages
++@p9-31
+Y: I'd choose Spring Boot if the organisation's platform, libraries and people are already Java. I'd choose .NET if the team and code base are .NET, for its performance, LINQ and EF Core productivity, and great tooling. Both are excellent, so team skills and existing systems should decide, not personal preference.
+K: spring boot vs .net, technology choice
++@p9-32
+Y: This role matches what I do best and want to grow in: backend .NET services on the cloud and event-driven systems, with ownership of design and delivery. It also has room for the developer tooling and AI-assisted engineering I've been doing. And I really like [one specific thing about their product or team].
+K: why this role, motivation, hr
++@p9-33
+Y: In the short term, I want to be a senior engineer who owns services end to end and raises the team's engineering standards. In the longer term, I'd like to become a technical lead or architect for distributed systems, while staying hands-on and helping teams use AI tools safely.
+K: career goals, future, hr
++@p9-34
+Y: In [2023], a [project lead] wanted very frequent status updates and changed priorities in the middle of sprints, which disrupted the team. I asked what he needed the updates for, and it was client reporting. So I offered a short written update every [morning] and a shared board, and suggested routing mid-sprint changes through the product owner. Interruptions dropped and our relationship improved.
+K: difficult manager, conflict, story, hr
++@p9-35
+Y: In [2023] I estimated a [shipment reporting API] at one sprint, but it took two, because I missed the validation documentation and FV preparation needed in GxP. I told the product owner [mid-sprint] as soon as I saw it, and we split the work so the main endpoint shipped on time and the export followed. Now I always add validation effort to my estimates.
+K: failure, mistake, learning, story, hr
++@p9-36
+Y: In [2023], the [shipment reporting API] needed two sprints instead of the one I estimated, because I missed the GxP validation documentation. I raised it [mid-sprint], not on the last day, and with the product owner we split the scope, so the main endpoint went out on time and the export came the next sprint. The client's plan wasn't affected.
+K: missed deadline, story, hr, estimation
++@p9-37
+Y: In [the quarterly release in 2024], [two days] before FV, we had a merge conflict in a shared database script and a failing integration test. As release integrator, I prioritised, resolved the conflict with the owners in [one hour], got the test fixed, ran the FV install overnight, and flagged one incomplete feature early so it moved to the next release. FV started on time and production went live as planned.
+K: pressure, deadline, release, story, hr
++@p9-38
+Y: Release deployments took about 6 hours and 6 people, and nobody owned improving them, so I did. I built the CIRT MCP server, first in my own time and then with my lead's support, with about 77 tools, safety controls, packaging, documentation and team training. Deployments went from 6 hours to 2, and 6 people to 1, and I still own and maintain it.
+K: ownership, initiative, mcp, story, hr
++@p9-39
+Y: My manager would say I'm reliable and take ownership, that releases and production issues are in safe hands, and that I bring improvements like the MCP server without being asked, though sometimes I take on too much. My teammates would say I'm helpful and approachable, I explain things well, and I'm the person to ask about deployments and AI tools.
+K: manager feedback, teammates, reputation, hr
++@p9-40
+Y: I like a collaborative team with honest reviews, clear ownership, and people who care about quality and learning. I'm motivated by solving real problems with visible impact, like cutting deployments from 6 hours to 2. Repeated manual work and unclear requirements frustrate me, and I deal with that by automating or asking questions early.
+K: team preference, motivation, frustration, hr
++@p9-41
+Y: Let me take our Shipment service as an example. It has a REST API to create, get and list shipments, and its own SQL Server database. It publishes shipment status events to Kafka through an outbox, and processes depot status files from the SFTP integration with idempotent handlers. It runs stateless on ECS with autoscaling, uses Redis for reference data, Polly for vendor calls, and full logs, metrics and traces.
+K: microservice design, shipment service, system design
++@p9-42
+Y: .NET 6, in 2021, brought minimal APIs and the simpler Program.cs hosting model. .NET 8, in 2023, brought big performance gains, Native AOT for more apps, TimeProvider, keyed services and C# 12 primary constructors. .NET 10, in November 2025, brings C# 14, more performance work and built-in validation for minimal APIs. All three are long-term support releases, and I upgraded our services to .NET 10 in [early 2026].
+K: .net 6, .net 8, .net 10, versions, what changed
++@p9-43
+Y: Each .NET service is a Docker image in ECR, running as an ECS service. The task definition sets CPU, memory, environment, secrets from Secrets Manager and an IAM task role. Tasks run across two availability zones in private subnets behind an ALB with health checks, and autoscale on CPU and request count. Logs go to CloudWatch, and Azure DevOps deploys with rolling updates.
+K: ecs architecture, aws, fargate, alb, task definition
++@p9-44
+Y: [Our core platform stacks were already in CloudFormation, owned by the platform team], so we extended them there. [Newer, smaller pieces and tooling used Terraform modules], for reuse and multi-provider support. I can read and change both, and for new work I'd standardise on one to avoid duplication.
+K: terraform, cloudformation, iac, why both
++@p9-45
+Y: To be honest, our production IRT services run on ECS. I used Kubernetes for [some internal workloads, like the Node.js build-log summariser and the FastAPI vendor file validator in a shared non-production cluster], writing Deployments, Services, ConfigMaps and probes. So my production container experience is mainly ECS, but the concepts transfer directly.
+K: kubernetes experience, ecs, honest answer
++@p9-46
+Y: We use Kafka for shipment status events, which several services consume, like supply, notifications and reporting. They need order per shipment and the ability to replay. We use RabbitMQ for task-style messages, like sending notifications and generating reports, where per-message acknowledgement, routing and retries matter. That's also where I root-caused the outage we fixed with publisher confirms.
+K: kafka use case, rabbitmq use case, messaging
++@p9-47
+Y: I orchestrated release deployments. An AI agent in Cursor or Claude Code uses our CIRT MCP server's tools in a loop: queue the build, create the release, deploy to the environment, poll each node, summarise failures and retry a node, with humans confirming and approving. I also ran an [AutoGen experiment] with coder and reviewer agents drafting unit tests.
+K: agentic ai, orchestration, mcp, agents
++@p9-48
+Y: It's an [internal assistant over our release runbooks, deployment guides and past incident notes]. Documents are split into chunks and stored as embeddings in a vector index. A question is embedded, the most relevant chunks are retrieved and re-ranked, and sent with the question to Azure OpenAI, and the answer cites the source documents. We tested it with [30] real team questions, and no patient data is included.
+K: rag architecture, rag, embeddings, vector search, azure openai
++@p9-49
+Y: I built a [configurable data table component] used across our IRT screens. It has typed columns, sorting, paging and filtering, loading and empty states, row actions that respect user roles, and keyboard accessibility. It's generic over the row type, documented with examples and covered by tests, so every screen looks and behaves the same.
+K: react reusable component, data table, typescript, example
++@p9-50
+Y: I used FastAPI for the [vendor file pre-validation service]. Pydantic models made schema validation quick and readable, and FastAPI gives automatic API docs, async support and good performance. It returns a 422 with exact field errors out of the box. And the integration team already knew Python, so they could maintain it easily.
+K: why fastapi, python, pydantic
++@p9-51
+Y: I used Node.js for input-output heavy tools, like the [build-log summariser], which fetches logs, parses text and returns JSON. Node handles that very well, and the TypeScript MCP and HTTP libraries made it quick to build. It follows the same logging, health and pipeline standards, while our core business services stay in .NET.
+K: why node.js, node alongside .net, typescript
++@p9-52
+Y: Technically, GxP means an audit trail for every data change, with who, when, old and new values, and why. It means role-based access and electronic signature rules from 21 CFR Part 11, validated releases with traceability from requirement to test, change control, controlled deployments, data integrity following ALCOA principles, and backups with tested restores.
+K: gxp technical, 21 cfr part 11, alcoa, audit trail
++@p9-53
+Y: Directly, I mentored [two graduate developers in 2024]. I gave them an architecture walkthrough, paired with them for [two sprints], then moved to code reviews and weekly check-ins, and they shipped their first pull requests in [week two]. More broadly, I've helped [3 to 4 teammates] through code reviews, MCP tool onboarding and AI tooling sessions.
+K: mentoring, how many, coaching, story
++@p9-54
+Y: The IRT engineering organisation is about 100 people across several scrum teams. My own scrum team is [about 8 people: 5 developers, 2 QA engineers and a BA, with a shared scrum master]. As release integrator, I coordinate with about [5] teams for each release. I like to be precise about this so my claims stay credible.
+K: team size, organisation, 100-member team

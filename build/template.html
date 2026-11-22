@@ -326,6 +326,16 @@ function listItemHTML(sec, it){
   return '<details data-lid="' + esc(it.id) + '"><summary><span class="q"><span class="num">' + esc(idLabel(it.id)) + '</span>' + fmt(it.text) + '</span>' +
     '<span class="tag part">' + esc(parts.filter(function(v,i,a){return v && a.indexOf(v)===i;}).join(', ')) + '</span></summary><div class="body"></div></details>';
 }
+// two-way synonyms for common short forms: "di" also finds titles saying "dependency injection" and vice versa
+var SYN = [['di','dependency injection'],['ioc','inversion of control'],['jwt','json web token'],['k8s','kubernetes'],['ef','entity framework'],['gc','garbage collection'],['sso','single sign on'],['iac','infrastructure as code'],['dlq','dead letter queue'],['oop','object oriented'],['rag','retrieval augmented'],['mcp','model context protocol'],['ci cd','continuous integration'],['csharp','c sharp']];
+function synScore(title, Q){
+  var n = norm(title);
+  for (var i = 0; i < SYN.length; i++) {
+    var a = SYN[i][0], b = SYN[i][1], other = Q.t === a ? b : Q.t === b ? a : null;
+    if (other && n.indexOf(' ' + other + ' ') >= 0) return [1.5, 0, 0, n.length];
+  }
+  return null;
+}
 function kwScore(x, Q){
   var e = EN[x.id] || {}; if (!e.k) return null;
   var n = norm(e.k.replace(/,/g, ' '));
@@ -336,6 +346,7 @@ function kwScore(x, Q){
 // one scorer for bank questions: title tiers 0-4, keywords 4.5, answers 5 (only when asked)
 function bankScore(x, Q){
   var sc = titleScore(x.q, Q); if (sc) return {sc: sc, how: 'title'};
+  sc = synScore(x.q, Q); if (sc) return {sc: sc, how: 'title'};
   sc = kwScore(x, Q); if (sc) return {sc: sc, how: 'kw'};
   return null;
 }
@@ -350,7 +361,7 @@ function renderListSearch(){
       var sc = null, how = '';
       if (it.id.toLowerCase() === num || idLabel(it.id).toLowerCase() === raw.toLowerCase()) sc = [-1, 0, 0, 0];
       else if (Q) {
-        sc = titleScore(it.text, Q);
+        sc = titleScore(it.text, Q) || synScore(it.text, Q);
         if (!sc) { // the bank question that answers it has the term in its title or keywords
           it.refs.forEach(function(r){ var x = BYID[r]; if (!x) return; var b = bankScore(x, Q); if (b && (!sc || cmpScore([b.sc[0] + 0.2].concat(b.sc.slice(1)), sc) < 0)) { sc = [b.sc[0] + 0.2].concat(b.sc.slice(1)); how = b.how === 'kw' ? 'kw' : 'ref'; } });
         }
