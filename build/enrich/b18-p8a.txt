@@ -210,7 +210,7 @@ Q: Agentic AI is an LLM that plans and takes actions with tools in a loop toward
 ? What limits do agents need? :: Step caps, permissions, confirmations and budgets.
 
 @p8-28
-Q: Multi-agent architecture uses several specialised agents (planner, coder, reviewer, tester) that pass work between them, coordinated by an orchestrator, with limits on steps and permissions. I've used AutoGen [for experiments such as a planner and reviewer pair on deployment checklists], while production work stays single-agent with tools for predictability.
+Q: Multi-agent architecture uses several specialised agents (planner, coder, reviewer, tester) that pass work between them, coordinated by an orchestrator, with limits on steps and permissions. I have used AutoGen [in an experiment with coder and reviewer agents drafting unit tests], while production work stays single-agent with tools for predictability.
 - Microsoft Agent Framework (2025) is the successor converging AutoGen and Semantic Kernel.
 - Multi-agent adds cost and debugging difficulty; use when specialisation clearly helps.
 ? Why single agent in production? :: Simpler to reason about, test and audit.

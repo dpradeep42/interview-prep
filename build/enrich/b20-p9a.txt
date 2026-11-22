@@ -1,0 +1,393 @@
+@p9-1
+Q: Synchronously within the request, because files are capped at [5 MB, about 10,000 rows] and parsing is streamed, so validation finishes in [a few seconds] and users see the preview immediately. All I/O is async, so no threads are blocked; for much larger files I'd switch to a background job with 202 Accepted and a status endpoint.
+- Measured worst case at the size limit before choosing synchronous.
+- Request timeout and size limits protect the server.
+- Trade-off: simpler UX and code now vs scalability later.
+W: I choose the simplest design that meets measured needs.
+? What was the slowest part? :: Duplicate checks against the database, solved by loading lookups once.
+? When would you go async? :: When files grow beyond what fits comfortably within a request timeout.
+
+@p9-2
+Q: An authorised endpoint with role checks per study; a size limit and .csv extension plus content checks; files processed in memory or temp storage, never executed or served back; CSV-injection protection when exporting error reports; and an audit of who uploaded what.
+- CSV injection: prefix cells starting with =, +, -, @ (and tab/CR) with a quote when exporting.
+- Reject binary content by checking it parses as text CSV.
+- Antivirus scanning for stored uploads.
+? What is CSV injection? :: Spreadsheet formulas in cells that execute when opened in Excel.
+? Why not store uploads? :: Less attack surface and less sensitive data at rest.
+
+@p9-3
+Q: Streamed parsing with CsvHelper instead of loading the whole file; validation in stages with an early stop on header errors; database lookups (existing sites, countries, depots) loaded once into dictionaries instead of per row; batched inserts inside one transaction; and AsNoTracking for reads.
+- HashSet for in-file duplicate detection: O(n).
+- Avoid per-row SaveChanges; one SaveChanges with batching.
+- Measured: [10,000 rows in a few seconds].
+```csharp
+var existing = await db.Sites.Where(s => s.StudyId == studyId).Select(s => s.SiteNumber).ToHashSetAsync(ct);
+var seen = new HashSet<string>();
+foreach (var row in rows) if (!seen.Add(row.SiteNumber) || existing.Contains(row.SiteNumber)) errors.Add(Dup(row));
+```
+? Why dictionaries? :: O(1) lookups instead of a query per row (N+1).
+? Biggest win? :: Removing per-row database lookups.
+
+@p9-4
+Q: Unit tests per validation rule (missing fields, bad types, duplicates in file and database, invalid country or depot); integration tests saving a file into a test database and checking rollback on failure; Playwright end-to-end tests for upload, preview, error download and confirm; plus a test at the maximum file size.
+- Test data files checked into the repo for repeatability.
+- FV scripts reused the same scenarios.
+? How did you test rollback? :: Inject a failure mid-save and assert no rows were written.
+? How did you test performance? :: A generated 10,000-row file timed in integration tests.
+
+@p9-5
+Q: Only one import per study at a time, enforced with a lock row checked inside the transaction; a second user gets a clear "import in progress" message; the file hash blocks the same file being imported twice; and a [concurrency limit of 2 imports per user] protects the server.
+- sp_getapplock is an alternative for app-level locks in SQL Server.
+- Lock released in finally or by transaction end; stale locks expire.
+? Why per study? :: Two imports into one study could conflict on duplicates and rules.
+? What if the server crashes holding the lock? :: The lock is tied to the transaction or has an expiry, so it releases.
+
+@p9-6
+Q: Nothing is saved: all rows are written in one transaction, so any failure (database error, timeout) rolls everything back; the user sees an error and can retry; and the audit log records the failed attempt.
+- Execution strategy with retries wraps the whole transaction for transient errors.
+- Idempotent retry thanks to the file hash check after rollback.
+? Is a long transaction a problem? :: For 10,000 rows it's seconds; for millions, use staging tables.
+? What does the user see? :: A clear message and the option to retry; no partial data.
+
+@p9-7
+Q: Upload directly to S3 with a presigned URL; a background worker (ECS or Lambda) streams and validates in chunks; stage rows in a staging table with SqlBulkCopy; validate set-based in SQL; then merge into live tables in controlled batches, reporting progress and an error file, with idempotency by file hash and job id.
+- Step Functions or a job table to orchestrate stages.
+- Parallel chunk processing into staging.
+- Notify via email or SignalR when done.
+? All-or-nothing at that scale? :: Use staging so live data changes only after full validation, then a final merge.
+? Why SqlBulkCopy? :: Orders of magnitude faster than row inserts.
+
+@p9-8
+Q: Unit tests for each of the five checks, pass and fail (live study with randomized subjects, version mismatch, wrong direction, transfer in progress, missing role or change request); integration tests for the transaction and lock; tests that every attempt is audited; and FV scripts covering each blocking scenario.
+- Concurrency test: two transfers at once, only one proceeds.
+- Fail-closed test: a check that throws blocks the transfer.
+? Why test fail-closed? :: An exception must never let an unsafe transfer through.
+? How did you get test data? :: Seeded studies in each state in the test database.
+
+@p9-9
+Q: Every attempt, allowed or blocked, writes an audit record: user, source and target study and environment, change request reference, which check failed and why, and timestamp. Validators and support can report on blocked attempts, and repeated blocks trigger follow-up.
+- Audit written even when the transfer is blocked (separate from the transfer transaction).
+- Structured reasons enable reporting.
+? Why audit allowed attempts too? :: Full traceability of every transfer for inspections.
+? Who reviews blocked attempts? :: Support and the study configuration team.
+
+@p9-10
+Q: Release integration brings together every team's changes for a release (application, APIs, database scripts, UI), merges them into the release branch, resolves conflicts, tags one version and produces a consistent set of artifacts for installation and validation.
+- Checklist per item: merged, tested, config changes, DB scripts, release notes.
+- Daily integration builds catch conflicts early.
+W: I bring structure to multi-team delivery.
+? Biggest risk? :: Late merges and environment configuration differences.
+? Tools used? :: Azure DevOps branches, tags, pipelines and the MCP server.
+
+@p9-11
+Q: Validation uses automated tests, smoke tests after install, version checks on every node, FV scripts with evidence and UAT sign-off. Promotion takes the same tagged artifacts that passed UAT to production under an approved change request, deployed by the controlled pipeline with verification afterwards.
+- No rebuilds between environments.
+- Evidence archived with the release record.
+? What if production differs from UAT? :: Config differences are reviewed and validated at startup.
+? Who approves production? :: Release manager and QA per change control.
+
+@p9-12
+Q: One release version and checklist; deployment order: backward-compatible database scripts first, then APIs, then application services, then UI; feature flags for incomplete work; and a daily status check with each team before the release.
+- Expand/contract DB changes keep old and new code working.
+- Contract tests between UI and APIs.
+? Why database first? :: New code may need new columns; old code tolerates them if additive.
+? How do you handle a late UI change? :: Feature flag it off or move it to the next release.
+
+@p9-13
+Q: Our nodes run Linux-based install steps where Shell is natural; Python handles logic such as reading manifests, comparing versions and calling APIs; with Ansible they make installs repeatable and identical on every node, removing manual steps.
+- Idempotent scripts; set -euo pipefail in Shell.
+- Python for anything beyond simple command sequences.
+? Why not PowerShell? :: The nodes are Linux; Shell and Python are native there.
+? How do you test scripts? :: Run in a test environment and use shellcheck and pytest.
+
+@p9-14
+Q: Ansible playbooks with Python and Shell run the install steps across [4 to 6] nodes in order, stopping on failure. Every node reports its installed version (version file and health endpoint), and a check compares them with the release tag; any mismatch fails verification.
+- serial: 1 for rolling installs; any_errors_fatal to stop.
+- The MCP version-check tool automates the comparison.
+? What if one node fails? :: Stop, fix, rerun that node (Part 3 Q27).
+? Why check versions explicitly? :: A silently failed copy can leave a node on the old version.
+
+@p9-15
+Q: Version check on every node, health endpoints green, smoke tests of key flows (login, randomize in a test study, shipment list), logs and dashboards free of new errors, then sign-off in the release record.
+- Compare error rates before and after.
+- Automated smoke tests where possible (Playwright).
+? How long do you watch after release? :: [An agreed window, e.g. the first hours of business use].
+? What triggers rollback? :: Failed smoke tests or error spikes linked to the release.
+
+@p9-16
+Q: Agile means delivering in small increments, getting feedback often and adapting. Scrum uses fixed-length sprints with roles (product owner, scrum master, team), planning, review and retrospective; Kanban uses continuous flow with work-in-progress limits and no sprints, good for support and operations.
+- Scrumban mixes both.
+- Metrics: velocity (Scrum), cycle time and throughput (Kanban).
+? When choose Kanban? :: Unpredictable incoming work like support.
+? What is WIP limit for? :: Reducing multitasking and exposing bottlenecks.
+
+@p9-17
+Q: In sprint planning the team picks prioritised, groomed stories that fit its capacity, agrees a sprint goal and breaks stories into tasks. A retrospective at the end of the sprint discusses what went well and what didn't, and agrees one or two improvements to try.
+- Capacity accounts for leave, support rotation and release work.
+- Retro formats: start/stop/continue, 4Ls.
+? What makes a good sprint goal? :: A single outcome that gives the sprint focus.
+? How do you ensure retro actions happen? :: Put them on the board with owners.
+
+@p9-18
+Q: Clarify the reason and impact with the product owner and BA, estimate the change, agree what moves out of the sprint, update acceptance criteria and traceability (important in GxP), and design code to be easy to change (clean boundaries, tests).
+- Protect the sprint goal; renegotiate scope transparently.
+? What if it's urgent? :: Swap equal-sized work out with the product owner's agreement.
+? GxP impact? :: Requirements, tests and traceability must be updated together.
+
+@p9-19
+Q: I review for correctness, security, readability, tests and design, in small pull requests; comment on code not people, explain why, and separate must-fix from suggestions. For disagreement I discuss with data (benchmarks, docs, team standards), talk briefly in person if comments go back and forth, and involve the lead or agree a team rule if still stuck.
+- Prefix comments: "nit:", "blocking:".
+- Automate style with analyzers so reviews focus on substance.
+W: I keep reviews constructive and focused on quality.
+? How fast do you review? :: [Usually the same day].
+? What do you look at first? :: Tests and the riskiest changes.
+
+@p9-20
+Q: Release deployments needed about 6 people and 6 hours. I proposed automating them through an MCP server, built a read-only prototype in [two weeks], demoed it to my lead and the release manager, addressed their safety concerns (per-user PATs, approvals kept) and measured before and after. The team adopted the CIRT MCP server for most release deployments: 6 hours to 2, 6 people to 1.
+- Influence through a working prototype and data.
+- Addressed concerns before they became objections.
+W: I influence decisions with evidence and working software.
+? What was the main objection? :: Safety of an AI agent in a regulated release process.
+? How did you answer it? :: Same permissions as the user, confirmations, approvals unchanged, full audit.
+
+@p9-21
+Q: I stay calm and structured: mitigate first, communicate status on a regular cadence, split work clearly when several people help, avoid risky changes under pressure, and do the root-cause work afterwards. Checklists and runbooks reduce panic.
+- Example: RabbitMQ outage (recovered all updates the same evening).
+W: I'm steady under pressure.
+? How do you avoid burnout? :: Hand over clearly, rotate support and automate repetitive fixes.
+? What's the worst thing to do under pressure? :: Make untested changes in production.
+
+@p9-22
+Q: Lead with impact (who's affected, how badly), then what we're doing and when the next update comes, in plain language with analogies and no jargon; give options with trade-offs when they must decide.
+- Example: "Some sites see shipment statuses up to 40 minutes old; randomization is unaffected; we expect a fix by 8 pm; next update in 30 minutes."
+? How do you explain technical debt? :: As interest on a loan that slows every future change.
+? What if you don't know the cause yet? :: Say so, share what you're doing and when you'll update.
+
+@p9-23
+Q: Spring Boot is an opinionated framework on top of Spring for building Java services quickly: auto-configuration, an embedded server (Tomcat), starter dependencies and production features (Actuator). It's the Java counterpart of ASP.NET Core.
+- Spring Boot 3 requires Java 17+ and Jakarta EE namespaces; Spring Boot 4 (late 2025) builds on Spring Framework 7.
+- Actuator ≈ health checks and metrics endpoints.
+? What is auto-configuration? :: Beans configured automatically based on classpath and properties.
+? Embedded server? :: The app runs as a jar with Tomcat inside, like Kestrel.
+
+@p9-24
+Q: The Spring IoC container (ApplicationContext) creates beans and injects their dependencies, like the .NET service provider. Constructor injection is preferred; @Autowired marks an injection point and is optional on a single constructor.
+- Bean scopes: singleton (default), prototype, request, session ≈ .NET singleton, transient, scoped.
+- @Qualifier ≈ keyed services.
+? Default bean scope? :: Singleton.
+? .NET equivalent of @Qualifier? :: Keyed services with [FromKeyedServices].
+
+@p9-25
+Q: All three register beans through component scanning. @Component is generic; @Service marks business logic (semantic only); @Repository marks data access and translates database exceptions into Spring's DataAccessException hierarchy.
+- @Controller/@RestController for web layer.
+- @Configuration with @Bean for explicit registrations.
+? Is @Service functionally different? :: No, it's semantic; @Repository adds exception translation.
+? .NET equivalent of @Bean? :: Registering a service with a factory in Program.cs.
+
+@p9-26
+Q: A @RestController class with @RequestMapping("/api/shipments"); methods with @GetMapping and @PostMapping; parameters with @PathVariable, @RequestParam and @RequestBody with @Valid; returning ResponseEntity with status codes.
+```java
+@RestController @RequestMapping("/api/shipments")
+class ShipmentController {
+  private final ShipmentService svc;
+  ShipmentController(ShipmentService svc) { this.svc = svc; }
+  @GetMapping("/{id}") ResponseEntity<ShipmentDto> get(@PathVariable long id) {
+    return svc.find(id).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
+  }
+}
+```
+- Validation with Jakarta Bean Validation annotations.
+? .NET equivalent of @Valid? :: [ApiController] automatic model validation.
+? ResponseEntity equivalent? :: ActionResult / IResult.
+
+@p9-27
+Q: Configuration lives in application.yml or .properties, environment variables and @ConfigurationProperties classes (like the .NET options pattern). Profiles (dev, uat, prod) load application-{profile}.yml and activate beans with @Profile, chosen with spring.profiles.active.
+- Relaxed binding maps env vars (SPRING_DATASOURCE_URL).
+- Spring Cloud Config or AWS Parameter Store integration.
+? .NET equivalent of profiles? :: ASPNETCORE_ENVIRONMENT with appsettings.{Environment}.json.
+? Validation of config? :: @Validated on @ConfigurationProperties, like ValidateOnStart.
+
+@p9-28
+Q: JPA is the Java persistence specification; Hibernate is its most common implementation; Spring Data JPA adds repository interfaces that generate queries from method names. Compared with EF Core the ideas are similar (entities, change tracking in the persistence context, lazy loading), but migrations use Flyway or Liquibase, and queries use JPQL or the Criteria API instead of LINQ.
+- N+1 problems exist in both; fetch joins ≈ Include.
+- @Transactional ≈ explicit transactions or unit of work.
+? findByStatusAndSiteId? :: Spring Data derives the query from the method name.
+? JPQL vs LINQ? :: JPQL is string-based; LINQ is compile-time checked.
+
+@p9-29
+Q: For exceptions, @RestControllerAdvice with @ExceptionHandler methods returns ProblemDetail responses, like .NET exception middleware or IExceptionHandler. For security, the Spring Security filter chain, OAuth2 resource server for JWT validation and method security with @PreAuthorize roles.
+- SecurityFilterChain bean configures rules.
+- Spring Security filters ≈ ASP.NET Core middleware.
+? @PreAuthorize equivalent? :: [Authorize(Policy = ...)].
+? ProblemDetail? :: RFC 9457 error format supported natively in Spring 6.
+
+@p9-30
+Q: Java and C# are very similar: statically typed, garbage collected, object-oriented. C# added features earlier (LINQ, async/await, properties, records, pattern matching), has user-defined value types and runtime generics (Java erases generics); Java has a huge ecosystem, virtual threads (Java 21) and many JVM vendors.
+- Java records (16), pattern matching for switch (21).
+- Virtual threads vs async/await: different models for scalable I/O.
+? Type erasure? :: Java generics don't exist at runtime; C# generics do.
+? Virtual threads? :: Lightweight JVM threads letting blocking code scale like async.
+
+@p9-31
+Q: Choose Spring Boot when the organisation's platform, libraries and people are Java, or a JVM ecosystem (big data, certain vendors) matters; choose .NET when the team and codebase are .NET, for strong performance, LINQ and EF Core productivity, and first-class Azure and tooling support. Both are excellent; team skills and existing systems decide.
+W: I'm pragmatic, not tribal, about technology.
+? Could you work in Spring Boot? :: Yes, the concepts map directly and I'd ramp up quickly.
+? Performance difference? :: Both are fast; ASP.NET Core often benchmarks higher, but design matters more.
+
+@p9-32
+Q: It matches what I do best and want to grow: backend .NET services on cloud and event-driven systems, with ownership of design and delivery, plus room for the developer-tooling and AI-assisted engineering I've been doing. [Mention one specific thing about their product or team.]
+W: I've thought about fit specifically.
+? What would you bring in month one? :: Strong .NET delivery and a fresh look at deployment and tooling pain points.
+? What do you want to learn here? :: [Their scale or domain].
+
+@p9-33
+Q: Short term: a senior engineer who owns services end to end and raises the team's engineering standards. Longer term: a technical lead or architect for distributed systems, staying hands-on and helping teams use AI tools safely.
+W: I have clear, realistic goals.
+? How will you get there? :: Owning bigger designs, mentoring and learning system design at scale.
+? Management interest? :: Technical leadership first.
+
+@p9-34
+Q: In [2023] a [project lead] wanted very frequent status updates and changed priorities mid-sprint, disrupting the team. I asked what he needed the updates for (client reporting), offered a short written update every [morning] and a shared board, and suggested routing mid-sprint changes through the product owner. Interruptions dropped and our relationship improved.
+- Seek the need behind the behaviour.
+- Offer a process that serves both sides.
+W: I handle difficult relationships with empathy and structure.
+? Did you escalate? :: Not needed; a direct conversation solved it.
+? What did you learn? :: Visibility needs are often legitimate; meet them efficiently.
+
+@p9-35
+Q: In [2023] I estimated [a shipment reporting API] at one sprint; it took two because I missed the validation documentation and FV preparation needed in GxP. I told the product owner [mid-sprint] as soon as I saw it, split the work so the core endpoint shipped on time and the export followed, and now add validation effort to every estimate.
+- Failure handled by early transparency and scope negotiation.
+- Process change prevents repeats.
+W: I own failures early and learn from them.
+? How do you deal with failure generally? :: Acknowledge, limit impact, find the cause, change the process.
+? What would you do differently? :: Ask QA about validation effort during estimation.
+
+@p9-36
+Q: [The shipment reporting API in 2023]: I estimated one sprint and it needed two because I missed GxP validation documentation. I raised it [mid-sprint], not on the last day, and with the product owner split scope so the core endpoint went out on time and the export came next sprint. No impact on the client's plan, and I now include validation effort in every estimate.
+- Same story as the failure question; tell it consistently.
+W: I communicate risks early.
+? How early is early enough? :: As soon as you know; never the last day.
+? How do you track progress to catch slips? :: Daily check against remaining tasks, including validation.
+
+@p9-37
+Q: [The quarterly release in 2024] had a merge conflict in a shared database script and a failing integration test [two days] before FV. As release integrator I prioritised, resolved the conflict with the owners in [one hour], got the test fixed, ran the FV install overnight and flagged one incomplete feature early so it moved to the next release. FV started on time and production went live on the planned date.
+- Prioritise, communicate, protect quality.
+W: I deliver under pressure without cutting corners.
+? Did you work overnight? :: The install ran overnight; I checked results early morning.
+? How do you prevent it? :: Earlier integration and freezing shared scripts.
+
+@p9-38
+Q: Release deployments took about 6 hours and 6 people and nobody owned improving them, so I did: I built the CIRT MCP server, first in my own time and then with my lead's support, with about 77 tools, safety controls, packaging, documentation and team training. Deployments went from 6 hours to 2 and 6 people to 1, and I still own and maintain the tool.
+- Ownership includes maintenance, support and documentation, not just building.
+W: I take ownership beyond my job description.
+? How do you maintain it? :: Versioned releases, a backlog of requests and tests.
+? What if you leave? :: Docs and two other contributors can maintain it.
+
+@p9-39
+Q: My manager would say I'm reliable and take ownership: releases and production issues are in safe hands, and I bring improvements like the MCP server without being asked [and that I sometimes take on too much]. Teammates would say I'm helpful and approachable, explain things well, review carefully, and I'm the person to ask about deployments and AI tools.
+- Back each trait with an example.
+W: I'm self-aware about how others see me.
+? Criticism they'd mention? :: Taking on too much myself; I now delegate earlier.
+? How do you know? :: Appraisal feedback and peer comments.
+
+@p9-40
+Q: I prefer a collaborative team with honest reviews, clear ownership and engineers who care about quality and learning. I'm motivated by solving real problems with visible impact, like cutting deployments from 6 hours to 2, and by learning new technology. Repeated manual work and unclear requirements frustrate me; I respond by automating or asking questions early.
+W: I turn frustrations into improvements.
+? What demotivates you? :: Work with no visible purpose or impact.
+? How do you handle unclear requirements? :: Ask early, write assumptions down and confirm them.
+
+@p9-41
+Q: Example: the Shipment service. A REST API to create, get and list shipments; its own SQL Server database; it publishes ShipmentStatusChanged events through an outbox to Kafka, consumes depot status files via the SFTP integration with idempotent handlers, runs stateless on ECS with autoscaling, uses Redis for reference data, CloudWatch metrics, logs and traces, and Polly for vendor calls.
+- Indexes for list queries ([9 s to under 300 ms] fix).
+- Health checks and graceful shutdown.
+- Contract tests with consumers.
+? How does it scale? :: Stateless instances behind the ALB, autoscaled on request count.
+? How do you keep events reliable? :: Outbox plus idempotent consumers.
+
+@p9-42
+Q: .NET 6 (LTS, 2021) brought minimal APIs, minimal hosting and hot reload; .NET 8 (LTS, 2023) brought big performance gains, native AOT for more app types, TimeProvider, keyed DI services, identity API endpoints and C# 12 primary constructors; .NET 10 (LTS, November 2025) brings C# 14 (extension members, the field keyword), more performance and AOT work, built-in validation for minimal APIs and OpenAPI 3.1. Upgrades mean changing target frameworks, updating packages and fixing breaking changes.
+- Our [early 2026] upgrade: [3] services, central package management, [10–15%] p95 improvement.
+- .NET 10 breaking change example: BackgroundService.ExecuteAsync now runs entirely on a background thread.
+- .NET Upgrade Assistant and AI tools help with mechanical changes.
+? Why upgrade LTS to LTS? :: Support lifetimes and stable, planned upgrades in a regulated product.
+? What broke in your upgrade? :: [A few package APIs and analyzer warnings treated as errors], fixed and validated.
+
+@p9-43
+Q: Each .NET service is a Docker image in ECR and an ECS service with a task definition (CPU, memory, environment, secrets from Secrets Manager, task role), running across two availability zones in private subnets behind an ALB with health checks; autoscaling on CPU and request count; logs to CloudWatch; and Azure DevOps deploys with rolling updates.
+- Deployment circuit breaker with rollback.
+- Service Connect or ALB rules for routing between services.
+? How do you roll back? :: Redeploy the previous task definition revision.
+? Fargate or EC2? :: [Fargate for most services].
+
+@p9-44
+Q: [The core platform stacks were already in CloudFormation, owned by the platform team], so we extended them there; [newer, smaller pieces and tooling used Terraform modules] for reuse and multi-provider support. I can read and change both, and would standardise on one for new work.
+- Honest about history; shows understanding of both.
+? Which would you standardise on? :: Depends on platform team skills; Terraform/OpenTofu if multi-provider matters, otherwise CDK/CloudFormation.
+? Any conflicts between them? :: Kept separate ownership boundaries to avoid managing the same resource twice.
+
+@p9-45
+Q: Production IRT services run on ECS. Kubernetes YAML was used for [some internal workloads, such as the Node.js build-log summariser and the FastAPI vendor-file validator in a shared non-production cluster]: Deployments, Services, ConfigMaps and probes. My production container experience is mainly ECS, and I say so honestly.
+- Concepts transfer: tasks ≈ pods, services ≈ deployments/services.
+W: I'm honest about the depth of my experience.
+? What did you learn from K8s? :: Probes, especially startup probes (Part 3 Q30).
+? Could you run production on K8s? :: Yes, with platform support and ramp-up on operations.
+
+@p9-46
+Q: Kafka: shipment status events consumed by several services (supply, notifications, reporting), needing ordering per shipment key and replay. RabbitMQ: task-style messages like sending notifications and generating reports, where per-message acks, routing and retries matter; that's where I root-caused the outage fixed with publisher confirms.
+- Kafka key = ShipmentId; RabbitMQ topic exchange with DLQs.
+? Why not one broker? :: Different delivery semantics fit different workloads.
+? Hardest bug? :: Silent message loss without publisher confirms.
+
+@p9-47
+Q: Release deployments: an AI agent in Cursor or Claude Code uses the CIRT MCP server's tools in a loop (queue build, create release, deploy to environment, poll node status, summarise failures, retry a node) with humans confirming and approving. Also an [AutoGen experiment] with coder and reviewer agents drafting unit tests.
+- The orchestration is the agent loop plus tool design, not a custom agent framework.
+? Who's in control? :: Humans approve and confirm; the agent executes and reports.
+? What did the AutoGen experiment teach you? :: Reviewer agents catch some issues but add cost; human review still needed.
+
+@p9-48
+Q: [An internal assistant over release runbooks, deployment guides and past incident notes]: documents are chunked and embedded into a vector index; questions are embedded, top-k chunks retrieved and re-ranked, sent with the question to Azure OpenAI, and answers cite source documents; it was evaluated against [a set of 30] real team questions, and no patient data is included.
+- Chunk by headings with overlap.
+- Refreshed when documents change.
+? Which vector store? :: [Azure AI Search] with hybrid search.
+? How good was it? :: [Most answers correct with citations]; gaps fixed by improving source docs.
+
+@p9-49
+Q: [A configurable data table component] used across IRT screens: typed columns, sorting, paging, filtering, loading and empty states, row actions with role checks, and accessible keyboard navigation, documented with examples and covered by tests.
+- Generic over row type: DataTable<T>.
+- Server-side paging with React Query.
+```tsx
+type Column<T> = { key: keyof T; header: string; sortable?: boolean; render?: (row: T) => ReactNode };
+function DataTable<T>({ rows, columns, onSort }: { rows: T[]; columns: Column<T>[]; onSort?: (k: keyof T) => void }) { /* ... */ }
+```
+? How do you keep it reusable? :: Configuration via props and render functions, no screen-specific logic.
+? Accessibility? :: Proper table semantics, aria-sort and keyboard navigation.
+
+@p9-50
+Q: For the vendor file pre-validation service: Pydantic models give quick, readable schema validation, automatic OpenAPI docs, async support and high performance, and the integration team already knew Python.
+- 422 responses with field-level errors out of the box.
+? FastAPI vs Flask? :: FastAPI has built-in validation, async and docs; Flask is simpler and older.
+? How is it deployed? :: Docker image with uvicorn, same pipeline template.
+
+@p9-51
+Q: For I/O-bound glue such as the build-log summariser: fetch logs, parse text and return JSON. Node handles that well, and TypeScript MCP and HTTP libraries made it quick; core domain services stay in .NET.
+- Same logging, health and pipeline standards as .NET services.
+? Why not put it in the MCP server? :: Separate service let other tools reuse it.
+? How does it summarise? :: Finds failed steps and key error lines with patterns, returns a compact summary.
+
+@p9-52
+Q: Technically, GxP means audit trails on every data change (who, when, old and new values, reason), role-based access and e-signature rules (21 CFR Part 11), validated releases with traceability from requirement to test, change control, controlled deployments, data integrity (ALCOA+), and backups with tested restores.
+- Implemented via interceptors, database constraints, pipelines and approvals.
+? How is an e-signature implemented? :: Re-authentication with meaning of signature recorded and linked to the record.
+? How does it affect code? :: Audit fields, no hard deletes, strict validation and full tests.
+
+@p9-53
+Q: Directly, [two graduate developers in 2024]: an architecture walkthrough, pairing for [two sprints], then reviews and weekly check-ins; they shipped their first pull requests in [week two]. More broadly, [3 to 4 teammates] through code reviews, MCP tool onboarding and AI tooling sessions.
+W: I invest in growing others.
+? How do you measure mentoring success? :: Independence, quality of their work and confidence.
+? Hardest part? :: Letting them struggle a little so they learn.
+
+@p9-54
+Q: The IRT engineering organisation is roughly 100 people across several scrum teams; my own scrum team is [about 8: 5 developers, 2 QA engineers and a BA, with a shared scrum master]. As release integrator I coordinate with [5] teams for each release.
+- Be precise to stay credible.
+? How do teams coordinate? :: PI planning, scrum of scrums and release checklists.
+? Your influence across teams? :: Through release integration and the MCP tool used by multiple teams.
