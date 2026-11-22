@@ -70,6 +70,11 @@ ol.steps .t{font-weight:600}ol.steps .d{color:var(--muted);font-size:14px}
 .hidden{display:none}
 footer{color:var(--faint);font-size:13px;margin-top:40px}
 .ans{border-left:3px solid var(--accent);padding-left:10px;margin:8px 0 14px}.ansby{font-size:13px;color:var(--muted, #888);margin-bottom:4px}.jump{margin-left:6px;font:inherit;font-size:12px;border:1px solid var(--border);background:var(--bg2);color:var(--text);border-radius:999px;padding:2px 10px;cursor:pointer}.onlist{font-size:12px;opacity:.75;margin:6px 0 0}.tag.part{background:var(--bg2);border:1px solid var(--border)}
+.quick{background:var(--accentbg);border-radius:10px;padding:10px 12px;margin:12px 0}.quick .lbl{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}.quick p{margin:4px 0 0}
+h4.sec{margin:12px 0 0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+details.impress{margin:12px 0;border:1px solid var(--accent);background:var(--card)}details.impress>summary{font-weight:700;color:var(--accent);padding:10px 12px}details.impress .ibody{padding:0 12px 10px}
+.code{margin:10px 0;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--code)}.codebar{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)}.copy{font:inherit;font-size:12px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;padding:2px 10px;cursor:pointer}
+.code pre{margin:0;padding:10px 12px;overflow-x:auto;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre}
 @media (max-width:600px){.controls{position:static}.tab{font-size:14px;padding:7px 12px}h1{font-size:21px}.barrow .nm{width:100px}}
 </style>
 </head>
@@ -88,6 +93,7 @@ footer{color:var(--faint);font-size:13px;margin-top:40px}
 <input type="search" id="search" placeholder="Search, e.g. middleware, JWT, MCP, or a list number like 512" aria-label="Search">
 <label class="chk bankonly"><input type="checkbox" id="pics"> Only with pictures</label>
 <label class="chk bankonly"><input type="checkbox" id="stories"> Only with stories</label>
+<label class="chk"><input type="checkbox" id="deep"> Open "Impress" by default</label>
 <button class="btn" id="expand">Expand all</button>
 <button class="btn" id="collapse">Collapse all</button>
 </div>
@@ -110,9 +116,11 @@ var PARTS = [
  {key:'p6', label:'Part 6: IaC, Docker, K8s, CI/CD, Kafka, RabbitMQ, Testing', sum:'Answers for your list sections 10 to 17 that parts 1 to 3 did not already cover.'},
  {key:'p7', label:'Part 7: React, TS, Node/Python, SFTP, WCF, GxP', sum:'Answers for your list sections 18 to 23 that parts 1 to 3 did not already cover.'},
  {key:'p8', label:'Part 8: MCP, AI Design, Security, System Design', sum:'Answers for your list sections 24 to 27 that parts 1 to 3 did not already cover.'},
- {key:'p9', label:'Part 9: CSV, Releases, Agile, Java, HR, Verification', sum:'Answers for your list sections 28 to 34 that parts 1 to 3 did not already cover.'}
+ {key:'p9', label:'Part 9: CSV, Releases, Agile, Java, HR, Verification', sum:'Answers for your list sections 28 to 34 that parts 1 to 3 did not already cover.'},
+ {key:'p10', label:'Part 10: Deep dives (middleware & more)', sum:'Standalone deep answers for core concepts: middleware, custom middleware, filters, options, hosted services, logging, rate limiting, minimal APIs, caching, JWT, Span, channels and more.'}
 ];
 var LIST = DATA.LIST || [];
+var EN = DATA.E || {};
 var LISTN = 0; LIST.forEach(function(s){ LISTN += s.items.length; });
 var REV = {};
 LIST.forEach(function(s){ s.items.forEach(function(it){ it.refs.forEach(function(r){ (REV[r] = REV[r] || []).push(it.id); }); }); });
@@ -126,10 +134,11 @@ PARTS.forEach(function(p, pi){
   });
 });
 var BYID = {}; ALL.forEach(function(x){ BYID[x.id] = x; });
+function stext(x){ if (x._s===undefined){ var e=EN[x.id]||{}; x._s=(x.q+' '+x.a+' '+x.hook+' '+x.fu+' '+(e.q||'')+' '+(e.i||[]).join(' ')+' '+(e.f||[]).map(function(f){return f.join(' ');}).join(' ')+' '+(e.c||[]).map(function(c){return c[1];}).join(' ')).toLowerCase(); } return x._s; }
 var total = ALL.length, picTotal = ALL.filter(function(x){return x.vis;}).length, fuTotal = ALL.filter(function(x){return x.fu;}).length;
-document.getElementById('sub').textContent = total + ' questions in 9 parts, ' + picTotal + ' with a diagram or table and ' + fuTotal + ' full stories with follow-up questions. All ' + LISTN + ' questions from your list are answered: see the Your list tab. Tap a question to reveal the answer.';
+document.getElementById('sub').textContent = total + ' questions in 10 parts, each with a quick answer and an Impress-the-interviewer deep dive, ' + picTotal + ' with a diagram or table and ' + fuTotal + ' full stories with follow-up questions. All ' + LISTN + ' questions from your list are answered: see the Your list tab. Tap a question to reveal the answer.';
 
-var state = {part:'list', topic:'all', diff:'all', q:'', pics:false, stories:false};
+var state = {deep:false, part:'list', topic:'all', diff:'all', q:'', pics:false, stories:false};
 var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 var mermaidOK = typeof window.mermaid !== 'undefined';
 if (mermaidOK) { try { mermaid.initialize({startOnLoad:false, theme: dark ? 'dark' : 'default', securityLevel:'strict', flowchart:{htmlLabels:true, curve:'basis'}}); } catch(e){ mermaidOK=false; } }
@@ -223,29 +232,59 @@ function renderMermaidIn(el){
 }
 
 // ---------- list ----------
+function bl(t){ var m=/^([A-Z][^:]{1,30}):\s(.*)$/.exec(t); return m ? '<b>'+fmt(m[1])+':</b> '+fmt(m[2]) : fmt(t); }
+function codeHTML(c){ return '<div class="code"><div class="codebar"><span>'+esc(c[0])+'</span><button class="copy" type="button">Copy</button></div><pre><code>'+esc(c[1])+'</code></pre></div>'; }
 function bodyHTML(x){
+  var e = EN[x.id] || {};
   var vis = x.vis ? visHTML(DATA[x.part].VIS[x.vis]) : '';
-  var fu = '';
-  if (x.fu) {
-    fu = '<div class="fu"><h4>Likely follow-up questions</h4><ul>' + x.fu.split('||').map(function(f){ var p=f.split('::'); return '<li>'+fmt(p[0])+'<div class="a">'+fmt(p[1]||'')+'</div></li>'; }).join('') + '</ul></div>';
+  var h = '';
+  if (e.q) h += '<div class="quick"><div class="lbl">Quick answer: say this first</div><p>'+fmt(e.q)+'</p></div>';
+  if (x.a) h += '<h4 class="sec">Key points</h4><ul>' + x.a.split('|').map(function(b){return '<li>'+bl(b)+'</li>';}).join('') + '</ul>';
+  h += vis;
+  if (x.hook) h += '<p class="hook"><b>Memory hook:</b> '+fmt(x.hook)+'</p>';
+  if ((e.i && e.i.length) || (e.c && e.c.length) || (e.w && e.w.length)) {
+    h += '<details class="impress"'+(state.deep?' open':'')+'><summary>Impress the interviewer</summary><div class="ibody">';
+    if (e.i && e.i.length) h += '<ul>' + e.i.map(function(b){return '<li>'+bl(b)+'</li>';}).join('') + '</ul>';
+    if (e.c) h += e.c.map(codeHTML).join('');
+    if (e.w && e.w.length) h += '<h4 class="sec">What this shows about me</h4><ul>' + e.w.map(function(b){return '<li>'+fmt(b)+'</li>';}).join('') + '</ul>';
+    h += '</div></details>';
   }
-  var onl = REV[x.id] ? '<p class="onlist">On your list: ' + REV[x.id].map(idLabel).join(', ') + '</p>' : '';
-  return '<ul>' + x.a.split('|').map(function(b){return '<li>'+fmt(b)+'</li>';}).join('') + '</ul>' + vis +
-    '<p class="hook"><b>Memory hook:</b> '+fmt(x.hook)+'</p>' + fu + onl;
+  var fus = [];
+  if (x.fu) x.fu.split('||').forEach(function(f){ var p=f.split('::'); fus.push([p[0], p[1]||'']); });
+  if (e.f) e.f.forEach(function(f){ fus.push(f); });
+  if (fus.length) h += '<div class="fu"><h4>Likely follow-up questions</h4><ul>' + fus.map(function(p){ return '<li>'+fmt(p[0])+'<div class="a">'+fmt(p[1])+'</div></li>'; }).join('') + '</ul></div>';
+  if (REV[x.id]) h += '<p class="onlist">On your list: ' + REV[x.id].map(idLabel).join(', ') + '</p>';
+  return h;
+}
+function fillBody(d){
+  var b = d.querySelector(':scope > .body');
+  if (!b || b.getAttribute('data-done')) return;
+  b.setAttribute('data-done','1');
+  if (d.hasAttribute('data-id')) b.innerHTML = bodyHTML(BYID[d.getAttribute('data-id')]);
+  else if (d.hasAttribute('data-lid')) b.innerHTML = listBody(d.getAttribute('data-lid'));
+  b.querySelectorAll('.jump').forEach(function(j){ j.onclick = function(ev){ ev.preventDefault(); jumpTo(j.getAttribute('data-jump')); }; });
+}
+function wireDetails(root){
+  root.querySelectorAll('details[data-id], details[data-lid]').forEach(function(d){
+    d.addEventListener('toggle', function(){ if (d.open) { fillBody(d); renderMermaidIn(d); } });
+  });
 }
 function qHTML(x){
   return '<details data-id="'+x.id+'"><summary><span class="q"><span class="num">Q'+x.n+'.</span>'+fmt(x.q)+'</span>' +
     (x.fu ? '<span class="tag story">Story</span>' : '') + (x.vis ? '<span class="tag pic">Picture</span>' : '') +
-    '<span class="tag '+x.diff+'">'+DL[x.diff]+'</span></summary><div class="body">' + bodyHTML(x) + '</div></details>';
+    '<span class="tag '+x.diff+'">'+DL[x.diff]+'</span></summary><div class="body"></div></details>';
 }
-function listItemHTML(sec, it){
-  var refs = it.refs.map(function(r){ return BYID[r]; }).filter(Boolean);
-  var parts = refs.map(function(x){ return 'Part ' + x.part.slice(1); });
-  var body = refs.map(function(x){
+var LBYID = {}; LIST.forEach(function(sec){ sec.items.forEach(function(it){ LBYID[it.id] = it; }); });
+function listBody(lid){
+  var it = LBYID[lid];
+  return it.refs.map(function(r){ return BYID[r]; }).filter(Boolean).map(function(x){
     return '<div class="ans"><div class="ansby">Answered by Part ' + x.part.slice(1) + ', Q' + x.n + ': ' + fmt(x.q) + ' <button class="jump" data-jump="' + x.id + '">Open in Part ' + x.part.slice(1) + '</button></div>' + bodyHTML(x) + '</div>';
   }).join('');
+}
+function listItemHTML(sec, it){
+  var parts = it.refs.map(function(r){ var x = BYID[r]; return x ? 'Part ' + x.part.slice(1) : ''; });
   return '<details data-lid="' + esc(it.id) + '"><summary><span class="q"><span class="num">' + esc(idLabel(it.id)) + '</span>' + fmt(it.text) + '</span>' +
-    '<span class="tag part">' + esc(parts.filter(function(v,i,a){return a.indexOf(v)===i;}).join(', ')) + '</span></summary><div class="body">' + body + '</div></details>';
+    '<span class="tag part">' + esc(parts.filter(function(v,i,a){return v && a.indexOf(v)===i;}).join(', ')) + '</span></summary><div class="body"></div></details>';
 }
 function renderList(){
   var s = state.q.trim().toLowerCase();
@@ -254,7 +293,7 @@ function renderList(){
     if (state.topic!=='all' && state.topic!=='list:'+sec.n) return;
     var its = sec.items.filter(function(it){
       if (!s) return true;
-      var txt = it.text + ' ' + it.refs.map(function(r){ var x = BYID[r]; return x ? x.q + ' ' + x.a : ''; }).join(' ');
+      var txt = it.text + ' ' + it.refs.map(function(r){ var x = BYID[r]; return x ? stext(x) : ''; }).join(' ');
       return txt.toLowerCase().indexOf(s) >= 0 || idLabel(it.id).toLowerCase() === s || it.id === s.replace('#','');
     });
     if (!its.length) return;
@@ -268,10 +307,7 @@ function renderList(){
   document.getElementById('count').textContent = 'Showing ' + n + ' of ' + LISTN + ' questions from your list, in your file\'s order. Open one to see its answer.';
   document.getElementById('callout').classList.remove('hidden');
   document.getElementById('partsum').textContent = 'Every question from your list, numbered as in your file. Each one shows the answer that covers it, from any part.';
-  document.querySelectorAll('#list details').forEach(function(d){
-    d.addEventListener('toggle', function(){ if (d.open) renderMermaidIn(d); });
-  });
-  document.querySelectorAll('#list .jump').forEach(function(b){ b.onclick = function(e){ e.preventDefault(); jumpTo(b.getAttribute('data-jump')); }; });
+  wireDetails(document.getElementById('list'));
 }
 function jumpTo(id){
   var x = BYID[id]; if (!x) return;
@@ -279,7 +315,7 @@ function jumpTo(id){
   document.getElementById('search').value = ''; document.getElementById('pics').checked = false; document.getElementById('stories').checked = false;
   buildTabs(); buildTopic(); buildDiff(); render(); history.replaceState(null,'','#'+state.part);
   var d = document.querySelector('#list details[data-id="' + id + '"]');
-  if (d) { d.open = true; renderMermaidIn(d); d.scrollIntoView({block:'start'}); }
+  if (d) { d.open = true; fillBody(d); renderMermaidIn(d); d.scrollIntoView({block:'start'}); }
 }
 function filtered(){
   var s = state.q.trim().toLowerCase();
@@ -289,7 +325,7 @@ function filtered(){
     if (state.diff!=='all' && x.diff!==state.diff) return false;
     if (state.pics && !x.vis) return false;
     if (state.stories && !x.fu) return false;
-    if (s && (x.q+' '+x.a+' '+x.hook+' '+x.fu).toLowerCase().indexOf(s)<0) return false;
+    if (s && stext(x).indexOf(s)<0) return false;
     return true;
   });
 }
@@ -314,10 +350,8 @@ function render(){
   document.getElementById('count').textContent = 'Showing ' + items.length + ' of ' + scope + ' questions.';
   document.getElementById('callout').classList.toggle('hidden', state.part==='p1' || state.part==='p2');
   var P = PARTS.filter(function(p){return p.key===state.part;})[0];
-  document.getElementById('partsum').textContent = P ? P.sum : 'All nine parts in one list.';
-  document.querySelectorAll('#list details').forEach(function(d){
-    d.addEventListener('toggle', function(){ if (d.open) renderMermaidIn(d); });
-  });
+  document.getElementById('partsum').textContent = P ? P.sum : 'All ten parts in one list.';
+  wireDetails(document.getElementById('list'));
 }
 function buildTabs(){
   var t = document.getElementById('tabs');
@@ -339,9 +373,17 @@ function buildDiff(){
 document.getElementById('topic').onchange = function(e){ state.topic = e.target.value; render(); };
 document.getElementById('search').oninput = function(e){ state.q = e.target.value; render(); };
 document.getElementById('pics').onchange = function(e){ state.pics = e.target.checked; render(); };
+document.getElementById('deep').onchange = function(e){ state.deep = e.target.checked; document.querySelectorAll('#list details.impress').forEach(function(d){ d.open = state.deep; }); };
 document.getElementById('stories').onchange = function(e){ state.stories = e.target.checked; render(); };
-document.getElementById('expand').onclick = function(){ document.querySelectorAll('#list details').forEach(function(d){ d.open = true; }); };
-document.getElementById('collapse').onclick = function(){ document.querySelectorAll('#list details').forEach(function(d){ d.open = false; }); };
+document.getElementById('expand').onclick = function(){ document.querySelectorAll('#list details[data-id], #list details[data-lid]').forEach(function(d){ d.open = true; }); };
+document.getElementById('collapse').onclick = function(){ document.querySelectorAll('#list details[data-id], #list details[data-lid]').forEach(function(d){ d.open = false; }); };
+document.addEventListener('click', function(ev){
+  var b = ev.target.closest ? ev.target.closest('.copy') : null; if (!b) return;
+  var txt = b.parentNode.parentNode.querySelector('code').textContent;
+  function done(){ b.textContent = 'Copied'; setTimeout(function(){ b.textContent = 'Copy'; }, 1500); }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(done, fallback); else fallback();
+  function fallback(){ var t = document.createElement('textarea'); t.value = txt; t.style.position='fixed'; t.style.opacity='0'; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); done(); } catch(e){} t.remove(); }
+});
 var h = (location.hash||'').slice(1); if (h==='list' || h==='all' || PARTS.some(function(p){return p.key===h;})) state.part = h;
 buildTabs(); buildTopic(); buildDiff(); render();
 window.__QA = {total: total, pics: picTotal, stories: fuTotal, list: LISTN, jumpTo: jumpTo};
