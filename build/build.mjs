@@ -35,8 +35,9 @@ function clean(paras) {
 }
 const KEEPVIS = { Diagram: 1, Sequence: 1, Pyramid: 1, ColumnSeries: 1 };   // pictures only; tables/step lists would just be more to read
 const unbrDeep = v => typeof v === 'string' ? unbr(v) : Array.isArray(v) ? v.map(unbrDeep) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unbrDeep(x)])) : v;
+const byId = {}; const byIdDup = id => byId[id] && byId[id].dup;
 const topics = {}, cards = [], answers = {}, notes = [], slugs = {}, stats = [];
-const bad = [];
+const bad = [], shade = {};
 for (const key of KEYS) {
   const P = d[key];
   P.ORDER.forEach(t => { topics[key + ':' + t] = P.T[t]; });
@@ -51,9 +52,12 @@ for (const key of KEYS) {
     const c = { id, p: key, t: q[0], q: title, sl: slug };
     if (k.size) c.k = [...k].join(', ');
     if (DUPS[id]) c.dup = DUPS[id];
-    cards.push(c);
-    const s = clean(e.x), w = s.reduce((a, x) => a + words(x), 0);
-    if (/\[|\]/.test(s.join(' '))) bad.push(id + ' bracket left');
+    cards.push(c); byId[id] = c;
+    const m = {};   // shaded ranges per paragraph: text that is also covered in another answer
+    const s = clean(e.x).map((p, pi) => { let out = '', r = []; p.split(/(\{\{|\}\})/).forEach(t => { if (t === '{{') r.push([out.length]); else if (t === '}}') r[r.length - 1].push(out.length); else out += t; }); if (r.length) m[pi] = r; return out; });
+    const w = s.reduce((a, x) => a + words(x), 0);
+    if (/\[|\]|\{\{|\}\}/.test(s.join(' '))) bad.push(id + ' bracket left');
+    shade[id] = m;
     if (/\bas (I )?mentioned\b|\bsee (part|section|question)\b|\bother answer\b/i.test(s.join(' '))) bad.push(id + ' cross-reference');
     const a = { s };
     const vis = q[5] ? P.VIS[q[5]] : null;
@@ -66,8 +70,34 @@ for (const key of KEYS) {
   });
 }
 if (bad.length) { console.error('PROBLEMS', bad.join('; ')); process.exit(1); }
+// automatic overlap: near-duplicate sentences across different answers (content-word Jaccard or 3-word-shingle containment >= 0.45,
+// at least 7 content words, shingles used by more than 40 sentences ignored as generic). A shared sentence is shaded in the answer
+// whose title it is less about, so "What is middleware?" keeps its own definition plain while "custom middleware" shows it shaded.
+{
+  const STOPW = new Set('a an the is are was were be been of to in on and or for with as at by from that this it its i we our you your my me so then than but if not no do does did can could would should will just also into about which what when where how who there their they them one each every all any some more most very like up out over only after before because while has have had using use used uses'.split(' '));
+  const stw = w => w.length > 4 ? w.replace(/(ing|ed|es|s)$/, '') : w;
+  const tk = x => (x.toLowerCase().match(/[a-z0-9][a-z0-9.+#-]*/g) || []).map(w => w.replace(/\.$/, '')).filter(w => !STOPW.has(w)).map(stw);
+  const titleT = {}; cards.forEach(c => { titleT[c.id] = new Set(tk(c.q)); });
+  const S = [];
+  for (const c of cards) { if (c.dup) continue; answers[c.id].s.forEach((p, pi) => { let pos = 0; for (const t of p.split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/)) { const st = p.indexOf(t, pos); pos = st + t.length; const k = tk(t); const sh = new Set(); for (let i = 0; i + 3 <= k.length; i++) sh.add(k.slice(i, i + 3).join(' ')); S.push({id: c.id, pi, st, en: st + t.length, set: new Set(k), sh}); } }); }
+  const inv = {}; S.forEach((x, i) => x.sh.forEach(g => (inv[g] = inv[g] || []).push(i)));
+  const tscore = (x, id) => { let n = 0; titleT[id].forEach(w => { if (x.set.has(w)) n++; }); return n; };
+  let auto = 0;
+  S.forEach(x => {
+    if (x.set.size < 7) return;
+    const cnt = {}; x.sh.forEach(g => { if (inv[g].length > 40) return; inv[g].forEach(j => { if (S[j].id !== x.id) cnt[j] = (cnt[j] || 0) + 1; }); });
+    let hit = false;
+    for (const j in cnt) { const o = S[j]; let n = 0; x.set.forEach(w => { if (o.set.has(w)) n++; }); const sc = Math.max(n / (x.set.size + o.set.size - n), cnt[j] / Math.max(1, x.sh.size));
+      if (sc >= 0.45 && !(tscore(x, x.id) > tscore(x, o.id))) { hit = true; break; } }
+    if (!hit) return;
+    const m = shade[x.id], r = (m[x.pi] = m[x.pi] || []);
+    if (!r.some(([a, b]) => a <= x.st && b >= x.en)) { r.push([x.st, x.en]); auto++; }
+  });
+  for (const id in shade) { const m = shade[id]; for (const pi in m) { const r = m[pi].sort((a, b) => a[0] - b[0]), out = []; r.forEach(([a, b]) => { const l = out[out.length - 1]; if (l && a <= l[1] + 1) l[1] = Math.max(l[1], b); else out.push([a, b]); }); m[pi] = out; } if (Object.keys(m).length) answers[id].m = m; }
+  console.log('shaded answers', Object.keys(answers).filter(id => answers[id].m && !byIdDup(id)).length, 'auto sentences', auto);
+}
 // "also asked as": your list items + merged duplicates, so every wording is searchable
-const byId = {}; cards.forEach(c => byId[c.id] = c);
+
 const aka = {};
 items.forEach(it => it.refs.forEach(r => { const tgt = byId[r] && byId[r].dup ? byId[r].dup : r; (aka[tgt] = aka[tgt] || []).push(it.text); }));
 cards.forEach(c => { if (c.dup) (aka[c.dup] = aka[c.dup] || []).push(c.q); });
@@ -91,7 +121,7 @@ fs.writeFileSync(OUT + '/index.html', shell.replace(/__V__/g, hash).replace('<!-
 const inline = {}; for (const f in files) inline[f] = JSON.parse(files[f]);
 fs.writeFileSync(OUT + '/interview-prep.html', shell.replace(/__V__/g, hash).replace('<!--CSS-->', () => '<style>' + css + '</style>')
   .replace('<!--JS-->', () => '<script>window.__V="' + hash + '";window.__SINGLE=1;window.__INLINE=' + JSON.stringify(inline).replace(/</g, '\\u003c') + ';</script><script>' + js.replace(/<\/script/gi, '<\\/script') + '</script>'));
-fs.writeFileSync(OUT + '/NOTES-invented-details.md', '# Invented details (private notes)\n\n' +
+if (process.env.NOTES) fs.writeFileSync(OUT + '/NOTES-invented-details.md', '# Invented details (private notes)\n\n' +
   'Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. ' +
   'On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.\n\n' +
   'Facts that come from the resume (not invented): deployments 6 hours to 2, 6 people to 1, about 77 MCP tools, the CIRT MCP server, the ~100-member engineering organisation.\n\n' +

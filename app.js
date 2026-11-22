@@ -238,7 +238,7 @@ function renderResults() {
   var raw = inp.value;
   if (raw === lastQ && resEl.childNodes.length) return;
   lastQ = raw;
-  if (!raw.trim()) { resEl.innerHTML = ''; hintEl.textContent = 'Type a question or a topic, then tap it to read the answer.'; hintEl.hidden = false; return; }
+  if (!raw.trim()) { resEl.innerHTML = ''; hintEl.textContent = 'Type a question or a topic, then tap it to read the answer. Shaded text is also covered in a related answer.'; hintEl.hidden = false; return; }
   var r = search(raw).slice(0, MAX);
   hintEl.hidden = !!r.length; hintEl.textContent = r.length ? '' : 'No match. Try fewer or different words.';
   resEl.innerHTML = r.map(function (x) { return '<li><a href="#q/' + x.c.sl + '" data-id="' + x.c.id + '">' + hl(x.c.q, raw) + '</a></li>'; }).join('');
@@ -260,9 +260,16 @@ function showAnswer(c) {
   loadAnswers().then(function (A) {
     if (ansV.hidden || $('#aq').textContent !== c.q) return;
     var a = A[c.id]; if (!a) { body.innerHTML = '<p>Answer not found.</p>'; return; }
-    body.innerHTML = a.s.map(function (p) { return '<p>' + fmt(p) + '</p>'; }).join('') + (a.v ? visHTML(a.v) : '');
+    body.innerHTML = a.s.map(function (p, i) { var r = a.m && a.m[i], whole = r && r.length === 1 && r[0][0] === 0 && r[0][1] >= p.length; return whole ? '<p class="also-p">' + fmt(p) + '</p>' : '<p>' + shaded(p, r) + '</p>'; }).join('') + (a.v ? visHTML(a.v) : '');
     renderMermaidIn(body);
   }).catch(function (e) { body.innerHTML = '<p>Could not load the answer. Check your connection and try again.</p>'; console.error(e); });
+}
+// passages also covered in another answer get a soft tint (full text stays in both)
+function shaded(p, r) {
+  if (!r || !r.length) return fmt(p);
+  var out = '', at = 0;
+  r.forEach(function (x) { out += fmt(p.slice(at, x[0])) + '<span class="also">' + fmt(p.slice(x[0], x[1])) + '</span>'; at = x[1]; });
+  return out + fmt(p.slice(at));
 }
 var cameFromSearch = false;
 function route() {

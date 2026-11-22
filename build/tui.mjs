@@ -23,6 +23,8 @@ for (const [w, h, mobile] of [[390, 844, true], [1280, 900, false]]) {
   await pg.type('#q', 'custom middleware', {delay: 10}); await new Promise(r => setTimeout(r, 200));
   await pg.click('#res a'); await pg.waitForFunction(() => !document.querySelector('#answer').hidden && document.querySelectorAll('#abody p').length > 1);
   const av = await pg.evaluate(() => ({hash: location.hash, q: document.querySelector('#aq').textContent, controls: [...document.querySelectorAll('button,select,textarea,a,input')].filter(e => e.offsetParent).map(e => e.id || e.tagName)}));
+  const sh = await pg.evaluate(() => { const sp = [...document.querySelectorAll('#abody .also, #abody .also-p')]; const first = document.querySelector('#abody p'); const cs = sp[0] && getComputedStyle(sp[0]); return {n: sp.length, introShaded: !!(first && (first.classList.contains('also-p') || first.querySelector('.also')) && /pipeline of components called middleware/.test((first.classList.contains('also-p') ? first : first.querySelector('.also')).textContent)), bg: cs && cs.backgroundColor}; });
+  log(sh.n > 0 && sh.introShaded && sh.bg && sh.bg !== 'rgba(0, 0, 0, 0)', w + 'px custom middleware answer: middleware intro shaded (' + sh.n + ' shaded passages, tint ' + sh.bg + ')');
   log(/^#q\//.test(av.hash) && av.controls.length === 1 && av.controls[0] === 'back', w + 'px answer view ' + av.hash + ': visible controls ' + JSON.stringify(av.controls));
   await new Promise(r => setTimeout(r, 1500));
   if (mobile) { await pg.screenshot({path: SHOTS + '/shot-answer-390.png'}); await pg.screenshot({path: SHOTS + '/shot-answer-390-full.png', fullPage: true}); } else await pg.screenshot({path: SHOTS + '/shot-answer-1280.png'});
