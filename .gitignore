@@ -3,3 +3,4 @@ build/package-lock.json
 build/*.png
 build/*.txt
 build/p*.mjs
+user-questions.txt

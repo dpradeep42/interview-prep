@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild';
 import fs from 'fs';
 const out = {};
-for (const i of [1,2,3]) {
+for (const i of [1,2,3,4,5,6,7,8,9]) {
   let src = fs.readFileSync(`p${i}.tsx`,'utf8');
   src = src.replace(/^import .*$/mg, '');
   src = src.replace(/export default function App/, 'function App');

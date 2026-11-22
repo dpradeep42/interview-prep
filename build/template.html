@@ -69,6 +69,7 @@ ol.steps .t{font-weight:600}ol.steps .d{color:var(--muted);font-size:14px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
 .hidden{display:none}
 footer{color:var(--faint);font-size:13px;margin-top:40px}
+.ans{border-left:3px solid var(--accent);padding-left:10px;margin:8px 0 14px}.ansby{font-size:13px;color:var(--muted, #888);margin-bottom:4px}.jump{margin-left:6px;font:inherit;font-size:12px;border:1px solid var(--border);background:var(--bg2);color:var(--text);border-radius:999px;padding:2px 10px;cursor:pointer}.onlist{font-size:12px;opacity:.75;margin:6px 0 0}.tag.part{background:var(--bg2);border:1px solid var(--border)}
 @media (max-width:600px){.controls{position:static}.tab{font-size:14px;padding:7px 12px}h1{font-size:21px}.barrow .nm{width:100px}}
 </style>
 </head>
@@ -83,10 +84,10 @@ footer{color:var(--faint);font-size:13px;margin-top:40px}
 <div class="callout hidden" id="callout"><b>Bracketed details are suggestions.</b> Every story here is ready to tell. Each number, date or duration in [square brackets] is a suggested detail: change it to what fits you and keep it the same in every answer. Figures without brackets (6 hours to 2, 6 people to 1, about 77 tools, a ~100-member team) come from your resume.</div>
 <div class="controls">
 <select id="topic" aria-label="Topic"></select>
-<div class="seg" id="diff"></div>
-<input type="search" id="search" placeholder="Search questions and answers, e.g. middleware, JWT, MCP" aria-label="Search">
-<label class="chk"><input type="checkbox" id="pics"> Only with pictures</label>
-<label class="chk"><input type="checkbox" id="stories"> Only with stories</label>
+<div class="seg bankonly" id="diff"></div>
+<input type="search" id="search" placeholder="Search, e.g. middleware, JWT, MCP, or a list number like 512" aria-label="Search">
+<label class="chk bankonly"><input type="checkbox" id="pics"> Only with pictures</label>
+<label class="chk bankonly"><input type="checkbox" id="stories"> Only with stories</label>
 <button class="btn" id="expand">Expand all</button>
 <button class="btn" id="collapse">Collapse all</button>
 </div>
@@ -102,9 +103,20 @@ footer{color:var(--faint);font-size:13px;margin-top:40px}
 var DATA = JSON.parse(document.getElementById('data').textContent);
 var PARTS = [
  {key:'p1', label:'Part 1: Core Technical', sum:'C#, .NET, ASP.NET Core, EF Core, WCF, SQL, testing, frontend and the Node/Python/Java stacks.'},
- {key:'p2', label:'Part 2: Cloud, DevOps, Security, AI and System Design', sum:'AWS, IaC, containers, CI/CD, observability, Kafka and RabbitMQ, security, MCP and AI tooling, and system design for clinical-trial workloads.'},
- {key:'p3', label:'Part 3: Projects, Scenarios and HR', sum:'Your resume story, project deep-dives, production scenarios, STAR behavioural answers, Agile and HR.'}
+ {key:'p2', label:'Part 2: Cloud, DevOps, Security, AI, Design', sum:'AWS, IaC, containers, CI/CD, observability, Kafka and RabbitMQ, security, MCP and AI tooling, and system design for clinical-trial workloads.'},
+ {key:'p3', label:'Part 3: Projects, Scenarios, HR', sum:'Your resume story, project deep-dives, production scenarios, STAR behavioural answers, Agile and HR.'},
+ {key:'p4', label:'Part 4: Resume, C#, ASP.NET Core, Web API', sum:'Answers for your list sections 1 to 5 that parts 1 to 3 did not already cover.'},
+ {key:'p5', label:'Part 5: EF Core, SQL, Microservices, AWS', sum:'Answers for your list sections 6 to 9 that parts 1 to 3 did not already cover.'},
+ {key:'p6', label:'Part 6: IaC, Docker, K8s, CI/CD, Kafka, RabbitMQ, Testing', sum:'Answers for your list sections 10 to 17 that parts 1 to 3 did not already cover.'},
+ {key:'p7', label:'Part 7: React, TS, Node/Python, SFTP, WCF, GxP', sum:'Answers for your list sections 18 to 23 that parts 1 to 3 did not already cover.'},
+ {key:'p8', label:'Part 8: MCP, AI Design, Security, System Design', sum:'Answers for your list sections 24 to 27 that parts 1 to 3 did not already cover.'},
+ {key:'p9', label:'Part 9: CSV, Releases, Agile, Java, HR, Verification', sum:'Answers for your list sections 28 to 34 that parts 1 to 3 did not already cover.'}
 ];
+var LIST = DATA.LIST || [];
+var LISTN = 0; LIST.forEach(function(s){ LISTN += s.items.length; });
+var REV = {};
+LIST.forEach(function(s){ s.items.forEach(function(it){ it.refs.forEach(function(r){ (REV[r] = REV[r] || []).push(it.id); }); }); });
+function idLabel(id){ var m = /^(\d+)f(\d+)$/.exec(id); return m ? ('Section ' + m[1] + ' follow-up ' + m[2]) : ('#' + id); }
 var DL = {B:'Basic', I:'Intermediate', A:'Advanced'};
 var ALL = [];
 PARTS.forEach(function(p, pi){
@@ -113,10 +125,11 @@ PARTS.forEach(function(p, pi){
     ALL.push({part:p.key, pi:pi, n:i+1, topic:q[0], diff:q[1], q:q[2], a:q[3], hook:q[4], vis:q[5]||'', fu:q[6]||'', id:p.key+'-'+(i+1)});
   });
 });
+var BYID = {}; ALL.forEach(function(x){ BYID[x.id] = x; });
 var total = ALL.length, picTotal = ALL.filter(function(x){return x.vis;}).length, fuTotal = ALL.filter(function(x){return x.fu;}).length;
-document.getElementById('sub').textContent = total + ' questions from your resume, ' + picTotal + ' with a diagram or table and ' + fuTotal + ' full stories with follow-up questions. Tap a question to reveal the answer.';
+document.getElementById('sub').textContent = total + ' questions in 9 parts, ' + picTotal + ' with a diagram or table and ' + fuTotal + ' full stories with follow-up questions. All ' + LISTN + ' questions from your list are answered: see the Your list tab. Tap a question to reveal the answer.';
 
-var state = {part:'p1', topic:'all', diff:'all', q:'', pics:false, stories:false};
+var state = {part:'list', topic:'all', diff:'all', q:'', pics:false, stories:false};
 var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 var mermaidOK = typeof window.mermaid !== 'undefined';
 if (mermaidOK) { try { mermaid.initialize({startOnLoad:false, theme: dark ? 'dark' : 'default', securityLevel:'strict', flowchart:{htmlLabels:true, curve:'basis'}}); } catch(e){ mermaidOK=false; } }
@@ -125,6 +138,7 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 function fmt(s){return esc(s).replace(/`([^`]+)`/g,'<code>$1</code>');}
 function mesc(s){return String(s).replace(/[#&<>";]/g,function(c){return '#'+c.charCodeAt(0)+';';});}
 function topicsFor(part){
+  if (part==='list') return LIST.map(function(sec){ return {k:'list:'+sec.n, label:sec.n+'. '+sec.title, part:'list', t:String(sec.n)}; });
   if (part==='all') { var o=[]; PARTS.forEach(function(p){ DATA[p.key].ORDER.forEach(function(t){ o.push({k:p.key+':'+t, label:DATA[p.key].T[t], part:p.key, t:t}); }); }); return o; }
   return DATA[part].ORDER.map(function(t){ return {k:part+':'+t, label:DATA[part].T[t], part:part, t:t}; });
 }
@@ -209,17 +223,63 @@ function renderMermaidIn(el){
 }
 
 // ---------- list ----------
-function qHTML(x){
+function bodyHTML(x){
   var vis = x.vis ? visHTML(DATA[x.part].VIS[x.vis]) : '';
   var fu = '';
   if (x.fu) {
     fu = '<div class="fu"><h4>Likely follow-up questions</h4><ul>' + x.fu.split('||').map(function(f){ var p=f.split('::'); return '<li>'+fmt(p[0])+'<div class="a">'+fmt(p[1]||'')+'</div></li>'; }).join('') + '</ul></div>';
   }
+  var onl = REV[x.id] ? '<p class="onlist">On your list: ' + REV[x.id].map(idLabel).join(', ') + '</p>' : '';
+  return '<ul>' + x.a.split('|').map(function(b){return '<li>'+fmt(b)+'</li>';}).join('') + '</ul>' + vis +
+    '<p class="hook"><b>Memory hook:</b> '+fmt(x.hook)+'</p>' + fu + onl;
+}
+function qHTML(x){
   return '<details data-id="'+x.id+'"><summary><span class="q"><span class="num">Q'+x.n+'.</span>'+fmt(x.q)+'</span>' +
     (x.fu ? '<span class="tag story">Story</span>' : '') + (x.vis ? '<span class="tag pic">Picture</span>' : '') +
-    '<span class="tag '+x.diff+'">'+DL[x.diff]+'</span></summary><div class="body"><ul>' +
-    x.a.split('|').map(function(b){return '<li>'+fmt(b)+'</li>';}).join('') + '</ul>' + vis +
-    '<p class="hook"><b>Memory hook:</b> '+fmt(x.hook)+'</p>' + fu + '</div></details>';
+    '<span class="tag '+x.diff+'">'+DL[x.diff]+'</span></summary><div class="body">' + bodyHTML(x) + '</div></details>';
+}
+function listItemHTML(sec, it){
+  var refs = it.refs.map(function(r){ return BYID[r]; }).filter(Boolean);
+  var parts = refs.map(function(x){ return 'Part ' + x.part.slice(1); });
+  var body = refs.map(function(x){
+    return '<div class="ans"><div class="ansby">Answered by Part ' + x.part.slice(1) + ', Q' + x.n + ': ' + fmt(x.q) + ' <button class="jump" data-jump="' + x.id + '">Open in Part ' + x.part.slice(1) + '</button></div>' + bodyHTML(x) + '</div>';
+  }).join('');
+  return '<details data-lid="' + esc(it.id) + '"><summary><span class="q"><span class="num">' + esc(idLabel(it.id)) + '</span>' + fmt(it.text) + '</span>' +
+    '<span class="tag part">' + esc(parts.filter(function(v,i,a){return a.indexOf(v)===i;}).join(', ')) + '</span></summary><div class="body">' + body + '</div></details>';
+}
+function renderList(){
+  var s = state.q.trim().toLowerCase();
+  var html = '', toc = '', n = 0;
+  LIST.forEach(function(sec){
+    if (state.topic!=='all' && state.topic!=='list:'+sec.n) return;
+    var its = sec.items.filter(function(it){
+      if (!s) return true;
+      var txt = it.text + ' ' + it.refs.map(function(r){ var x = BYID[r]; return x ? x.q + ' ' + x.a : ''; }).join(' ');
+      return txt.toLowerCase().indexOf(s) >= 0 || idLabel(it.id).toLowerCase() === s || it.id === s.replace('#','');
+    });
+    if (!its.length) return;
+    n += its.length;
+    var gid = 'l-' + sec.n;
+    html += '<h2 id="' + gid + '">' + esc(sec.n + '. ' + sec.title) + '</h2>' + its.map(function(it){ return listItemHTML(sec, it); }).join('');
+    toc += '<a href="#' + gid + '">' + esc(sec.n + '. ' + sec.title) + ' (' + its.length + ')</a>';
+  });
+  document.getElementById('list').innerHTML = html || '<p class="count">No questions match this search.</p>';
+  document.getElementById('toc').innerHTML = toc;
+  document.getElementById('count').textContent = 'Showing ' + n + ' of ' + LISTN + ' questions from your list, in your file\'s order. Open one to see its answer.';
+  document.getElementById('callout').classList.remove('hidden');
+  document.getElementById('partsum').textContent = 'Every question from your list, numbered as in your file. Each one shows the answer that covers it, from any part.';
+  document.querySelectorAll('#list details').forEach(function(d){
+    d.addEventListener('toggle', function(){ if (d.open) renderMermaidIn(d); });
+  });
+  document.querySelectorAll('#list .jump').forEach(function(b){ b.onclick = function(e){ e.preventDefault(); jumpTo(b.getAttribute('data-jump')); }; });
+}
+function jumpTo(id){
+  var x = BYID[id]; if (!x) return;
+  state.part = x.part; state.topic = 'all'; state.q = ''; state.diff = 'all'; state.pics = false; state.stories = false;
+  document.getElementById('search').value = ''; document.getElementById('pics').checked = false; document.getElementById('stories').checked = false;
+  buildTabs(); buildTopic(); buildDiff(); render(); history.replaceState(null,'','#'+state.part);
+  var d = document.querySelector('#list details[data-id="' + id + '"]');
+  if (d) { d.open = true; renderMermaidIn(d); d.scrollIntoView({block:'start'}); }
 }
 function filtered(){
   var s = state.q.trim().toLowerCase();
@@ -234,6 +294,9 @@ function filtered(){
   });
 }
 function render(){
+  var listMode = state.part==='list';
+  document.querySelectorAll('.bankonly').forEach(function(e){ e.style.display = listMode ? 'none' : ''; });
+  if (listMode) { renderList(); return; }
   var items = filtered();
   var groups = topicsFor(state.part);
   var html = '', toc = '';
@@ -249,16 +312,16 @@ function render(){
   document.getElementById('toc').innerHTML = toc;
   var scope = state.part==='all' ? total : DATA[state.part].QS.length;
   document.getElementById('count').textContent = 'Showing ' + items.length + ' of ' + scope + ' questions.';
-  document.getElementById('callout').classList.toggle('hidden', !(state.part==='p3' || state.part==='all'));
+  document.getElementById('callout').classList.toggle('hidden', state.part==='p1' || state.part==='p2');
   var P = PARTS.filter(function(p){return p.key===state.part;})[0];
-  document.getElementById('partsum').textContent = P ? P.sum : 'All three parts in one list.';
+  document.getElementById('partsum').textContent = P ? P.sum : 'All nine parts in one list.';
   document.querySelectorAll('#list details').forEach(function(d){
     d.addEventListener('toggle', function(){ if (d.open) renderMermaidIn(d); });
   });
 }
 function buildTabs(){
   var t = document.getElementById('tabs');
-  var opts = PARTS.map(function(p){return {k:p.key,l:p.label+' ('+DATA[p.key].QS.length+')'};}).concat([{k:'all',l:'All ('+total+')'}]);
+  var opts = [{k:'list',l:'Your list ('+LISTN+')'}].concat(PARTS.map(function(p){return {k:p.key,l:p.label+' ('+DATA[p.key].QS.length+')'};})).concat([{k:'all',l:'All parts ('+total+')'}]);
   t.innerHTML = opts.map(function(o){return '<button class="tab'+(o.k===state.part?' on':'')+'" data-k="'+o.k+'">'+esc(o.l)+'</button>';}).join('');
   t.querySelectorAll('button').forEach(function(b){ b.onclick=function(){ state.part=b.getAttribute('data-k'); state.topic='all'; buildTabs(); buildTopic(); render(); history.replaceState(null,'','#'+state.part); }; });
 }
@@ -279,9 +342,9 @@ document.getElementById('pics').onchange = function(e){ state.pics = e.target.ch
 document.getElementById('stories').onchange = function(e){ state.stories = e.target.checked; render(); };
 document.getElementById('expand').onclick = function(){ document.querySelectorAll('#list details').forEach(function(d){ d.open = true; }); };
 document.getElementById('collapse').onclick = function(){ document.querySelectorAll('#list details').forEach(function(d){ d.open = false; }); };
-var h = (location.hash||'').slice(1); if (['p1','p2','p3','all'].indexOf(h)>=0) state.part = h;
+var h = (location.hash||'').slice(1); if (h==='list' || h==='all' || PARTS.some(function(p){return p.key===h;})) state.part = h;
 buildTabs(); buildTopic(); buildDiff(); render();
-window.__QA = {total: total, pics: picTotal, stories: fuTotal};
+window.__QA = {total: total, pics: picTotal, stories: fuTotal, list: LISTN, jumpTo: jumpTo};
 })();
 </script>
 </body>
