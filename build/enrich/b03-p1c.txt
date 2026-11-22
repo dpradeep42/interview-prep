@@ -1,0 +1,526 @@
+@p1-42
+Q: In [early 2026] I upgraded [3] IRT services from .NET 8 to .NET 10 LTS because .NET 8 support ends in November 2026 and a GxP product must run on a supported runtime. I upgraded shared libraries first, then each service, tests and Docker images, compared performance in validation, and released through FV, UAT and production with [no functional defects] and [10 to 15 percent] lower p95 latency.
+- Inventory first: a spreadsheet of projects, target frameworks, NuGet packages, Docker base images and pipeline agents; third-party packages were the real critical path.
+- Order: shared libraries, then services from least to most risky; one pull request per service with a checklist.
+- Central package management (Directory.Packages.props) after [a version conflict in Microsoft.Extensions packages] kept versions aligned.
+- Breaking changes reviewed from Microsoft's list, for example BackgroundService now running all of ExecuteAsync on a background thread in .NET 10, which we checked in our workers.
+- Evidence: before/after p95 latency and memory on the same validation environment, plus full regression and FV documentation.
+- Container images moved to the .NET 10 runtime images, scanned with [Trivy] before release.
+W: I plan risky upgrades with inventory, order and evidence rather than changing everything at once.
+W: I connect technical work to business and compliance reasons (support dates in a GxP product).
+? How long did it take? :: [About six weeks] for the three services inside one release cycle, mostly package updates and validation.
+? Would you use the .NET Upgrade Assistant? :: For .NET Framework to modern .NET yes; for 8 to 10 the changes were small enough to do by hand.
+
+@p1-43
+Q: Usually no: DbContext already is a Unit of Work and DbSet already is a repository, so a generic repository on top mostly hides EF features (Include, projections, AsNoTracking, ExecuteUpdate) and adds code. I use specific, intention-revealing query services or repositories only where they add value: complex reusable queries, aggregate boundaries in DDD, or a seam for a different data source.
+- Testing argument: test data access with a real database (Testcontainers SQL Server); mock at the service boundary instead.
+- Specification pattern or extension methods (`q.ForStudy(id).Active()`) give reuse without a repository layer.
+- If a repository exists, return materialised results or DTOs, not IQueryable, to keep query logic in one place.
+- Unit of Work across repositories is just SaveChanges on the shared scoped context.
+- In IRT some older services have repositories; new code uses DbContext directly in handlers with query extension methods.
+? When is a repository worth it? :: When the domain should not know about EF, for complex aggregates, or when data may come from different stores.
+? How do you test without repositories? :: Integration tests against a real SQL Server container, and unit tests for pure business logic.
+
+@p1-44
+Q: A clustered index defines the physical order of the table's rows: the leaf level is the data itself, so there is only one per table (usually the primary key). A non-clustered index is a separate B-tree of key columns with pointers (the clustered key) back to the rows; a table can have many, and INCLUDE columns can make them covering.
+- Key lookup: when a non-clustered index lacks needed columns, SQL Server looks up each row in the clustered index; many lookups can make the optimizer choose a scan.
+- Clustered key choice: narrow, unique, static and ever-increasing (INT/BIGINT identity, sequential GUIDs); random GUIDs cause page splits and fragmentation.
+- Every non-clustered index stores the clustered key, so a wide clustered key bloats all indexes.
+- Heaps (no clustered index) suit some staging tables, but forwarded records hurt reads.
+- Columnstore indexes are for analytics over large tables.
+- My shipment-list fix used a non-clustered index on (StudyId, Status, ShipmentDate) INCLUDE (display columns), removing scans and key lookups.
+```sql
+CREATE NONCLUSTERED INDEX IX_Shipments_Study_Status_Date
+ON dbo.Shipments (StudyId, Status, ShipmentDate)
+INCLUDE (SiteId, KitCount, TrackingNumber);
+```
+? Can the primary key be non-clustered? :: Yes; PK and clustered index are separate concepts, they just default together.
+? What is a covering index? :: An index containing every column a query needs, so no lookups are required.
+
+@p1-45
+Q: Situation: the IRT site shipment list timed out for a large study ([about 300] sites, [8 to 12 seconds]). I captured the real query from Query Store, read the actual plan (clustered index scan, key lookups, a non-SARGable CONVERT on the date), rewrote the predicate as a range, added a covering index (StudyId, Status, ShipmentDate) INCLUDE display columns and server-side paging. Logical reads fell from [about 400,000 to 2,000] and time from [about 9 seconds to under 300 ms].
+- Diagnosis tools: Query Store top resource consumers, actual execution plan, SET STATISTICS IO, TIME ON for logical reads and CPU.
+- Why it was slow: CONVERT(date, ShipmentDate) on the column prevents index seeks; missing index caused a full scan of [millions] of rows; no paging returned everything.
+- Fix order: SARGable rewrite first (free), then the index, then paging, measuring after each step.
+- Index design: equality columns first, range last, INCLUDE the selected columns to avoid lookups.
+- Release: index script reviewed, tested in validation for write impact, released through FV, UAT and production with evidence.
+- Guard: latency alarm in CloudWatch and Grafana, and the query added to pre-release performance checks.
+W: I fix performance with measurements, not guesses, and prove the result with numbers.
+W: I treat a database change with the same release discipline as code in a regulated product.
+```sql
+-- before (non-SARGable)
+WHERE CONVERT(date, s.ShipmentDate) = @Day
+-- after (index seek possible)
+WHERE s.ShipmentDate >= @Day AND s.ShipmentDate < DATEADD(day, 1, @Day)
+```
+? What did the plan show after the fix? :: An index seek on the new index, no key lookups, and estimated rows close to actual.
+? What if the parameters vary a lot? :: Watch for parameter sniffing; Query Store can show plan changes, and OPTIMIZE FOR or recompile hints are options.
+
+@p1-46
+Q: SARGable (Search ARGument-able) means a WHERE predicate is written so SQL Server can use an index seek on the column. Wrapping the column in a function or calculation (YEAR(date) = 2024, ISNULL(col, 0) = 1, col + 1 = 5), leading wildcards (LIKE '%abc') or implicit conversions make it non-SARGable and force scans.
+- Rewrite functions on columns into ranges: `Date >= '2024-01-01' AND Date < '2025-01-01'`.
+- Implicit conversions: comparing an NVARCHAR parameter with a VARCHAR column converts the column; match data types (a common EF/ADO.NET issue with string parameters).
+- OR across different columns often prevents seeks; consider UNION ALL or separate indexes.
+- Computed columns with an index can make an expression searchable.
+- The execution plan warns about implicit conversions with a yellow triangle.
+? Is LIKE 'abc%' SARGable? :: Yes, a trailing wildcard can seek; a leading wildcard cannot.
+? How do EF queries become non-SARGable? :: Calling methods on columns in Where (e.g. .Date or ToUpper()) that translate into functions on the column.
+
+@p1-47
+Q: INNER JOIN returns only matching rows from both tables; LEFT (OUTER) JOIN returns all left rows plus matches or NULLs; RIGHT JOIN the reverse; FULL OUTER JOIN all rows from both with NULLs where there is no match; CROSS JOIN every combination; a self join joins a table to itself, and CROSS/OUTER APPLY run a table expression per left row.
+- Physical join types the optimizer chooses: nested loops (small inputs, indexed inner side), merge join (both sorted), hash join (large unsorted inputs).
+- LEFT JOIN with a filter on the right table in WHERE turns it into an INNER JOIN; put that filter in the ON clause instead.
+- Anti-join: find rows with no match using NOT EXISTS (safe with NULLs) or LEFT JOIN ... WHERE right.Id IS NULL.
+- APPLY is great for top N per group or calling table-valued functions per row.
+```sql
+-- sites with no shipments in the last 30 days
+SELECT s.SiteId, s.Name
+FROM dbo.Sites s
+WHERE NOT EXISTS (SELECT 1 FROM dbo.Shipments sh
+                  WHERE sh.SiteId = s.SiteId AND sh.ShipmentDate >= DATEADD(day, -30, SYSUTCDATETIME()));
+```
+? Which join type is fastest? :: It depends on data size, sorting and indexes; the optimizer picks nested loops, merge or hash accordingly.
+? EF Core equivalent of LEFT JOIN? :: GroupJoin with SelectMany/DefaultIfEmpty, or navigation properties; .NET 10 adds LeftJoin operators.
+
+@p1-48
+Q: Normalisation organises data to remove redundancy and update anomalies (1NF atomic values, 2NF no partial key dependency, 3NF no transitive dependency), which keeps writes consistent. Denormalisation deliberately duplicates data (pre-joined columns, summary tables) to speed up reads at the cost of extra write work and consistency risk.
+- OLTP systems like IRT are normalised to around 3NF because correctness and auditability matter most.
+- Reporting and read models can be denormalised: indexed views, summary tables or a separate read store fed by events (CQRS).
+- Keep denormalised data in sync with triggers, application code in the same transaction, or event-driven projections; document which is the source of truth.
+- Over-normalisation causes many joins; measure before denormalising.
+? What is BCNF? :: A stricter 3NF where every determinant is a candidate key.
+? Example of denormalisation you would accept? :: A site's current kit stock count maintained alongside movements, for fast dashboards.
+
+@p1-49
+Q: Isolation levels trade consistency for concurrency: READ UNCOMMITTED (dirty reads allowed), READ COMMITTED (SQL Server default, no dirty reads), REPEATABLE READ (rows read cannot change), SERIALIZABLE (no phantoms, range locks), plus SNAPSHOT and READ COMMITTED SNAPSHOT (RCSI), which use row versions in tempdb so readers do not block writers.
+- Locking vs versioning: RCSI gives statement-level consistent reads without shared locks; SNAPSHOT gives transaction-level consistency and can raise update conflicts (error 3960).
+- NOLOCK equals READ UNCOMMITTED: can read uncommitted, duplicated or missing rows; avoid it in clinical data.
+- Higher isolation increases blocking and deadlock risk; keep transactions short.
+- Azure SQL enables RCSI by default; on-prem SQL Server you turn it on per database.
+- In IRT kit allocation uses a serializable or UPDLOCK pattern for the critical check-and-assign step, while normal reads use READ COMMITTED.
+? What is a phantom read? :: Rerunning a range query returns new rows inserted by another transaction.
+? Why is RCSI popular? :: It removes most reader/writer blocking with little code change, at the cost of tempdb version store usage.
+
+@p1-50
+Q: A deadlock happens when two transactions each hold a lock the other needs, so neither can continue; SQL Server detects the cycle and kills one as the victim (error 1205). Typical causes are accessing tables in different orders, long transactions, missing indexes that make scans lock more rows, and lock escalation.
+- Diagnose with the system_health Extended Events session (xml_deadlock_report) to see the resources, statements and victim.
+- Prevent: consistent access order, short transactions, proper indexes, RCSI for readers, avoid user interaction inside transactions.
+- Handle: retry the victim transaction a few times with backoff; EF Core's EnableRetryOnFailure retries 1205 by default for SQL Server.
+- Async code deadlocks are different: sync-over-async blocking on a captured context.
+- In Part 3 there is a scenario answer about a sudden rise in deadlocks.
+? What is lock escalation? :: SQL Server converting many row or page locks into a table lock (around 5,000 locks), which increases blocking.
+? Can you choose the victim? :: SET DEADLOCK_PRIORITY LOW on less important sessions.
+
+@p1-51
+Q: Stored procedures keep SQL on the server with precompiled, cached plans, a security boundary (EXECUTE rights) and fewer round trips for complex logic; ORM or parameterised inline queries keep logic in code, versioned and testable with the app. Parameter sniffing is when SQL Server compiles and caches a plan using the first parameter values it sees, which can be terrible for later, very different values.
+- Parameterised inline SQL is cached too; performance alone is not a reason for stored procedures.
+- Sniffing symptoms: the same query is sometimes fast, sometimes slow, depending on which plan is cached (big study vs small study).
+- Fixes: OPTION (RECOMPILE) for rare heavy queries, OPTIMIZE FOR, separate code paths, better indexes, or Query Store plan forcing; SQL Server 2022 adds Parameter Sensitive Plan optimisation.
+- Testing: stored procedures need database tests (tSQLt); ORM queries get integration tests with the app.
+- In IRT complex reports use stored procedures; transactional code uses EF Core.
+? What is Query Store? :: A SQL Server feature that records queries, plans and runtime stats over time so you can find regressions and force good plans.
+? Does EF Core suffer from parameter sniffing? :: Yes, it sends parameterised queries, so the same cached plan issue applies.
+
+@p1-52
+Q: I choose SQL Server/RDS for relational, transactional data with joins, constraints and ad-hoc queries (studies, subjects, kits, audit trails); DynamoDB for key-value or simple access patterns needing single-digit millisecond latency at any scale with minimal operations (session state, idempotency keys, event lookups by id). The deciding factor is the access pattern and consistency needs.
+- DynamoDB design starts from queries: partition and sort keys, GSIs; joins and ad-hoc queries are expensive or impossible.
+- RDS gives ACID across tables, rich SQL, reporting; scaling is vertical plus read replicas.
+- DynamoDB gives transactions (limited, 100 items) and strong reads per item, global tables, TTL and streams.
+- Cost: DynamoDB on-demand for spiky traffic; RDS is paid per instance hour.
+- In IRT the core clinical data is relational; DynamoDB fits [idempotency keys and integration message logs].
+? What is a hot partition? :: Too much traffic on one partition key value, causing throttling; spread keys or add write sharding.
+? Can DynamoDB do reports? :: Not well; export to S3 and query with Athena, or stream into an analytics store.
+
+@p1-53
+Q: DELETE removes rows one by one, can have a WHERE clause, fires triggers, is fully logged and can be rolled back; TRUNCATE removes all rows by deallocating pages, is minimally logged, resets identity, cannot have WHERE and fails if foreign keys reference the table; DROP removes the table itself, structure and data.
+- TRUNCATE can be rolled back inside an explicit transaction in SQL Server, a common interview trap.
+- DELETE on huge tables should be batched (DELETE TOP (5000) in a loop) to avoid log growth and lock escalation.
+- TRUNCATE needs ALTER permission; DELETE needs DELETE permission.
+- In a GxP system physical deletes of clinical data are rare; we use soft deletes or status changes with audit trail.
+? Does DELETE reset identity? :: No; TRUNCATE does (or DBCC CHECKIDENT).
+? Why batch deletes? :: To keep transactions short, limit log growth and avoid blocking other users.
+
+@p1-54
+Q: OFFSET/FETCH paging skips N rows and takes the next page; it is simple and supports jumping to any page, but the database still reads and discards all skipped rows, so deep pages get slow, and inserts can shift rows between pages. Keyset (seek) pagination remembers the last key seen and asks for rows after it (WHERE Id > @lastId ORDER BY Id), which stays fast at any depth and is stable.
+- Keyset needs a unique, indexed sort key (or a composite like (ShipmentDate, Id)).
+- Keyset gives "next/previous" or infinite scroll, not "jump to page 57".
+- Return a cursor (encoded last key) to clients instead of page numbers.
+- COUNT(*) for total pages is itself expensive on big tables; consider estimates or omitting totals.
+```sql
+SELECT TOP (50) Id, ShipmentDate, Status
+FROM dbo.Shipments
+WHERE StudyId = @StudyId AND (ShipmentDate > @LastDate OR (ShipmentDate = @LastDate AND Id > @LastId))
+ORDER BY ShipmentDate, Id;
+```
+? Which do you use in IRT screens? :: OFFSET/FETCH for normal screens where users jump pages; keyset for exports and APIs that walk large lists.
+? EF Core support? :: Skip/Take for offset; keyset via Where on the last key, or libraries such as MR.EntityFrameworkCore.KeysetPagination.
+
+@p1-55
+Q: A CTE (WITH ... AS) names a subquery for readability and recursion within one statement; window functions (ROW_NUMBER, RANK, LAG, LEAD, SUM() OVER) calculate across related rows without collapsing them like GROUP BY. Use case: the latest status per shipment, running stock per site, or the time between shipment events.
+- PARTITION BY defines the group, ORDER BY the order inside it, and ROWS/RANGE the frame for running totals.
+- LAG/LEAD compare with the previous/next row, e.g. time between Dispatched and Delivered.
+- Recursive CTEs walk hierarchies (site, region, country) with a MAXRECURSION guard.
+- CTEs are not materialised; referencing one twice may run it twice; use a temp table for reuse.
+```sql
+WITH ranked AS (
+  SELECT e.ShipmentId, e.Status, e.EventAt,
+         ROW_NUMBER() OVER (PARTITION BY e.ShipmentId ORDER BY e.EventAt DESC) AS rn
+  FROM dbo.ShipmentEvents e)
+SELECT ShipmentId, Status, EventAt FROM ranked WHERE rn = 1;   -- latest status per shipment
+```
+? Window function vs GROUP BY? :: GROUP BY returns one row per group; window functions keep every row and add the calculation.
+? Running total? :: SUM(Qty) OVER (PARTITION BY SiteId ORDER BY EventAt ROWS UNBOUNDED PRECEDING).
+
+@p1-56
+Q: Unit tests check one class or function in isolation with dependencies faked; integration tests check components working together with real infrastructure (database, broker, HTTP pipeline); end-to-end tests drive the whole system through the UI or public API like a user. The test pyramid says have many fast unit tests, fewer integration tests and only a few slow E2E tests.
+- Speed and stability fall as you go up; confidence in real behaviour rises.
+- Integration tests with Testcontainers (SQL Server, RabbitMQ) catch mapping, SQL and configuration bugs that mocks hide.
+- E2E with Playwright covers critical user journeys only (login, randomise, create shipment, CSV import).
+- Contract tests sit between services to replace many cross-service E2E tests.
+- Anti-pattern: the ice-cream cone (mostly manual and E2E tests), slow and flaky.
+- In IRT: xUnit/NUnit with Moq for units, WebApplicationFactory and a test DB for integration, Playwright and Cucumber for E2E, plus FV scripted testing.
+? What do you not unit-test? :: Trivial code and framework behaviour; focus on business rules and edge cases.
+? Testing trophy vs pyramid? :: The trophy (Kent C. Dodds) weights integration tests more, popular for front ends; the idea is the same: balance cost and confidence.
+
+@p1-57
+Q: Both are mature .NET test frameworks. xUnit creates a new test class instance per test (constructor for setup, IDisposable for teardown), uses [Fact] and [Theory] with [InlineData], and runs test classes in parallel by default; NUnit uses [Test], [TestCase], [SetUp]/[TearDown] and [OneTimeSetUp], with a rich constraint-based Assert.That model.
+- Shared context in xUnit: IClassFixture<T> per class, ICollectionFixture<T> across classes (for an expensive Testcontainers database).
+- xUnit v3 (2024+) brings first-class cancellation (TestContext.Current.CancellationToken) and an updated runner.
+- NUnit has more attributes out of the box (Category, Repeat, Retry, Timeout).
+- Assertions libraries (FluentAssertions, Shouldly) work with either; check licensing (FluentAssertions v8 is commercial).
+- I use xUnit in new IRT services and NUnit where older projects already do; consistency in a codebase matters more than the choice.
+```csharp
+public class KitNumberTests
+{
+    [Theory]
+    [InlineData("KIT000913", true)]
+    [InlineData("KIT-12", false)]
+    public void IsValid_ReturnsExpected(string input, bool expected) =>
+        Assert.Equal(expected, KitNumber.IsValid(input));
+}
+```
+? How do you share an expensive database between tests? :: An xUnit collection fixture that starts the container once, with data reset per test (Respawn).
+? Why does xUnit avoid [SetUp]? :: A fresh instance per test and constructor setup make test isolation explicit.
+
+@p1-58
+Q: Moq creates test doubles from interfaces: Setup defines behaviour, Returns/ReturnsAsync/Throws give results, and Verify checks a call happened with expected arguments. I mock things I own that cross a boundary (repositories, gateways, clocks, message publishers), not value objects, DTOs, DbContext or types I do not own.
+- Don't mock what you don't own: wrap third-party SDKs (Rebex, AWS SDK) behind your interface and test the wrapper with integration tests.
+- Don't mock DbContext/DbSet; use a real database in integration tests.
+- Prefer state verification (output, saved data) over many Verify calls, which make tests brittle to refactoring.
+- It.Is<T>(predicate) for argument matching; MockBehavior.Strict only where unexpected calls must fail.
+- HttpClient: fake the HttpMessageHandler or use WireMock.Net rather than mocking HttpClient.
+```csharp
+var publisher = new Mock<IEventPublisher>();
+var sut = new ShipmentService(repo, publisher.Object, TimeProvider.System);
+await sut.MarkDeliveredAsync(id, ct);
+publisher.Verify(p => p.PublishAsync(It.Is<ShipmentStatusChanged>(e => e.Status == "Delivered"), It.IsAny<CancellationToken>()), Times.Once);
+```
+? Mock vs stub? :: A stub only returns data; a mock also verifies interactions.
+? Alternatives to Moq? :: NSubstitute (simpler syntax) or hand-written fakes.
+
+@p1-59
+Q: I use WebApplicationFactory<Program> from Microsoft.AspNetCore.Mvc.Testing to host the real API in memory, override configuration and services (real SQL Server in Testcontainers, fake external clients, test authentication), and send real HTTP requests with its HttpClient, asserting status codes, bodies and database state.
+- Expose Program to tests with `public partial class Program { }` when using top-level statements.
+- ConfigureTestServices to replace external dependencies (SFTP, vendor APIs) with fakes and to add a test auth handler issuing claims.
+- Database: Testcontainers SQL Server started once per collection, migrations applied, Respawn resets data between tests.
+- Covers routing, filters, model binding, validation, serialization, auth policies and EF mappings together.
+- Run in CI on every pull request; Docker must be available on the agents.
+```csharp
+public class ShipmentApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
+{
+    [Fact]
+    public async Task Create_ReturnsCreated()
+    {
+        var client = factory.CreateClient();
+        var resp = await client.PostAsJsonAsync("/api/shipments", new { siteId = Seed.SiteId, kitCount = 10 });
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+    }
+}
+```
+? How do you handle authentication in these tests? :: Register a test authentication scheme that creates a ClaimsPrincipal from a header, and make it the default in tests.
+? In-memory provider or real DB? :: Real DB in a container; EF InMemory is not relational and hides bugs.
+
+@p1-60
+Q: Reliable Playwright tests use user-facing locators (getByRole, getByLabel, getByTestId), rely on auto-waiting and web-first assertions instead of sleeps, keep each test independent with its own data and storage state, and run in CI with traces, screenshots and videos on failure for quick diagnosis.
+- Auto-waiting: actions wait for elements to be visible, enabled and stable; expect(locator).toHaveText() retries until timeout.
+- Never waitForTimeout; wait for a specific state or network response (page.waitForResponse).
+- Authentication: log in once in global setup and reuse storageState for all tests.
+- Test data: create via API in beforeEach and clean up, so tests run in parallel and in any order.
+- Page Object Model or fixtures keep selectors in one place.
+- Trace viewer (trace: 'on-first-retry') shows every step, DOM snapshot and network call.
+- In IRT our E2E covers [login, CSV import preview and confirm, shipment creation] and runs on [Chromium in the pipeline].
+```ts
+test('CSV import shows row errors', async ({ page }) => {
+  await page.goto('/studies/42/import');
+  await page.getByLabel('Upload CSV').setInputFiles('fixtures/sites-bad.csv');
+  await expect(page.getByRole('table', { name: 'Errors' })).toContainText('Row 3');
+});
+```
+? How do you deal with flaky E2E tests? :: Find the cause with traces (timing, data, environment), fix it, and quarantine meanwhile; retries only as a safety net.
+? Playwright vs Selenium? :: Playwright has auto-waiting, multiple browsers in one API, parallelism and tracing built in, so tests are faster and steadier.
+
+@p1-61
+Q: BDD (Behaviour-Driven Development) describes behaviour as examples in business language before coding; Cucumber runs those examples written in Gherkin (Feature, Scenario, Given/When/Then) by binding each step to code, such as Playwright actions. It creates living documentation that BAs, QA and developers can all read.
+- Write scenarios with the BA and QA in refinement (three amigos), then automate them.
+- Keep steps declarative (business intent) rather than UI clicks, so scenarios survive UI changes.
+- Scenario Outline with Examples tables covers many data cases.
+- In regulated work, Gherkin scenarios map nicely to requirements for traceability.
+- Downside: the step layer adds maintenance; use BDD for key behaviours, plain tests elsewhere.
+```gherkin
+Scenario: Block transfer to a live study
+  Given the target study "ABC-301" has randomized subjects
+  When a study manager requests a configuration transfer to "ABC-301"
+  Then the transfer is blocked with reason "Target study is live"
+```
+? Cucumber vs SpecFlow/Reqnroll? :: Same idea; Reqnroll is the .NET successor of SpecFlow, Cucumber is the JS/Java family.
+? Who writes the scenarios? :: Together in refinement; QA or BA usually drafts, developers automate.
+
+@p1-62
+Q: A quality gate is a set of pass/fail conditions SonarQube applies to new code in each analysis, for example no new bugs or vulnerabilities, all security hotspots reviewed, coverage on new code at least [80 percent] and duplication under [3 percent]. The pipeline fails the build (or blocks the pull request) when the gate fails.
+- "Clean as you code": the gate focuses on new code, so legacy debt does not block delivery while new code stays clean.
+- Quality profiles define the rules; gates define the thresholds.
+- PR decoration shows issues inline in Azure DevOps pull requests.
+- Do not chase the coverage number with assertion-free tests; review what is covered.
+- Security hotspots need human review; vulnerabilities must be fixed or justified.
+- Part 3 has a scenario about a failing gate right before a release.
+? What if a rule is wrong for your code? :: Mark the issue as won't fix with a reason, or adjust the profile through the team, never silently.
+? Gate on overall or new code? :: New code; overall metrics improve as you touch old code.
+
+@p1-63
+Q: Jest runs JavaScript/TypeScript tests with describe/it, expect matchers, mocking (jest.fn, jest.mock) and snapshot support; for React I use React Testing Library to render components and interact with them the way a user would (getByRole, userEvent), and for Node I test services directly and APIs with supertest.
+- Test behaviour, not implementation: avoid testing internal state or component internals.
+- Mock network calls with MSW (Mock Service Worker) for realistic API responses.
+- Fake timers (jest.useFakeTimers) for debounce and retry logic.
+- Async: await findBy* queries and waitFor; always return or await promises.
+- Vitest is a faster, Vite-based alternative with the same API.
+```ts
+it('shows an error when the upload fails', async () => {
+  server.use(http.post('/api/imports', () => HttpResponse.json({ title: 'Invalid' }, { status: 400 })));
+  render(<ImportPage />);
+  await userEvent.upload(screen.getByLabelText(/upload csv/i), file);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Invalid');
+});
+```
+? Are snapshot tests useful? :: Only small, stable ones; big snapshots get approved blindly.
+? How do you test a custom hook? :: renderHook from React Testing Library.
+
+@p1-64
+Q: I check correctness first (does it meet the requirement and edge cases), then security, tests, readability and design, performance risks, and operability (logging, errors, configuration). I keep comments specific, explain the why, separate must-fix from suggestions, and prefer small pull requests.
+- Correctness: null handling, time zones (my own lesson), concurrency, idempotency, transaction boundaries.
+- Security: input validation, authorisation on every endpoint, SQL injection, secrets, PHI in logs.
+- Tests: do they fail if the code is wrong; are integration paths covered.
+- Data: migrations backward compatible; indexes for new queries.
+- Automation first: formatting, analyzers and SonarQube handle style, so humans focus on logic.
+- Tone: questions instead of orders ("what happens if the file is empty?"), and praise good solutions.
+? How long should a review take? :: Small PRs within hours; large ones get split or walked through together.
+? What do you do with a huge PR? :: Ask to split it, or review it in a call with the author.
+
+@p1-65
+Q: In GxP, testing is not just a developer activity but documented evidence: requirements trace to test cases, formal validation (FV) runs scripted tests with recorded results and sign-off, defects follow controlled processes, and only validated, change-controlled builds reach production. Automated tests support this but the evidence and traceability are what auditors check.
+- Traceability matrix: requirement, design, code change, unit/integration tests, FV test case, result.
+- Computer System Validation (CSV) and GAMP 5 risk-based approach: test more where patient risk is higher (randomisation, dosing, blinding).
+- Test environments are controlled and qualified; no ad-hoc changes during FV.
+- Regression evidence for every release; deviations documented and assessed.
+- Automated test results are archived as evidence.
+- Developers still write unit, integration and Playwright tests, but FV is independent.
+? What is GAMP 5? :: Industry guidance for risk-based validation of computerised systems in regulated life sciences.
+? How do you speed up testing without losing compliance? :: More automation with archived evidence and risk-based focus on critical functions.
+
+@p1-66
+Q: Hooks give function components state and lifecycle behaviour: useState replaces this.state, useEffect replaces componentDidMount, componentDidUpdate and componentWillUnmount (via its cleanup function), useRef replaces instance fields, and useMemo/useCallback replace manual shouldComponentUpdate optimisations.
+- Think in synchronisation, not lifecycle: an effect keeps something outside React in sync with props/state.
+- Cleanup runs before the next effect and on unmount: cancel fetches with AbortController, clear timers, unsubscribe.
+- StrictMode in development mounts, unmounts and remounts to reveal missing cleanups.
+- Rules of hooks: call them at the top level, in the same order, only from components or custom hooks.
+- Many effects are unnecessary: derive values during render, handle events in handlers, fetch with React Query.
+```tsx
+useEffect(() => {
+  const ctrl = new AbortController();
+  fetch(`/api/sites/${siteId}`, { signal: ctrl.signal }).then(r => r.json()).then(setSite);
+  return () => ctrl.abort();          // cleanup = componentWillUnmount
+}, [siteId]);                          // re-run when siteId changes = componentDidUpdate
+```
+? What is getDerivedStateFromError's hook equivalent? :: None; error boundaries still need class components (or a library like react-error-boundary).
+? useEffect vs useLayoutEffect? :: useLayoutEffect runs synchronously after DOM changes before paint, for measuring layout.
+
+@p1-67
+Q: Redux Toolkit (RTK) is the official way to use Redux: configureStore sets up the store with good defaults, createSlice defines state, reducers and actions together (with Immer so you can write "mutating" code safely), createAsyncThunk handles async logic, and RTK Query adds data fetching and caching.
+- Single store, actions describe what happened, reducers are pure functions, selectors read state; components subscribe with useSelector and send actions with useDispatch.
+- Immer produces immutable updates from mutable-looking code.
+- RTK Query generates hooks (useGetSitesQuery) with caching, invalidation tags and loading states, replacing hand-written thunks.
+- Use Redux for complex shared client state; server data often fits RTK Query or React Query better.
+- Redux DevTools give time-travel debugging.
+```ts
+const filtersSlice = createSlice({
+  name: 'filters',
+  initialState: { status: 'All' as string },
+  reducers: { setStatus(state, action: PayloadAction<string>) { state.status = action.payload; } },
+});
+export const { setStatus } = filtersSlice.actions;
+```
+? Why are reducers pure? :: Predictable state, easy tests and time-travel debugging.
+? RTK Query vs React Query? :: Similar features; RTK Query integrates with the Redux store, React Query is standalone.
+
+@p1-68
+Q: Reusable components have a small, typed props API, are composable (children, slots, render props) rather than configured with dozens of flags, own no business logic or data fetching, are accessible by default, and come with documentation and tests. I build them as controlled components with sensible defaults.
+- Composition over configuration: `<Table><Table.Header/>...</Table>` scales better than 30 boolean props.
+- Accessibility: semantic elements, labels, keyboard support, focus management, aria attributes.
+- Styling via design tokens or CSS variables so themes (dark mode) work.
+- Storybook documents states (loading, empty, error) and enables visual tests.
+- Stable APIs: deprecate props before removing them, version a shared component library.
+- In IRT: [the configurable data table] reused on several screens; Part 9 has the resume-verification answer.
+? Controlled vs uncontrolled for library components? :: Support controlled use (value + onChange) with an uncontrolled default for simple cases.
+? How do you stop a component from growing too many props? :: Split it, use composition, and push variations into wrappers.
+
+@p1-69
+Q: Measure first with the React Profiler and browser performance tools, then reduce unnecessary renders (move state down, split context, React.memo, useMemo/useCallback for expensive work or stable props), virtualise long lists, code-split routes with lazy and Suspense, and avoid large bundles and request waterfalls.
+- Virtualisation (react-window, TanStack Virtual) renders only visible rows for tables with thousands of rows.
+- Keys: stable unique keys for lists; index keys cause wrong state and extra work when items move.
+- Expensive calculations in useMemo; debounced inputs for search.
+- Data: cache server data (React Query), prefetch, avoid fetching in deeply nested effects.
+- React 18 concurrent features: useTransition and useDeferredValue keep typing responsive; React Compiler (React 19 era) auto-memoises.
+- Bundle: analyse with a bundle analyser, tree-shake, lazy-load heavy libraries.
+? Should you wrap everything in React.memo? :: No; it adds comparison cost and complexity. Use it where profiling shows waste.
+? What is a waterfall? :: Sequential requests where one fetch waits for another, often caused by fetching inside nested components.
+
+@p1-70
+Q: TypeScript adds static types to JavaScript, catching errors at compile time, enabling refactoring and IntelliSense, and documenting contracts between front end and API. interface and type both describe object shapes; interface can be extended and declaration-merged and is preferred for object contracts, while type aliases can express unions, intersections, tuples, mapped and conditional types.
+- Interfaces merge when declared twice (useful for augmenting libraries); types cannot be reopened.
+- Unions (`type Status = 'Pending' | 'Shipped'`) and discriminated unions model API states precisely.
+- Utility types: Partial, Pick, Omit, Record, ReturnType help reuse types.
+- Generate API types from OpenAPI (openapi-typescript, NSwag) so front end and .NET back end stay in sync.
+- strict mode on; avoid any, prefer unknown with narrowing.
+```ts
+type LoadState<T> =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; data: T };
+```
+? Types disappear at runtime: how do you validate API data? :: With a runtime schema such as Zod, generating the TS type from the schema.
+? interface or type for React props? :: Either; teams pick one convention. I use type for props with unions, interface for public object contracts.
+
+@p1-71
+Q: Angular is a complete, opinionated framework (TypeScript, DI, router, forms, HttpClient, RxJS, CLI) suited to large teams that want one standard way; React is a UI library focused on components, where you choose routing, state and data libraries yourself, giving flexibility and a huge ecosystem. IRT has both: Angular modules in older areas and React for newer reusable components.
+- Angular: two-way binding options, modules (now standalone components), signals for fine-grained reactivity (Angular 16+), strong conventions.
+- React: one-way data flow, JSX, hooks, many meta-frameworks (Next.js).
+- Learning curve: Angular steeper (RxJS, DI); React simpler core but more choices.
+- Change detection: Angular zone.js or signals; React re-renders and reconciles a virtual DOM.
+- Choose by team skills, existing codebase and the need for built-in structure.
+? Can they coexist? :: Yes, through micro-frontends or by mounting components in separate parts of the app, as in IRT.
+? What are Angular signals? :: Reactive values that notify dependents precisely, reducing reliance on zone.js change detection.
+
+@p1-72
+Q: JavaScript runs on one thread with a call stack; asynchronous work (timers, I/O, fetch) is handled by the browser or Node, and when it completes its callback is queued. The event loop takes the next task when the stack is empty, but first drains all microtasks (Promise callbacks, queueMicrotask) after each task, then the browser may render.
+- Order: synchronous code, then microtasks (promises), then the next macrotask (setTimeout, I/O, events).
+- Long synchronous work blocks everything, including rendering and clicks; split it or use Web Workers.
+- Node has phases (timers, poll for I/O, check for setImmediate) and process.nextTick, which runs before promise microtasks.
+- await is syntax over promises, so code after await runs as a microtask.
+```js
+console.log('A');
+setTimeout(() => console.log('timeout'), 0);
+Promise.resolve().then(() => console.log('promise'));
+console.log('B');
+// A, B, promise, timeout
+```
+? Can a microtask loop starve rendering? :: Yes; endlessly queuing microtasks blocks the next task and paint.
+? setTimeout(fn, 0) runs immediately? :: No; at least after the current task and all microtasks, and browsers clamp nested timers.
+
+@p1-73
+Q: I watch for XSS (never inject unsanitised HTML; React escapes by default), reverse tabnabbing (rel="noopener noreferrer"), token storage (prefer HttpOnly secure cookies or in-memory tokens over localStorage), CSRF with cookie auth (SameSite plus anti-forgery tokens), a strict Content Security Policy, dependency vulnerabilities, and sensitive data exposed in the browser.
+- dangerouslySetInnerHTML only with DOMPurify; avoid href with user-controlled "javascript:" URLs.
+- CSP with nonces or hashes blocks injected scripts; add frame-ancestors to stop clickjacking.
+- Never trust the UI for authorisation: hidden buttons are not security.
+- Keep secrets out of front-end bundles; anything in JS is public.
+- npm audit, Dependabot/Snyk and lockfiles for supply-chain risk.
+- I fixed reverse tabnabbing in IRT on [about 40] links and added the ESLint rule so it cannot return.
+? Why is localStorage risky for tokens? :: Any XSS can read it; HttpOnly cookies are not readable by scripts.
+? What does CSP do? :: Tells the browser which sources of scripts, styles and frames are allowed, limiting XSS impact.
+
+@p1-74
+Q: Node.js runs JavaScript on one main thread with an event loop and non-blocking I/O handled by libuv (thread pool for file system, DNS and crypto); one process can serve thousands of concurrent connections as long as no request does heavy CPU work. It fits I/O-heavy APIs, gateways, real-time and glue services, not CPU-heavy computation.
+- CPU work blocks every request; move it to worker_threads, a separate service or another language.
+- Scale across cores with multiple processes (cluster, PM2) or containers.
+- Streams handle large files and responses with backpressure and low memory.
+- Event loop lag is the key health metric; monitor it.
+- My Node service was [the build-log summariser]: fetch logs, parse text, return JSON, a perfect I/O-bound fit.
+? Is Node single-threaded? :: JavaScript execution is, but libuv uses a thread pool and the OS handles network I/O asynchronously.
+? What blocks the event loop? :: Synchronous fs calls, big JSON.parse, heavy regex or loops, and crypto without async APIs.
+
+@p1-75
+Q: I structure a Node/TypeScript microservice by feature with clear layers: routes/controllers for HTTP, services for business logic, repositories or clients for data and external APIs, schemas (Zod) for validation, central config and logging, and one error-handling middleware; plus health endpoints, tests and a Dockerfile, using the same pipeline template as our .NET services.
+- Config validated at startup (Zod over process.env), failing fast on missing values.
+- Logging with pino (JSON) including correlation ids, shipped to CloudWatch.
+- Graceful shutdown on SIGTERM: stop accepting, finish in-flight requests, close connections.
+- Dependency injection by constructor parameters or a small container, so tests can pass fakes.
+- strict TypeScript, ESLint, Prettier, Jest/Vitest, supertest for API tests.
+```ts
+const Config = z.object({ PORT: z.coerce.number().default(8080), ADO_URL: z.string().url() });
+export const config = Config.parse(process.env);
+```
+? Express or Fastify? :: Fastify for performance and built-in schema validation; Express for familiarity and ecosystem.
+? How do you share types with the front end? :: A shared package or types generated from OpenAPI.
+
+@p1-76
+Q: FastAPI is a modern async Python framework built on Starlette and Pydantic: type hints drive request validation, serialisation and automatic OpenAPI docs, and it is very fast for Python. Flask is a minimal, synchronous-first micro-framework where you add validation, docs and structure yourself; simple and flexible with a huge ecosystem.
+- FastAPI: dependency injection with Depends, async endpoints, automatic /docs, Pydantic v2 performance.
+- Flask: great for small internal tools and templates; async support exists but the ecosystem is mostly sync.
+- Both run in containers behind a reverse proxy (uvicorn/gunicorn).
+- I used FastAPI for [the vendor file pre-validation service] and Flask for [a small release-status endpoint].
+? Why is FastAPI fast? :: Async I/O on Starlette/uvicorn and Pydantic's Rust-based validation core in v2.
+? When would you still pick Flask? :: Very small apps, server-rendered pages, or teams already on Flask.
+
+@p1-77
+Q: FastAPI endpoints declared with async def run on the event loop, so they must await I/O and avoid blocking calls; plain def endpoints run in a thread pool automatically. Validation comes from Pydantic models and type hints: FastAPI parses the request into models, returns 422 with detailed errors when validation fails, and uses the same models to generate OpenAPI.
+- Blocking libraries inside async def (requests, sync DB drivers) block the whole loop; use httpx or async drivers, or a plain def endpoint.
+- Pydantic validators (field_validator, model_validator) express business rules such as "site code must match pattern".
+- response_model filters output and documents it.
+- Background tasks for small post-response work; Celery or queues for heavy work.
+```python
+class KitRow(BaseModel):
+    kit_number: str = Field(pattern=r"^KIT\d{6}$")
+    site_id: int = Field(gt=0)
+
+@app.post("/validate", response_model=Report)
+async def validate(rows: list[KitRow]) -> Report:
+    return await checker.run(rows)
+```
+? What status does FastAPI return for invalid input? :: 422 Unprocessable Entity with a list of field errors.
+? def vs async def? :: async def for non-blocking async I/O; def for blocking code, which FastAPI runs in a thread pool.
+
+@p1-78
+Q: Spring Boot and ASP.NET Core solve the same problems with similar concepts: DI containers, middleware/filter chains, controllers with attribute routing, configuration with profiles/environments, ORMs (JPA/Hibernate vs EF Core), and production features (Actuator vs health checks and metrics). Differences are mostly ecosystem and language: Java/JVM with Spring's annotations and auto-configuration vs C#/.NET with explicit Program.cs setup.
+- Startup: Spring auto-configures from the classpath; ASP.NET Core registers explicitly in Program.cs.
+- Performance: both are fast; .NET often leads TechEmpower benchmarks, Java has GraalVM native images, .NET has native AOT.
+- Concurrency: Java 21 virtual threads vs .NET async/await.
+- I can work in Spring Boot by mapping concepts, as in Part 9's comparison table.
+? What is Spring's equivalent of middleware? :: Servlet filters and Spring Security's filter chain; interceptors for MVC-level concerns.
+? Biggest mindset change? :: Annotation-driven magic in Spring vs explicit configuration in modern .NET.
+
+@p1-79
+Q: I keep services consistent across .NET, Node.js and Python with shared standards rather than shared code: REST and event contracts defined in OpenAPI and schemas, the same structured logging fields and correlation ids, the same health endpoints, Docker conventions, one Azure DevOps pipeline template, and the same security and testing rules.
+- Contracts first: OpenAPI and JSON Schema reviewed before implementation; generated clients.
+- Observability: same log fields (service, env, version, correlationId) and OpenTelemetry in every language.
+- Pipeline template: build, test, scan (SonarQube, dependency scan), image build, deploy, identical stages.
+- Templates/scaffolds per language so new services start compliant.
+- Security: same auth library patterns, secrets from AWS Secrets Manager, no secrets in env files.
+? Do you share code libraries across languages? :: No; share contracts and conventions, and keep per-language libraries small.
+? How do you enforce it? :: Templates, pipeline gates and review checklists, not documents alone.
+
+@p1-80
+Q: Node uses npm/pnpm with package.json and a committed lockfile (package-lock.json or pnpm-lock.yaml) and `npm ci` in pipelines for reproducible installs; Python uses virtual environments with pinned dependencies (requirements.txt with hashes, or Poetry/uv with a lock file). In both I scan for vulnerabilities, update regularly with Dependabot or Renovate, and use internal feeds (Azure Artifacts) as a proxy.
+- Semantic versioning ranges (^, ~) are resolved once into the lockfile; builds use the lockfile only.
+- Separate dev and prod dependencies to keep images small.
+- npm audit, pip-audit, Snyk or Mend in CI; fail on criticals.
+- Supply chain: verify package names (typosquatting), restrict install scripts, use upstream proxy feeds.
+- .NET equivalent: central package management with Directory.Packages.props and packages.lock.json.
+? npm install vs npm ci? :: npm ci installs exactly from the lockfile, fails if it is out of sync, and is faster for CI.
+? Why pin Python dependencies? :: Unpinned installs can pull new versions and break builds unexpectedly.
+
+@p1-81
+Q: I choose by fit for the job, team skills and operability: .NET for core domain services with complex logic, transactions and performance; Node.js for I/O-bound glue, real-time and front-end-adjacent services; Python for data processing, validation and scripting or ML libraries. A new language must justify the extra cost of tooling, support and on-call knowledge.
+- Default to the team's main stack (.NET in IRT) unless there is a clear benefit.
+- Consider libraries available (Pydantic for validation, Azure DevOps SDKs in C#), performance needs and hosting (Lambda cold starts).
+- Operational cost: pipelines, monitoring, security patching and who can support it at 2 a.m.
+- Document the decision in an ADR (architecture decision record).
+? Have you said no to a language choice? :: [Yes, a proposal to write a small service in Go]; nobody else could support it, so we used .NET.
+? What is an ADR? :: A short document recording a decision, its context, options and consequences.

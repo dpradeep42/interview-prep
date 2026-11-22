@@ -1,0 +1,258 @@
+@p1-1
+Q: .NET Framework is the original Windows-only runtime (last version 4.8.1, maintenance only). .NET Core was the cross-platform, open-source rewrite, and from .NET 5 it is simply ".NET": even-numbered releases (.NET 6, 8, 10) are LTS with 3 years of support, odd ones are STS with 2 years (since .NET 9).
+- Runtime model: .NET Framework is installed machine-wide and tied to Windows and IIS; modern .NET can be self-contained per app, runs on Linux containers and is side-by-side versioned.
+- Missing in modern .NET: WCF server (use CoreWCF or gRPC), Web Forms, AppDomains, .NET Remoting; that is why migrations need redesign in places.
+- Performance: every release brings big runtime and JIT wins (tiered compilation, Dynamic PGO on by default in .NET 8, faster GC); upgrading is often the cheapest performance fix.
+- Support dates: .NET 8 support ends November 2026, .NET 10 (November 2025) is supported until November 2028; in a GxP product staying on a supported runtime is a compliance requirement.
+- My experience: SharePoint and .NET Framework at DXC, ASP.NET Core on .NET 6 and 8 at IQVIA, and I upgraded [3] IRT services to .NET 10.
+```xml
+<!-- the upgrade itself is mostly this line, plus packages and Docker images -->
+<TargetFramework>net10.0</TargetFramework>
+```
+? What is .NET Standard? :: A shared API contract for libraries targeting both .NET Framework and .NET Core; for new libraries target net8.0 or net10.0 directly.
+? LTS vs STS? :: LTS gets 3 years of support, STS 2 years (from .NET 9); regulated products stick to LTS.
+
+@p1-2
+Q: Value types (struct, enum, int, DateTime) hold their data directly and are copied on assignment; reference types (class, string, arrays, delegates) hold a reference to an object on the managed heap, so copies share the same object. Where they live depends on context: locals of value type usually sit on the stack, but a value-type field of a class lives inside that object on the heap.
+- Boxing: converting a value type to object or an interface allocates a heap copy; avoid in hot paths (non-generic collections, string.Format with ints in old code).
+- Equality: value types compare field by field (ValueType.Equals uses reflection unless overridden, so implement IEquatable<T>); reference types compare identity unless overridden; records give value equality for classes.
+- Nullability: value types need Nullable<T> (int?) to be null; reference types can be null, and nullable reference types (C# 8) warn you at compile time.
+- Passing: both are passed by value by default, but for a reference type the reference is copied, so the method can mutate the same object; ref/out/in pass by reference.
+- Guideline: make structs small (16 bytes or so) and immutable (readonly struct), otherwise copies cost more than allocations.
+```csharp
+var a = new Point(1, 2); var b = a; b.X = 9;   // a.X still 1 (struct copied)
+var s1 = new Site("A"); var s2 = s1; s2.Name = "B"; // s1.Name is "B" (same object)
+public struct Point { public int X; public int Y; public Point(int x, int y) { X = x; Y = y; } }
+public class Site { public string Name; public Site(string n) => Name = n; }
+```
+? Is string a value type? :: No, it is a reference type with value-like behaviour: immutable and compared by value with ==.
+? Are value types always on the stack? :: No; that is a common myth. They live wherever their container lives, e.g. inside a class on the heap.
+
+@p1-3
+Q: The compiler rewrites an async method into a state machine. At each await on an unfinished task it saves the method's state, returns an incomplete Task to the caller and frees the thread; when the awaited operation completes, a continuation resumes the method from where it stopped, possibly on another thread.
+- Nothing is "running" during I/O: an async database or HTTP call holds no thread while waiting; that is why async scales ASP.NET Core under load.
+- The awaiter pattern: await works on anything with GetAwaiter() (IsCompleted, OnCompleted, GetResult); if the task already completed, execution continues synchronously without a context switch.
+- Context: in UI apps the continuation returns to the captured SynchronizationContext; ASP.NET Core has none, so ConfigureAwait(false) matters mainly in libraries.
+- Exceptions are stored in the Task and re-thrown at await; async void methods cannot be awaited and crash the process on exceptions, so only use them for event handlers.
+- Pitfalls: .Result or .Wait() (sync-over-async) blocks a thread and can deadlock with a context; CPU-bound work does not become faster with async, use Task.Run only to offload from a UI thread.
+- In IRT every API call to SQL Server, SFTP and RabbitMQ is async with CancellationToken from HttpContext.RequestAborted, so abandoned requests stop work early.
+```csharp
+public async Task<ShipmentDto?> GetAsync(Guid id, CancellationToken ct)
+{
+    var s = await _db.Shipments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct); // thread released here
+    return s is null ? null : Map(s);                                                     // resumes when DB answers
+}
+```
+? Does async make code faster? :: Not a single request; it improves throughput and scalability because threads are not blocked during I/O.
+? What does the state machine contain? :: The method's locals, the current state number and the awaiters, stored in a struct that is boxed to the heap only if the method actually suspends.
+
+@p1-4
+Q: A Thread is an OS thread you manage directly; a Task is a promise of a future result that usually runs on thread-pool threads or represents pure I/O with no thread at all. ValueTask<T> is a struct alternative to Task<T> that avoids an allocation when the result is often available synchronously.
+- Prefer Task for almost everything; create raw threads only for special long-running, dedicated work (or use TaskCreationOptions.LongRunning).
+- Task.Run queues CPU work to the thread pool; never use it to "make" I/O async in ASP.NET Core, it just burns a pool thread.
+- ValueTask rules: await it only once, never await it concurrently, never call .Result before it completes; convert with .AsTask() if you need more. Use it for hot paths that are usually synchronous (cache hits).
+- Task.WhenAll for parallel independent I/O; Parallel.ForEachAsync (.NET 6) for bounded parallel loops with MaxDegreeOfParallelism.
+- Thread-pool starvation shows as rising latency with low CPU; causes are sync-over-async and blocking calls.
+```csharp
+public ValueTask<StudyConfig> GetConfigAsync(Guid id) =>
+    _cache.TryGetValue(id, out StudyConfig? c) ? ValueTask.FromResult(c!) : new(LoadAndCacheAsync(id));
+```
+? When would you use a dedicated Thread? :: Rarely: e.g. a long-running loop that must not occupy a pool thread, or code needing a specific apartment state; BackgroundService covers most cases.
+? Task.WhenAll vs awaiting in a loop? :: WhenAll starts all operations together and waits once; a loop awaits them one by one.
+
+@p1-5
+Q: IEnumerable<T> is an in-memory, forward-only sequence evaluated with LINQ-to-Objects in your process; IQueryable<T> holds an expression tree that a provider such as EF Core translates into SQL and runs in the database; List<T> is a concrete, materialised collection already in memory.
+- The crucial difference: filtering an IQueryable adds a WHERE to SQL, while filtering after converting to IEnumerable (AsEnumerable or ToList) pulls every row into memory first.
+- IQueryable methods take Expression<Func<T,bool>>; IEnumerable methods take Func<T,bool> delegates, so custom C# methods work there but not in SQL.
+- Return types: repositories returning IQueryable leak query logic to callers; returning IEnumerable from a materialised list hides the cost; returning IReadOnlyList<T> is explicit.
+- Multiple enumeration: an IEnumerable from a query or yield runs again each time you enumerate it; materialise once with ToList when you need it twice.
+- In IRT the shipment list query stays IQueryable until paging and projection, so SQL Server returns only [50] rows of the DTO columns.
+```csharp
+IQueryable<Shipment> q = _db.Shipments.Where(s => s.StudyId == id);   // nothing executed yet
+var page = await q.OrderBy(s => s.ShipmentDate).Skip(0).Take(50)
+                  .Select(s => new ShipmentRow(s.Id, s.Status)).ToListAsync(ct); // one SQL query
+var bad = _db.Shipments.AsEnumerable().Where(s => s.StudyId == id);   // loads the whole table!
+```
+? What is an expression tree? :: Code represented as data (Expression<T>) that a provider can inspect and translate, e.g. into SQL.
+? IEnumerable vs ICollection vs IList? :: IEnumerable only iterates; ICollection adds Count/Add/Remove; IList adds index access.
+
+@p1-6
+Q: An abstract class is a partially implemented base type that can hold state, constructors and shared code, and a class can inherit only one; an interface is a contract that a class or struct can implement many of. Since C# 8 interfaces can have default implementations and static members, but still no instance fields or constructors.
+- Use an interface for capabilities and seams for DI and testing (ISftpClient, IClock); use an abstract class to share real code and enforce a template (SftpClientBase with retry and logging).
+- Template Method pattern: the abstract base defines the algorithm and calls abstract or virtual steps; that is how our SFTP base class wraps every provider call with retry, logging and error mapping.
+- Versioning: adding a member to an interface breaks implementers unless it has a default implementation; adding a virtual method to a base class does not.
+- Combine them: interface for consumers, abstract base for implementers (ISftpClient + SftpClientBase).
+- Static abstract interface members (C# 11) enable generic math and factory patterns.
+```csharp
+public interface ISftpClient { Task UploadAsync(string local, string remote, CancellationToken ct); }
+public abstract class SftpClientBase(ILogger log) : ISftpClient
+{
+    public async Task UploadAsync(string local, string remote, CancellationToken ct)
+    {
+        log.LogInformation("Uploading {File}", remote);
+        await RetryAsync(() => UploadCoreAsync(local, remote, ct));   // shared policy
+    }
+    protected abstract Task UploadCoreAsync(string local, string remote, CancellationToken ct);
+    private static Task RetryAsync(Func<Task> op) => op();            // simplified
+}
+```
+? Can an abstract class implement an interface? :: Yes, and it may leave members abstract for subclasses to implement.
+? When do default interface methods make sense? :: Evolving a public interface without breaking existing implementers.
+
+@p1-7
+Q: SOLID is five design principles that keep code easy to change: Single responsibility, Open/closed, Liskov substitution, Interface segregation and Dependency inversion. I can show each one in my SFTP integration and CSV import work.
+- S: the CSV import is split into parser, validator and importer classes, so a new validation rule never touches parsing code and each piece has focused unit tests.
+- O: adding Rebex meant one new ISftpClient class plus configuration; no caller or switch statement changed.
+- L: every provider honours the same contract (same exceptions mapped to SftpException, same behaviour on missing files), so swapping one for another cannot break callers; violating it would be a provider that silently ignores overwrite flags.
+- I: reporting code depends on a small IShipmentReader, not a large repository with write methods, so read services cannot write by accident.
+- D: high-level services depend on abstractions registered in ASP.NET Core DI; tests inject fakes and Moq mocks.
+- Balance: SOLID is a tool, not a goal; I avoid interfaces with exactly one implementation unless they are a test seam or a boundary.
+? Which principle is broken most often? :: Single responsibility: services grow into god classes; I split by reason to change.
+? What is the difference between DI and DIP? :: DIP is the design principle (depend on abstractions); DI is the technique that supplies those abstractions at runtime.
+
+@p1-8
+Q: In production I have used Strategy and Adapter (SFTP providers behind one interface), Factory (choosing a provider by configuration), Decorator (adding retry and logging around clients), Repository/Unit of Work over EF Core in some services, Options and Singleton through DI, Observer/pub-sub via Kafka and RabbitMQ, plus Outbox and Retry for messaging.
+- Strategy: the algorithm (SFTP provider) is chosen at runtime; Adapter: each provider wraps a third-party API (Rebex, SSH.NET) into our ISftpClient.
+- Factory: SftpClientFactory reads the vendor's configured provider; with .NET 8 keyed services this is a one-liner.
+- Decorator: wrap an interface to add behaviour without changing it, e.g. a caching or retry decorator registered with Scrutor's Decorate.
+- Mediator (MediatR) and CQRS: separate commands and queries in larger services; useful but I avoid it in small ones to keep code simple.
+- Outbox: save the business change and the event in one transaction, then publish, so events are never lost when the broker is down.
+- I name patterns only when they clarify intent; the goal is simpler code, not pattern count.
+```csharp
+// Decorator with Scrutor
+services.AddScoped<IShipmentReader, ShipmentReader>();
+services.Decorate<IShipmentReader, CachedShipmentReader>();
+```
+? Strategy vs Factory? :: Strategy is the interchangeable behaviour; the factory decides which strategy instance to create.
+? A pattern you regret using? :: Generic repositories on top of EF Core: they hid useful EF features and added code without value.
+
+@p1-9
+Q: .NET uses a generational, compacting, tracing garbage collector: it finds objects no longer reachable from roots (statics, stack, registers, handles), frees them and compacts the heap. New objects go into generation 0, survivors are promoted to 1 and 2, and large objects of 85,000 bytes or more go to the Large Object Heap.
+- Generations work because most objects die young; gen 0 collections are cheap, gen 2 (full) collections are expensive.
+- Server GC (default in ASP.NET Core) uses a heap and GC thread per core for throughput; workstation GC suits desktop; concurrent/background GC reduces pauses.
+- LOH is not compacted by default, so repeated large allocations fragment memory; rent buffers from ArrayPool<T> instead.
+- Containers: the GC respects container memory limits; .NET 8 adds DATAS (dynamic adaptation of server GC heaps, default in .NET 9) for lower memory in small containers.
+- Finalizers delay collection by a cycle; implement IDisposable for deterministic cleanup and use SafeHandle instead of finalizers.
+- Diagnose with dotnet-counters (gc-heap-size, gen-2 count, % time in GC) and dotnet-gcdump; I used them for [a memory growth issue caused by an unbounded static cache].
+? What causes memory leaks in .NET? :: Objects kept reachable: static collections, event handlers not unsubscribed, caches without limits, captured closures.
+? Should you call GC.Collect()? :: Almost never; it disrupts the GC's tuning. Fix the allocation pattern instead.
+
+@p1-10
+Q: A delegate is a type-safe reference to a method; Func<> and Action<> are built-in generic delegates (Func returns a value, Action returns void); a lambda is concise syntax for creating a delegate or an expression tree; an event is a delegate wrapped so outsiders can only subscribe (+=) and unsubscribe (-=), not invoke or overwrite it.
+- Multicast: delegates can hold several methods; invoking runs them in order, and only the last return value is kept.
+- Closures: lambdas capture variables, not values; capturing a loop variable or a large object can surprise you or keep it alive longer.
+- Lambdas become Expression<Func<...>> when the target type asks for it; that is how EF Core reads your Where clause.
+- Event pattern: EventHandler<TEventArgs>, raise with `Handler?.Invoke(this, args)`; unsubscribe to avoid leaks when the publisher outlives the subscriber.
+- In ASP.NET Core, middleware is literally a chain of RequestDelegate instances, and Polly policies take Func<CancellationToken, Task> delegates.
+```csharp
+Func<Shipment, bool> isLate = s => s.DueAt < DateTimeOffset.UtcNow;   // delegate
+Expression<Func<Shipment, bool>> late = s => s.DueAt < DateTimeOffset.UtcNow; // expression tree for EF
+public event EventHandler<ShipmentEventArgs>? StatusChanged;
+protected void OnStatusChanged(ShipmentEventArgs e) => StatusChanged?.Invoke(this, e);
+```
+? Why use events instead of public delegates? :: Events stop outside code from invoking the delegate or replacing all subscribers with =.
+? Func vs Predicate? :: Predicate<T> is an older delegate equal to Func<T,bool>; LINQ uses Func.
+
+@p1-11
+Q: LINQ queries are not executed when you write them, only when you enumerate them (foreach, ToList, Count, First). The query is a recipe; each enumeration runs it again against the current data.
+- Deferred operators: Where, Select, OrderBy, Skip, Take; immediate operators: ToList, ToArray, Count, Sum, First, Any.
+- For IQueryable the whole chain is translated to one SQL statement at enumeration, so you can compose filters conditionally before executing.
+- Multiple enumeration pitfall: enumerating twice runs the database query or the yield iterator twice; analyzers warn about it.
+- Captured variables are read at execution time, not when the query was defined.
+- Exceptions inside the query appear at enumeration time, which can be far from the line that built it.
+- I use this for dynamic filters in IRT list endpoints: add Where clauses only for the parameters the user supplied, then page and execute once.
+```csharp
+IQueryable<Shipment> q = _db.Shipments;
+if (status is not null) q = q.Where(s => s.Status == status);
+if (siteId is not null) q = q.Where(s => s.SiteId == siteId);
+var rows = await q.OrderBy(s => s.Id).Take(50).ToListAsync(ct);   // executes once here
+```
+? How do you force execution? :: Call ToList/ToArray (or an aggregate) to materialise the results once.
+? Is deferred execution good or bad? :: Good for composition and efficiency; risky when it causes repeated or late execution.
+
+@p1-12
+Q: Code is thread-safe when concurrent callers cannot corrupt shared state. The best way is to avoid shared mutable state (immutability, local variables, scoped services); when sharing is needed, use the right primitive: lock, SemaphoreSlim for async code, Interlocked for counters, and concurrent collections.
+- lock (Monitor) for short synchronous critical sections; you cannot await inside a lock, so use SemaphoreSlim(1,1) with WaitAsync for async sections.
+- Interlocked.Increment and CompareExchange for lock-free counters and flags.
+- ConcurrentDictionary.GetOrAdd can run the factory more than once; wrap the value in Lazy<T> if the factory must run exactly once.
+- Immutable records and ImmutableArray make sharing safe by design; .NET 8 adds FrozenDictionary for fast read-only lookups.
+- DI: singletons are shared by all requests, so they must be thread-safe; DbContext is not thread-safe, so never share it across concurrent tasks.
+- Across instances (several ECS tasks) in-process locks do nothing; use database locks, optimistic concurrency or a distributed lock. Our study transfer guard uses a lock row inside a transaction.
+```csharp
+private readonly SemaphoreSlim _gate = new(1, 1);
+public async Task RefreshTokenAsync(CancellationToken ct)
+{
+    await _gate.WaitAsync(ct);
+    try { if (_token.IsExpired) _token = await _auth.GetTokenAsync(ct); }
+    finally { _gate.Release(); }
+}
+```
+? lock vs Monitor vs Mutex? :: lock is syntax for Monitor (in-process, fast); Mutex can be cross-process and is slower. .NET 9 adds System.Threading.Lock as a dedicated lock type.
+? What is a race condition? :: The result depends on timing between threads, e.g. two requests reading and writing the same counter.
+
+@p1-13
+Q: A class is a reference type with identity; a struct is a value type copied by value; a record is a type (record class by default, or record struct) with compiler-generated value-based equality, ToString, deconstruction and non-destructive mutation through `with`.
+- Records are ideal for DTOs, messages and value objects: two ShipmentCreated events with the same data are equal.
+- Positional records (`record Kit(string Number, int SiteId)`) create init-only properties; `with` makes a copy with changes.
+- Equality includes the runtime type (EqualityContract), so a derived record never equals its base record.
+- record struct (C# 10) gives value-type records; readonly record struct makes them immutable.
+- EF Core entities should usually be classes with identity, not records, because value equality confuses change tracking.
+- Structs: small, short-lived, immutable values (coordinates, money); large or mutable structs cause copying bugs and costs.
+```csharp
+public sealed record ShipmentStatusChanged(Guid ShipmentId, string Status, DateTimeOffset At);
+var e1 = new ShipmentStatusChanged(id, "Shipped", now);
+var e2 = e1 with { Status = "Delivered" };   // copy with one change
+bool same = e1 == e1 with { };               // true: value equality
+```
+? Are records immutable? :: Positional records have init-only properties, but you can add mutable properties, and referenced objects (lists) can still change.
+? Why not records for EF entities? :: Entities need stable identity and tracked mutation; value equality and with-copies fight that.
+
+@p1-14
+Q: Catch exceptions only where you can handle them meaningfully, let the rest bubble to one global handler that logs and returns ProblemDetails, and never swallow them silently. Use specific exception types, preserve stack traces with `throw;`, and do not use exceptions for normal control flow.
+- `throw;` keeps the original stack trace, `throw ex;` resets it; wrap with an inner exception when adding context.
+- Exception filters (`catch (SqlException ex) when (ex.Number == 1205)`) catch only matching cases without unwinding the stack first, which helps debugging.
+- Use finally or using/await using for cleanup; IAsyncDisposable for async resources.
+- Expected outcomes (validation, not found) are often clearer as results or specific domain exceptions mapped to 400/404/409 centrally.
+- Cancellation: let OperationCanceledException flow when the request is aborted; do not log it as an error.
+- Logging: log once, at the boundary, with structured context (ids), not at every layer; never expose stack traces to clients.
+```csharp
+try { await _sftp.UploadAsync(file, ct); }
+catch (SftpException ex) when (ex.IsTransient)
+{
+    _log.LogWarning(ex, "Transient SFTP failure for {File}", file.Name);
+    throw new RetryableTransferException(file.Name, ex);   // keep inner exception
+}
+```
+? Why not catch (Exception) everywhere? :: It hides bugs and leaves state inconsistent; only boundaries (global handler, background loops) should catch everything.
+? Exceptions vs error codes? :: Exceptions for exceptional failures; results for expected business outcomes.
+
+@p1-15
+Q: Generics let you write type-safe, reusable code parameterised by type, such as List<T> or Result<T>, without casting or boxing. Constraints (`where T : class, new(), IEntity`) tell the compiler what T can do, so you can call members on it safely.
+- Performance: generics over value types get specialised code, so List<int> does not box like ArrayList.
+- Constraints: class, struct, notnull, unmanaged, new(), base class, interface, and in C# 11 static abstract interface members for generic math.
+- Variance: `out T` (covariance) on IEnumerable<out T> lets IEnumerable<string> be used as IEnumerable<object>; `in T` (contravariance) on Action<in T>.
+- Generic methods with inference keep call sites clean: `Map<TSource, TDest>()`.
+- Open generic DI registration: `services.AddScoped(typeof(IRepository<>), typeof(EfRepository<>));`.
+- Used in IRT for [a Result<T> type returned by validation services and a generic paged response PagedResult<T>].
+```csharp
+public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Page, int PageSize, int Total);
+public static async Task<PagedResult<T>> ToPagedAsync<T>(this IQueryable<T> q, int page, int size, CancellationToken ct)
+{
+    var total = await q.CountAsync(ct);
+    var items = await q.Skip((page - 1) * size).Take(size).ToListAsync(ct);
+    return new(items, page, size, total);
+}
+```
+? What is covariance? :: Using a more derived type argument where a less derived one is expected, allowed for out-only positions.
+? Generics in C# vs Java? :: C# generics are reified at runtime (real types per instantiation); Java uses type erasure.
+
+@p1-16
+Q: For backend services, .NET 8 (LTS) brought big performance gains, native AOT for ASP.NET Core, TimeProvider, keyed DI services, IExceptionHandler, built-in Identity API endpoints, better metrics and the resilience libraries. .NET 10 (LTS, November 2025) adds C# 14, further JIT and GC improvements, built-in minimal API validation, OpenAPI 3.1 and more AOT work.
+- Performance: Dynamic PGO on by default in .NET 8, faster JSON, Kestrel and LINQ; most services get faster just by upgrading.
+- Native AOT: small, fast-starting binaries for minimal APIs and Lambda; limits on reflection and EF Core.
+- Developer productivity: primary constructors (C# 12), collection expressions, keyed services, FrozenDictionary, TimeProvider for testable time.
+- Observability: built-in metrics with System.Diagnostics.Metrics and OpenTelemetry-friendly meters; .NET Aspire for local orchestration and dashboards.
+- .NET 9 (STS) in between: HybridCache, built-in OpenAPI document generation (Microsoft.AspNetCore.OpenApi), DATAS GC by default.
+- In IRT we moved from .NET 8 to 10 before .NET 8 support ends (November 2026) and saw [10 to 15 percent] lower p95 latency.
+? Which C# 14 feature do you like? :: Extension members (extension properties and static extension members) and the field keyword for properties.
+? Why stay on LTS? :: Longer support and fewer upgrades, which matters when every upgrade needs validation in a regulated product.

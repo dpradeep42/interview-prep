@@ -1,0 +1,357 @@
+@p1-17
+Q: The pipeline is the ordered chain of middleware that every HTTP request passes through in ASP.NET Core: Kestrel receives the request, builds an HttpContext, and each middleware can act before and after calling the next one until an endpoint produces the response, which then flows back out in reverse. See Part 10 for standalone deep answers on middleware and custom middleware.
+- Recommended order: exception handler, HSTS, HTTPS redirection, static files, routing, CORS, authentication, authorization, custom middleware (rate limiting, correlation id), endpoints.
+- Routing is split in two: UseRouting selects the endpoint early so later middleware (CORS, auth) can read its metadata; the endpoint executes at the end.
+- Branching: Map (by path), MapWhen (by predicate, separate branch), UseWhen (conditional middleware that rejoins).
+- Short-circuit: any middleware can end the request; .NET 8 adds `.ShortCircuit()` on endpoints such as /health to skip the rest of the pipeline.
+- Cost: every middleware runs for every request, so keep them fast and async.
+- In IRT the order is exception handler, correlation id, routing, CORS, authentication, authorization, rate limiting, controllers.
+? Where does Kestrel fit? :: Kestrel is the server underneath; it accepts connections and hands each request to the pipeline.
+? What does app.Run do at the end of Program.cs? :: Starts the host and blocks until shutdown; Run(delegate) in the pipeline is different: a terminal middleware.
+
+@p1-18
+Q: DI lifetimes define how long a service instance lives: Singleton is one instance for the whole application, Scoped is one per request (per DI scope), Transient is a new instance every time it is resolved. Choose by state and thread safety: stateless or thread-safe shared things as singletons, per-request things like DbContext as scoped, lightweight stateless helpers as transient.
+- Captive dependency: a singleton must not depend on scoped or transient services that hold state, or it keeps them forever; ValidateScopes catches this in Development.
+- Background code has no request scope: create one with IServiceScopeFactory.CreateScope() (or CreateAsyncScope) per unit of work.
+- Disposal: the container disposes services it created when their scope ends; do not dispose injected services yourself.
+- Transient IDisposable services resolved from the root provider are kept until app shutdown, a hidden leak.
+- .NET 8 keyed services let one interface have several named registrations.
+- In IRT: DbContext scoped, HttpClient typed clients transient via IHttpClientFactory, SFTP provider factory and caches singleton.
+```csharp
+builder.Services.AddSingleton<IStudyConfigCache, StudyConfigCache>();
+builder.Services.AddScoped<IShipmentService, ShipmentService>();
+builder.Services.AddTransient<ICsvValidator, CsvValidator>();
+builder.Host.UseDefaultServiceProvider(o => { o.ValidateScopes = true; o.ValidateOnBuild = true; });
+```
+? What is ValidateOnBuild? :: It checks at startup that every registered service can be constructed, catching missing registrations early.
+? Is HttpClient a singleton? :: Use IHttpClientFactory or one long-lived client with PooledConnectionLifetime, not new HttpClient per call.
+
+@p1-19
+Q: Controllers group actions in classes with attributes, filters, model binding conventions and [ApiController] behaviour; Minimal APIs map routes directly to lambdas or methods with less ceremony and slightly better performance. Both share routing, DI, auth and OpenAPI, so the choice is about structure and team preference.
+- Controllers: mature conventions, action filters, model validation automatically, great for large APIs and teams used to MVC.
+- Minimal APIs: route groups, endpoint filters, TypedResults, native AOT support; ideal for small services, Lambda and new code.
+- Validation: automatic in controllers with [ApiController]; .NET 10 adds built-in validation to minimal APIs (AddValidation).
+- Testing: both via WebApplicationFactory; minimal handlers can be unit-tested as static methods.
+- Mixing is fine: one app can have controllers and minimal endpoints.
+- IRT uses controllers; for [the Node log summariser's .NET replacement prototype] I would use minimal APIs.
+? Which is faster? :: Minimal APIs have less overhead, but the difference rarely matters compared with database calls.
+? How do you organise many minimal endpoints? :: MapGroup per feature and one extension method per feature file.
+
+@p1-20
+Q: Program.cs builds and runs the app with the minimal hosting model: WebApplication.CreateBuilder sets up configuration (appsettings, environment variables, secrets), logging and the DI container; you register services; builder.Build() creates the app; then you configure the middleware pipeline and endpoints; app.Run() starts Kestrel and blocks until shutdown.
+- Configuration sources load in order, later ones override: appsettings.json, appsettings.{Environment}.json, user secrets (Development), environment variables, command line.
+- Services must be registered before Build(); after Build the container is read-only.
+- Hosted services start before Kestrel starts listening (in registration order); .NET 8 adds IHostedLifecycleService hooks.
+- Startup validation: ValidateOnStart for options and ValidateOnBuild for DI make misconfiguration fail fast at deployment.
+- Graceful shutdown: SIGTERM triggers IHostApplicationLifetime.ApplicationStopping, then hosted services' StopAsync within ShutdownTimeout.
+- Startup.cs (ConfigureServices/Configure) still works but is no longer the template.
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddControllers();
+builder.Services.AddDbContext<IrtDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString("Irt")));
+var app = builder.Build();
+app.UseExceptionHandler();
+app.MapControllers();
+app.MapHealthChecks("/health/ready");
+app.Run();
+```
+? Where would you put startup tasks like migrations? :: Not in app startup for regulated releases; we run migration scripts as a controlled release step.
+? What happens if configuration is invalid? :: With ValidateOnStart the app fails to start and the health check fails the deployment instead of failing at runtime.
+
+@p1-21
+Q: Middleware runs for every request at the HTTP level and knows nothing about MVC; filters run only inside the MVC (or endpoint) pipeline around a selected action, so they can see action arguments, model state and the action result. Use middleware for cross-cutting HTTP concerns and filters for action-specific concerns.
+- Middleware examples: exception handling, correlation id, CORS, authentication, rate limiting, response compression.
+- Filter examples: validation, auditing an action's arguments, a "study not locked" rule, caching a result, transforming results.
+- Ordering: middleware order is Program.cs order; filters run authorization, resource, action, exception, result, ordered by scope and Order.
+- Global exception handling belongs in middleware, because exception filters miss errors from other middleware and result execution.
+- Minimal APIs use endpoint filters, the filter equivalent.
+- Detailed filter answer and code: see Part 10 "MVC filter types".
+? Can middleware read the selected endpoint? :: Yes, after UseRouting via context.GetEndpoint(), including its metadata (attributes).
+? Can a filter short-circuit? :: Yes, by setting context.Result in an authorization, resource or action filter.
+
+@p1-22
+Q: Model binding converts HTTP data (route values, query string, headers, form, JSON body) into action parameters and objects; validation then checks them against rules (DataAnnotations or FluentValidation) and fills ModelState. With [ApiController], invalid models automatically return a 400 ValidationProblemDetails before your action runs.
+- Sources: [FromRoute], [FromQuery], [FromBody] (one per action, read by System.Text.Json input formatter), [FromHeader], [FromForm], [FromServices]; [ApiController] infers most of them.
+- Complex types from the body are deserialised once; the body stream is not rewindable by default (EnableBuffering if middleware must read it).
+- Validation attributes: [Required], [Range], [StringLength], [RegularExpression]; IValidatableObject for cross-field rules; FluentValidation for complex rules and better testability.
+- Over-posting: bind to request DTOs, never directly to EF entities.
+- Custom binders (IModelBinder) for special formats; TypeConverter or TryParse for simple custom types in minimal APIs.
+- In IRT request DTOs validate format, while business rules (site active, depot valid) run in the service layer and return 409/422.
+```csharp
+public sealed record CreateShipmentRequest(
+    [property: Required] Guid SiteId,
+    [property: Range(1, 500)] int KitCount,
+    [property: StringLength(200)] string? Notes);
+
+[HttpPost] public async Task<IActionResult> Create(CreateShipmentRequest req, CancellationToken ct) => ...;
+```
+? Why is required validation on a non-nullable value type tricky? :: A missing Guid binds to Guid.Empty; use Guid? with [Required] or validate explicitly.
+? FluentValidation vs DataAnnotations? :: FluentValidation keeps rules in testable classes and handles complex conditional rules better.
+
+@p1-23
+Q: Global exception handling catches every unhandled exception in one place, logs it with context, and returns a consistent error response (ProblemDetails) instead of leaking stack traces. In .NET 8 I use UseExceptionHandler with IExceptionHandler implementations and AddProblemDetails; Part 10 has the detailed IExceptionHandler answer with code.
+- Map exception types to status codes centrally: validation 400, not found 404, conflict 409, everything else 500.
+- Include a traceId or correlation id in the response so users can quote it to support.
+- Register the handler first in the pipeline; it only catches exceptions from later components.
+- Development shows the developer exception page; production shows a generic message.
+- Background services and message consumers need their own try/catch, the HTTP handler does not cover them.
+- Exceptions after the response has started cannot change the status code; the connection is aborted instead.
+? Why not try/catch in every controller? :: Duplication and inconsistency; one handler gives one format and one logging policy.
+? How do you test it? :: Integration test an endpoint that throws and assert the status and ProblemDetails body.
+
+@p1-24
+Q: REST models the API as resources identified by URLs, manipulated with standard HTTP methods, stateless requests and representations such as JSON. GET reads, POST creates, PUT replaces, PATCH partially updates, DELETE removes; GET, PUT and DELETE are idempotent, POST and PATCH are not (by default).
+- Idempotent means repeating the same request leaves the server in the same state; safe means no state change at all (GET, HEAD, OPTIONS).
+- Status codes: 200 OK, 201 Created with Location, 202 Accepted for async jobs, 204 No Content, 400, 401, 403, 404, 409 Conflict, 422, 429, 500, 503.
+- Make POST safe to retry with an Idempotency-Key header stored with the result.
+- Resource naming: plural nouns (/studies/{id}/sites), no verbs, filtering and paging with query parameters.
+- HATEOAS and Richardson maturity level 3 are rarely used in practice; consistent conventions and OpenAPI matter more.
+- Concurrency: ETags with If-Match return 412 on conflicting updates.
+```http
+POST /api/studies/42/shipments
+Idempotency-Key: 6f1c2a9e-...
+HTTP/1.1 201 Created
+Location: /api/shipments/8812
+```
+? PUT vs PATCH? :: PUT replaces the whole resource; PATCH changes some fields (JSON Patch or merge patch).
+? Is DELETE idempotent if the second call returns 404? :: Yes; the state is the same (resource gone), even though the response differs.
+
+@p1-25
+Q: API versioning lets you evolve an API without breaking existing clients. Common approaches are URL segment (/api/v2/...), query string (?api-version=2.0), header (api-version or a media type); in ASP.NET Core the Asp.Versioning package handles routing, reporting and deprecation.
+- Prefer additive, backward-compatible changes (new optional fields) so most changes need no new version.
+- Breaking changes (renamed fields, changed semantics, removed endpoints) get a new major version, with the old one supported for an agreed period.
+- Report supported and deprecated versions in response headers (api-supported-versions) and announce sunset dates.
+- Keep versions in OpenAPI documents per version so clients see exactly what they get.
+- Version message contracts too (events on Kafka) with a schema version field.
+- In IRT vendor-facing APIs use URL versions because vendors' tools handle them easily.
+```csharp
+builder.Services.AddApiVersioning(o =>
+{
+    o.DefaultApiVersion = new ApiVersion(1, 0);
+    o.AssumeDefaultVersionWhenUnspecified = true;
+    o.ReportApiVersions = true;
+}).AddMvc();
+[ApiVersion("2.0")] [Route("api/v{version:apiVersion}/shipments")]
+```
+? Which approach do you prefer? :: URL versioning for external clients (visible, cache-friendly); headers for internal APIs if the team prefers clean URLs.
+? How long do you keep old versions? :: As long as agreed with clients, with usage metrics to see when traffic drops to zero.
+
+@p1-26
+Q: ASP.NET Core configuration merges key-value pairs from providers (appsettings.json, environment-specific files, environment variables, user secrets, command line, Azure App Configuration, AWS Parameter Store) with later sources overriding earlier ones. The Options pattern binds sections to typed classes (IOptions<T>, IOptionsSnapshot<T>, IOptionsMonitor<T>) with validation; Part 10 compares the three in depth.
+- Hierarchical keys use ":" in JSON and "__" in environment variables (Sftp__Vendors__DepotA__Host).
+- Secrets: user secrets locally, AWS Secrets Manager or Parameter Store in deployed environments; never commit them.
+- Validate with ValidateDataAnnotations and ValidateOnStart so bad config stops the deployment.
+- Reloading works only with providers that support it (JSON files with reloadOnChange, App Configuration); use IOptionsMonitor to react.
+- Keep configuration per environment in IaC or variable groups, so environments differ by data, not by code.
+? Why bind to classes instead of IConfiguration["key"]? :: Types, validation, IntelliSense and easy testing, with no magic strings scattered around.
+? How does ASPNETCORE_ENVIRONMENT affect config? :: It selects appsettings.{Environment}.json and enables Development-only features such as user secrets.
+
+@p1-27
+Q: I log with ILogger<T> using structured message templates, enrich every entry with a correlation id through logging scopes, and send JSON logs to a central store (CloudWatch Logs); for tracing I propagate the id (or W3C traceparent) across HTTP and messages so one request can be followed across services. Part 10 covers ILogger and structured logging in depth.
+- Three pillars: logs for details, metrics for trends and alerts, traces for the path and timing of a request across services.
+- OpenTelemetry in .NET: ActivitySource and Activity give spans; exporters send traces to X-Ray, Jaeger or Tempo; ASP.NET Core and HttpClient are instrumented automatically.
+- Log levels per category in configuration; avoid Information-level noise from framework namespaces.
+- Use LoggerMessage source generators on hot paths; never log secrets or patient data.
+- Metrics: request rate, errors, latency (p95/p99), queue depth; alert on SLOs, not on single errors.
+- In IRT: correlation-id middleware and a DelegatingHandler, JSON logs to CloudWatch, Grafana dashboards and alarms.
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(t => t.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddOtlpExporter())
+    .WithMetrics(m => m.AddAspNetCoreInstrumentation().AddRuntimeInstrumentation());
+```
+? Logging vs tracing? :: Logs record events; traces connect timed spans of one request across services.
+? What should every log entry contain? :: Timestamp, level, service, environment, version, correlation id and the relevant business ids.
+
+@p1-28
+Q: Measure first (Application Insights, CloudWatch, dotnet-counters, a profiler), then fix the biggest bottleneck, which is usually the database: efficient queries, indexes, projections, no N+1. Then use async I/O end to end, caching, response compression, pagination, pooling, and offload long work to background jobs.
+- EF Core: AsNoTracking, Select projections, split queries, compiled queries for hot paths, DbContext pooling.
+- Avoid sync-over-async and thread-pool starvation; pass CancellationToken.
+- Caching: output caching or HybridCache for reference data; HTTP caching headers for public data.
+- Payloads: pagination, smaller DTOs, System.Text.Json source generation, response compression (Brotli/Gzip) where CPU allows.
+- Platform: upgrading to .NET 8/10 gives free wins (Dynamic PGO); right-size containers and autoscale on latency or CPU.
+- Prove it: load test with k6 or JMeter before and after; my shipment list fix took [9 seconds to under 300 ms].
+? What is your first step with a slow endpoint? :: Find where the time goes: trace spans or logs with durations, then the SQL plan if it is the database.
+? When does caching hurt? :: When data must be consistent (kit allocation) or invalidation is unclear.
+
+@p1-29
+Q: CORS (Cross-Origin Resource Sharing) is a browser mechanism that lets a server say which other origins may call it from JavaScript. The browser sends an Origin header (and a preflight OPTIONS request for non-simple calls), and the server answers with Access-Control-Allow-* headers; in ASP.NET Core you define named policies with AddCors and apply UseCors after UseRouting.
+- CORS is not security for your API: it only restricts browsers; curl, Postman and servers ignore it. Authentication and authorization protect the API.
+- Preflight happens for methods other than GET/POST/HEAD, custom headers (Authorization) or JSON content type; cache it with SetPreflightMaxAge.
+- AllowCredentials cannot be combined with AllowAnyOrigin; list exact origins.
+- Order: UseCors after UseRouting and before UseAuthentication/UseAuthorization so preflights are answered before auth rejects them.
+- In IRT the API allows only [the IRT UI origins per environment] from configuration.
+```csharp
+builder.Services.AddCors(o => o.AddPolicy("ui", p => p
+    .WithOrigins(builder.Configuration.GetSection("Cors:Origins").Get<string[]>()!)
+    .AllowAnyHeader().WithMethods("GET", "POST", "PUT", "DELETE")
+    .AllowCredentials()));
+app.UseCors("ui");
+```
+? Does CORS stop CSRF? :: No; CSRF uses simple requests that may not need preflight. Use SameSite cookies and anti-forgery tokens.
+? Why does a preflight fail with 401? :: The auth middleware ran before CORS or the OPTIONS request was not allowed; fix the order.
+
+@p1-30
+Q: I make service-to-service calls resilient with timeouts on every call, retries with exponential backoff and jitter only for transient failures, circuit breakers to fail fast when a dependency is down, idempotent operations so retries are safe, and fallbacks or asynchronous messaging where an immediate answer is not required. In .NET 8 this is Polly v8 through AddStandardResilienceHandler (Part 10 has the deep answer).
+- Timeouts: without them a slow dependency ties up threads and connections; set per-attempt and total timeouts.
+- Transient = timeouts, 5xx, 408, 429, connection resets; respect Retry-After.
+- Circuit breaker states: closed, open (fail fast), half-open (trial calls).
+- Bulkheads and concurrency limits isolate one slow dependency.
+- Idempotency keys make POST retries safe; consumers dedupe messages by id.
+- Observe it: metrics on retries and breaker state, alerts when a breaker opens.
+? What is a retry storm? :: Many clients retrying aggressively at once, multiplying load on a struggling service; backoff, jitter and breakers prevent it.
+? Sync call or message? :: If the caller does not need the answer now, publish a message and let the consumer retry independently.
+
+@p1-31
+Q: REST uses HTTP resources and JSON, simple and universal; SOAP (WCF) uses XML envelopes and a strict WSDL contract with WS-* standards; gRPC uses HTTP/2 and Protocol Buffers for fast, strongly typed service-to-service calls and streaming; GraphQL lets clients ask for exactly the fields they need from one endpoint.
+- REST: best for public and browser APIs, caching, broad tooling; risk of over- or under-fetching.
+- SOAP: legacy enterprise integrations, WS-Security, transactions; heavy and verbose; CoreWCF helps migrate.
+- gRPC: binary, compact, contract-first .proto, bidirectional streaming, deadlines; limited browser support (gRPC-Web), harder to debug by hand.
+- GraphQL: flexible queries for many front ends, one round trip; needs care with N+1 resolvers (DataLoader), caching and query cost limits.
+- In IRT: REST for UI and vendors, legacy WCF endpoints in older areas, Kafka and RabbitMQ for async.
+? When would you pick gRPC? :: Internal high-throughput service calls or streaming between services you control.
+? Why not GraphQL everywhere? :: Extra complexity in caching, security and performance control that simple REST APIs do not need.
+
+@p1-32
+Q: Short background work uses hosted services (BackgroundService) with queues such as Channels; durable or scheduled work uses a message broker (RabbitMQ, SQS) or a scheduler (Hangfire, Quartz); long-running or heavy jobs run in separate worker services or Lambda. Never use fire-and-forget Task.Run inside a request. Part 10 covers BackgroundService in depth.
+- Request returns 202 Accepted with a job id, a worker processes it, and the client polls or gets notified.
+- Hosted services are singletons; create scopes for DbContext.
+- Graceful shutdown: honour the stopping token and finish or checkpoint work within the shutdown timeout.
+- Multiple instances run every hosted service; avoid duplicate work with queues or distributed locks.
+- In IRT: RabbitMQ consumers as BackgroundServices in worker containers, [an SFTP poller], and Ansible-driven deployment jobs outside the app.
+? Why not Task.Run in a controller? :: The work is lost on shutdown or crash, exceptions vanish, and it has no retries or visibility.
+? Hangfire vs hosted service? :: Hangfire adds persistence, retries, cron and a dashboard; a hosted service is a simple in-process loop.
+
+@p1-33
+Q: EF Core's change tracker keeps a snapshot of every entity it loads; on SaveChanges it compares current values with the snapshot (DetectChanges) and generates INSERT, UPDATE and DELETE statements for what changed. AsNoTracking skips the snapshot and identity resolution, so read-only queries are faster and use less memory.
+- Entity states: Detached, Added, Unchanged, Modified, Deleted; inspect with context.Entry(e).State or ChangeTracker.DebugView.
+- Identity resolution: a tracked context returns the same instance for the same key; AsNoTrackingWithIdentityResolution keeps that without tracking.
+- Updates only include changed columns, which reduces conflicts and log noise.
+- Long-lived contexts accumulate tracked entities and slow down; keep DbContext short-lived (per request).
+- Disconnected updates: attach and set state, or load then apply changes; for bulk changes use ExecuteUpdate which bypasses tracking entirely.
+- In IRT all GET endpoints use AsNoTracking with projections; writes load, modify and save.
+```csharp
+var rows = await _db.Shipments.AsNoTracking()
+    .Where(s => s.StudyId == id).Select(s => new ShipmentRow(s.Id, s.Status)).ToListAsync(ct);
+// projections to DTOs are never tracked anyway
+```
+? Is tracking needed to update? :: Not strictly; you can Attach and mark properties modified, or use ExecuteUpdate for set-based changes.
+? Can you make no-tracking the default? :: Yes, UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking) on the context options.
+
+@p1-34
+Q: Eager loading fetches related data in the same query with Include/ThenInclude; lazy loading fetches it automatically when you first access the navigation (needs proxies or ILazyLoader); explicit loading fetches it on demand with Entry(e).Collection(...).LoadAsync(). The N+1 problem is one query for the parents plus one more query per parent for its children, which is what lazy loading in a loop produces.
+- Detect N+1 by logging SQL or watching query counts in tests; it often hides behind serialisation of navigations.
+- Fix with Include, or better, a Select projection that pulls exactly the needed columns in one query.
+- Large Includes cause cartesian explosion; AsSplitQuery runs one query per collection instead.
+- Lazy loading is off by default in EF Core and I keep it off in APIs because it hides database calls.
+- Filtered Include (EF Core 5+): Include(s => s.Shipments.Where(x => x.Status == "Open")).
+```csharp
+var sites = await _db.Sites.AsNoTracking()
+    .Where(s => s.StudyId == studyId)
+    .Select(s => new { s.Name, Open = s.Shipments.Count(x => x.Status == "Open") })
+    .ToListAsync(ct);   // one query, no N+1
+```
+? Split query vs single query? :: Split avoids duplicated rows for multiple collections but runs several round trips and can see inconsistent data without a transaction.
+? Why not lazy loading in APIs? :: It triggers unpredictable queries, often during JSON serialisation, after the context may be disposed.
+
+@p1-35
+Q: Migrations are code-reviewed like any change, generated as idempotent SQL scripts (dotnet ef migrations script --idempotent), and applied as a controlled step of the release through FV, UAT and production, never by the app at startup. Scripts are versioned with the release, backward compatible with the previous app version, and kept as evidence.
+- Expand/contract: add new columns or tables first (nullable or with defaults), deploy the app, backfill, then remove old ones in a later release; this allows rollback of the app without database rollback.
+- Review generated Up code for destructive operations (drops, renames that EF sees as drop and add) and data loss.
+- Large tables: add indexes ONLINE where the edition allows and batch data migrations to avoid long locks.
+- Migration bundles (efbundle) are an alternative executable for pipelines.
+- Keep a __EFMigrationsHistory check in verification so every environment is on the expected migration.
+- In IRT DB scripts are deployed first in the release order (DB, API, app, UI) by the Ansible/Shell install scripts.
+```bash
+dotnet ef migrations add AddShipmentStatusIndex
+dotnet ef migrations script --idempotent -o release/2024.3/db.sql
+```
+? Why not context.Database.Migrate() at startup? :: Several instances could race, it needs elevated DB rights, and regulated releases need a reviewed, controlled script.
+? How do you roll back a migration? :: Prefer forward fixes; with expand/contract the old app still works, so the DB rarely needs rolling back.
+
+@p1-36
+Q: EF Core uses optimistic concurrency: mark a concurrency token (a SQL Server rowversion column with [Timestamp] or IsRowVersion), EF adds it to the WHERE clause of updates, and if no row is affected it throws DbUpdateConcurrencyException. You then decide: reload and retry, merge, or return 409 Conflict to the user.
+- rowversion changes automatically on every update, so it is the simplest token in SQL Server.
+- In APIs return the version as an ETag; clients send If-Match, and a mismatch becomes 412 or 409.
+- Handling: ex.Entries gives current, original and database values for merging or messages.
+- Pessimistic alternative: UPDLOCK/transactions for high-contention rows (allocating the last kit), used sparingly.
+- Bulk ExecuteUpdate bypasses the token unless you include it in the Where.
+```csharp
+public class Shipment { public Guid Id { get; set; } public string Status { get; set; } = ""; [Timestamp] public byte[] Version { get; set; } = []; }
+try { await _db.SaveChangesAsync(ct); }
+catch (DbUpdateConcurrencyException) { return Conflict(new ProblemDetails { Title = "Shipment was changed by someone else" }); }
+```
+? Optimistic vs pessimistic? :: Optimistic for low contention and web apps (no held locks); pessimistic only for short, high-contention critical sections.
+? Where else do you use it? :: Study configuration edits by several study managers, where silent overwrites would be a GxP data-integrity problem.
+
+@p1-37
+Q: DbContext is a lightweight unit of work that is not thread-safe, so it should be short-lived: one per request (scoped, the AddDbContext default) or one per unit of work in background services. Never share one instance across concurrent operations; running two queries in parallel on the same context throws InvalidOperationException.
+- Parallel work: create separate contexts with IDbContextFactory<T> (AddDbContextFactory) per task.
+- Pooling: AddDbContextPool reuses context instances to reduce allocation cost; the context must not hold per-request state in fields.
+- Singletons and hosted services must not capture a scoped DbContext; create a scope or use the factory.
+- Long-lived contexts grow their change tracker and give stale data.
+- Connection pooling is separate and handled by SqlClient; the context opens and closes connections per operation.
+```csharp
+builder.Services.AddDbContextFactory<IrtDbContext>(o => o.UseSqlServer(cs));
+await Parallel.ForEachAsync(studyIds, async (id, ct) =>
+{
+    await using var db = await factory.CreateDbContextAsync(ct);
+    await RecalculateAsync(db, id, ct);
+});
+```
+? What error do you get when sharing a context concurrently? :: "A second operation was started on this context instance before a previous operation completed."
+? Pool vs factory? :: Pooling reduces cost for scoped contexts; the factory gives you control over when to create contexts (and can also be pooled).
+
+@p1-38
+Q: Use FromSql / FromSqlInterpolated or SqlQuery with interpolated strings, which EF converts into parameters, or explicit SqlParameter objects; never concatenate user input into SQL. For commands use ExecuteSql/ExecuteSqlInterpolated, and for stored procedures `FromSql($"EXEC dbo.GetSiteStock {siteId}")`.
+- FromSqlRaw with string concatenation is the classic SQL injection hole; FromSqlRaw is fine only with placeholders and parameters.
+- FromSql results can be composed with LINQ (EF wraps it as a subquery) if the SQL is composable (not a stored procedure).
+- SqlQuery<T> (EF Core 8) maps raw SQL to unmapped types such as DTOs.
+- Use raw SQL for complex reporting, window functions or hints that LINQ cannot express well; keep it in one place and test it.
+- Least privilege: the app's DB user cannot alter schema in production.
+```csharp
+var stock = await _db.Database
+    .SqlQuery<KitStock>($"EXEC dbo.GetSiteStock @SiteId = {siteId}")
+    .ToListAsync(ct);   // {siteId} becomes a SqlParameter, not string concatenation
+```
+? Is FromSqlInterpolated safe? :: Yes, interpolated values become parameters; the danger is building the string first and passing it to FromSqlRaw.
+? Dapper or EF raw SQL? :: Dapper for many hand-written queries and maximum speed; EF raw SQL when you are already in an EF context.
+
+@p1-39
+Q: SaveChanges runs all pending changes in one transaction automatically. For several SaveChanges calls or mixing EF with raw SQL, start an explicit transaction with Database.BeginTransactionAsync and commit at the end; across databases or systems use the outbox pattern rather than distributed transactions.
+- Execution strategies (EnableRetryOnFailure) retry transient failures, but with explicit transactions you must wrap the whole block in strategy.ExecuteAsync.
+- Savepoints: EF Core creates them automatically when SaveChanges runs inside a user transaction, so a failed SaveChanges can roll back to the savepoint.
+- TransactionScope works but async needs TransactionScopeAsyncFlowOption.Enabled, and it can escalate to distributed transactions; I prefer explicit DbContext transactions.
+- Isolation level can be passed to BeginTransaction; defaults to the database default (READ COMMITTED, or snapshot if enabled).
+- In the CSV import all batches run inside one transaction so a failure rolls back everything.
+```csharp
+var strategy = _db.Database.CreateExecutionStrategy();
+await strategy.ExecuteAsync(async () =>
+{
+    await using var tx = await _db.Database.BeginTransactionAsync(ct);
+    foreach (var batch in rows.Chunk(500)) { _db.Sites.AddRange(batch); await _db.SaveChangesAsync(ct); }
+    await tx.CommitAsync(ct);
+});
+```
+? What is the outbox pattern? :: Save the business change and the outgoing message in the same DB transaction, then a relay publishes it, so you never lose or invent events.
+? Why not distributed transactions (MSDTC)? :: Slow, fragile and unsupported in many cloud setups; sagas and outbox are the modern approach.
+
+@p1-40
+Q: WCF (Windows Communication Foundation) is the .NET Framework framework for building service-oriented applications over SOAP and other transports. Every endpoint has ABC: Address (where), Binding (how: transport, encoding, security, such as basicHttpBinding or netTcpBinding) and Contract (what: the [ServiceContract] interface).
+- Bindings choose protocol and features: BasicHttpBinding (SOAP 1.1, interop), WSHttpBinding (WS-Security, reliable sessions), NetTcpBinding (fast .NET to .NET), NetNamedPipeBinding (same machine).
+- Contracts: ServiceContract, OperationContract, DataContract/DataMember, FaultContract for typed errors.
+- Behaviours configure throttling, instance mode (PerCall, PerSession, Single) and concurrency.
+- Hosting: IIS/WAS, Windows service or self-host; heavy XML configuration in web.config.
+- Modern status: no WCF server in .NET 5+, CoreWCF provides a community port; clients still work via System.ServiceModel packages.
+- In IRT older areas still expose WCF endpoints that we maintain and integrate with.
+? What is a FaultContract? :: A typed SOAP fault the service declares so clients can handle specific errors.
+? PerCall vs PerSession? :: PerCall creates a service instance per request (scalable); PerSession keeps one per client session (stateful).
+
+@p1-41
+Q: I would migrate WCF gradually: inventory endpoints and clients, keep the contracts stable, then either port to CoreWCF on modern .NET when SOAP clients cannot change, or move to REST (ASP.NET Core) or gRPC when clients can. Run old and new side by side behind a facade, compare responses, and cut clients over one by one.
+- Strangler fig pattern: route endpoint by endpoint to the new implementation while the old service keeps running.
+- Shared business logic moves into .NET Standard or modern libraries first, so both hosts use the same code.
+- WS-* features (message security, transactions, reliable sessions) need replacements: TLS and OAuth, outbox/sagas, idempotent retries.
+- Contract tests that replay recorded requests against old and new services prove compatibility.
+- Plan for configuration (no web.config), hosting (Kestrel, containers) and authentication changes.
+? CoreWCF or gRPC? :: CoreWCF when external SOAP clients cannot change; gRPC for internal .NET-to-.NET calls you control.
+? Biggest risk? :: Hidden behaviour in bindings and serializers (DataContract quirks, faults) that clients depend on.
