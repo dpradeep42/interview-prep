@@ -105,7 +105,7 @@ cards.forEach(c => { const seen = new Set([nrm(c.q)]); const a = (aka[c.id] || [
 // home list: your question-list sections first (first occurrence wins), then every other card by topic
 const home = [], placed = new Set(), canon = id => (byId[id] && byId[id].dup) || id;
 L.forEach(sec => { const ids = []; sec.items.forEach(it => (map[it.id] || []).forEach(r => { const c = canon(r); if (byId[c] && !placed.has(c)) { placed.add(c); ids.push(c); } })); if (ids.length) home.push([sec.n + '. ' + sec.title.replace(/\s+[—-]+\s+.*$/, '').replace(/[“”]/g, '"'), ids]); });
-const REST = [['p13', 'fe'], ['p13', 'irt'], ['p13', 'irts'], ['p14', 'hyb'], ['p14', 'map'], ['p11', 'ng'], ['p12', 'rts'],
+const REST = [['p13', 'fe'], ['p13', 'irt'], ['p13', 'irts'], ['p14', 'hyb'], ['p14', 'awd'], ['p14', 'map'], ['p11', 'ng'], ['p12', 'rts'],
   ['.NET, C# and ASP.NET Core deep dives', ['p10:mw', 'p10:net', 'p1:cs', 'p1:api', 'p1:ef', 'p1:sql']],
   ['More: testing, front end and other languages', ['p1:test', 'p1:fe', 'p1:poly']],
   ['More: cloud, DevOps, messaging, security and AI', ['p2:aws', 'p2:iac', 'p2:k8s', 'p2:cicd', 'p2:obs', 'p2:msg', 'p2:sec', 'p2:ai', 'p2:sd']],

@@ -32,6 +32,13 @@ These are assumed or invented so the answers hang together. Change them here and
 - Migration STAR: the existing UAT "missing setting" incident (about 8% errors, rolled back in 15 minutes) is now explained as config drift between variable groups and Parameter Store; fixes: ValidateOnStart, a per-service configuration manifest, and a configuration parity check tool in the CIRT MCP server; no configuration-related release failures since.
 - Woven into: Tell me about yourself, Walk me through your resume, MCP server (why), Most challenging project, Azure DevOps pipeline and release flow, YAML vs classic, Explain your AWS architecture, Why AWS, Deploy to AWS from Azure DevOps, Multi-node deployments, How MCP interacts with Azure DevOps.
 
+**AWS experience and AlertWatchDog**
+- AlertWatchDog is not on the resume, the question list or earlier answers, so the whole story is invented (the resume does list Microsoft Azure: App Service, Azure OpenAI). Change anything that differs from the real tool.
+- Invented: a C# Azure Functions app (.NET isolated worker) on a Premium plan with network integration; a timer trigger every 5 minutes runs checks (scheduled job success windows, vendor SFTP file arrival, RabbitMQ queue depth and dead letters, health endpoints, failed Azure DevOps releases); findings go to a storage queue; a queue-triggered rules function (thresholds, dedupe, 30-minute suppression); a Durable Functions escalation (notify Teams and email, wait 15 minutes for an ack, then escalate to on-call); managed identity and Key Vault; it alerts on its own silence through Application Insights; read-only and outside the validated product, so no GxP re-validation; background failures detected in minutes instead of hours.
+- STAR (invented): early 2025, Saturday; a depot vendor's shipment-status file was missing for its 2-hour window because the vendor moved the folder during maintenance; fixed by changing configuration in about 2 hours, before Monday, with no stale data at sites; an empty-folder check was added afterwards.
+- AWS self-rating: about 7 out of 10 (around 8 for application workloads, 5 to 6 for the account-level platform); mentions you would happily take the AWS Developer Associate certification.
+- AlertWatchDog was woven into: Tell me about yourself, CloudWatch and Grafana, Monitoring microservices, What makes a good alert, CloudWatch alarms, the Azure-to-AWS mapping overview, and App Insights vs CloudWatch.
+
 
 Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.
 
@@ -799,7 +806,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - It moved to Git, in Azure DevOps Server, after IQVIA acquired Cenduit,
 - **p14-12** Azure DevOps agent pools vs AWS CodeBuild and self-hosted runners?
   - In our setup, the agents that deploy to AWS run on EC2 inside our AWS account and are registered with our on-premise Azure DevOps Server.
-- **p14-15** Azure Monitor and Application Insights vs AWS CloudWatch and X-Ray?
+- **p14-15** Application Insights vs CloudWatch: how do Azure Monitor and AWS monitoring compare?
   - 2024
   - 4
 - **p14-16** Azure Service Bus vs AWS SQS and SNS?
@@ -808,3 +815,36 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - the core AWS stacks, like networking, are in CloudFormation, owned by the platform team, and newer service infrastructure, like queues and alarms, is in Terraform.
 - **p14-18** Azure App Service and VMs vs AWS Elastic Beanstalk, ECS and EC2?
   - still runs on servers rather than containers
+- **p14-20** How hands-on are you with AWS, and what have you done yourself?
+  - 8 to 12 seconds to under 300 milliseconds
+- **p14-21** How would you rate yourself on AWS?
+  - 7 out of 10
+  - I'd also happily take an AWS certification, like the Developer Associate, to formalise it.
+- **p14-22** What is AlertWatchDog?
+  - Every five minutes, a timer-triggered function runs a set of checks
+  - a Microsoft Teams channel and email
+  - It's read-only and sits outside the validated product, so we could build it without GxP re-validation.
+  - background failures were detected in minutes instead of hours
+- **p14-23** How did you build AlertWatchDog with Azure Functions?
+  - on the .NET isolated worker model
+  - every five minutes
+  - 30-minute
+  - 15 minutes
+  - It runs on a Premium plan with network integration
+- **p14-25** What are Durable Functions in Azure?
+  - 15 minutes
+- **p14-26** Azure Functions cold starts and hosting plans?
+  - I chose the Premium plan
+- **p14-27** How would you build AlertWatchDog on AWS?
+  - every five minutes
+- **p14-29** Azure Functions timer trigger vs AWS EventBridge Scheduler?
+  - every five minutes
+- **p14-30** Azure Functions queue trigger vs AWS SQS triggering Lambda?
+  - five times by default
+- **p14-31** Durable Functions vs AWS Step Functions?
+  - 15 minutes
+- **p14-33** Tell me about a time AlertWatchDog caught an issue early.
+  - In early 2025, on a Saturday morning, it raised an alert: the shipment-status file from one depot vendor hadn't arrived within its expected two-hour window.
+  - The vendor had moved their output to a new folder during maintenance, without telling us.
+  - It was fixed within about two hours, before Monday, and no site saw stale shipment data.
+  - I added a check for an unexpected empty folder

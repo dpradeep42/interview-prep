@@ -1,13 +1,13 @@
 @p14-8
 S: map
 D: I
-T: How do Azure DevOps and Azure concepts map to AWS?
+T: Azure to AWS mapping: how do Azure DevOps and Azure concepts map to AWS?
 V: azAwsMap
 K: azure to aws mapping, azure vs aws, azure devops vs aws, equivalent services, compare azure aws
 X: I work with both, because our product started as CIRT, Cenduit's IRT, with an on-premise Azure DevOps Server, and after IQVIA acquired Cenduit, new services moved to AWS. So I often translate between them.
 X: For DevOps: Azure DevOps variable groups map to AWS Systems Manager Parameter Store for settings, and Secrets Manager for secrets. Azure Key Vault maps to Secrets Manager, with KMS for encryption keys. Build pipelines map to CodeBuild, and release pipelines, with their stages, map to CodePipeline, with CodeDeploy doing the actual deployment. Release approvals and gates map to manual approval actions in CodePipeline. Service connections map to IAM roles that the pipeline assumes. Agent pools map to CodeBuild's managed build environments, or self-hosted runners. And TFS version control, TFVC, and Azure Repos map to Git, hosted on GitHub or CodeCommit.
 X: For the platform: App Service maps to Elastic Beanstalk or App Runner, containers map to ECS or EKS, and virtual machines map to EC2. Azure Monitor and Application Insights map to CloudWatch and X-Ray. Azure Service Bus maps to SQS for queues and SNS for publish and subscribe. ARM templates and Bicep map to CloudFormation and the CDK, while Terraform works on both.
-X: The concepts are the same: store settings and secrets outside code, build once, promote through stages with approvals, use identities instead of keys, and monitor everything. In practice, we still use Azure DevOps to deploy into AWS, so I use both sides of this map every day.
+X: The concepts are the same: store settings and secrets outside code, build once, promote through stages with approvals, use identities instead of keys, and monitor everything. In practice, we still use Azure DevOps to deploy into AWS, and my AlertWatchDog monitoring tool runs on Azure Functions, which would map to Lambda, EventBridge Scheduler, SQS and Step Functions on AWS.
 @p14-9
 S: map
 D: I
@@ -67,13 +67,13 @@ X: In our AWS services, database credentials and vendor SFTP keys are in Secrets
 @p14-15
 S: map
 D: I
-T: Azure Monitor and Application Insights vs AWS CloudWatch and X-Ray?
-K: azure monitor, application insights, cloudwatch, x-ray, observability azure aws, apm, distributed tracing
+T: Application Insights vs CloudWatch: how do Azure Monitor and AWS monitoring compare?
+K: application insights vs cloudwatch, app insights vs cloudwatch, azure monitor, application insights, cloudwatch, x-ray, observability azure aws, apm, distributed tracing
 X: Both give you logs, metrics, alerts and tracing. Our product began as CIRT, Cenduit's IRT, on Microsoft tooling, and after IQVIA acquired Cenduit, new services moved to AWS, where we use CloudWatch with Grafana dashboards.
 X: In Azure, Azure Monitor is the overall platform: metrics, logs stored in Log Analytics workspaces and queried with KQL, and alert rules. Application Insights is its application performance part: requests, dependencies, exceptions, response times, and distributed tracing across services, with an application map.
 X: In AWS, CloudWatch covers most of that. CloudWatch Logs stores logs, queried with Logs Insights. CloudWatch Metrics holds numbers, like CPU, request counts and custom metrics, and CloudWatch Alarms alert on them, through SNS. Dashboards show them, though we use Grafana on top. For tracing, AWS X-Ray, or OpenTelemetry with the AWS Distro, follows a request across services, like Application Insights does. CloudWatch Application Signals and Container Insights add APM-style views for ECS.
 X: So: Log Analytics to CloudWatch Logs, KQL to Logs Insights queries, Azure Monitor metrics and alerts to CloudWatch Metrics and Alarms, and Application Insights to X-Ray or OpenTelemetry tracing.
-X: Whatever the tool, the key is in the code: structured logs, and a correlation id on every request. In [2024], I added a correlation-id middleware across our [4] services, so one search shows a request's whole journey, which cut triage from about an hour to minutes.
+X: I've used both: our AWS services report to CloudWatch, while AlertWatchDog, the monitoring tool I built on Azure Functions, reports its own health to Application Insights. Whatever the tool, the key is in the code: structured logs, and a correlation id on every request. In [2024], I added a correlation-id middleware across our [4] services, so one search shows a request's whole journey, which cut triage from about an hour to minutes.
 @p14-16
 S: map
 D: I

@@ -914,5 +914,146 @@
     }
    ]
   }
+ },
+ "awdArch": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "t",
+     "label": "Timer trigger",
+     "detail": "every 5 minutes",
+     "kind": "terminal"
+    },
+    {
+     "id": "c",
+     "label": "Run checks",
+     "detail": "jobs, queues, DLQs, releases, health"
+    },
+    {
+     "id": "q",
+     "label": "Storage queue",
+     "detail": "one message per finding"
+    },
+    {
+     "id": "r",
+     "label": "Rules function",
+     "detail": "threshold, dedupe, suppress"
+    },
+    {
+     "id": "d",
+     "label": "Durable escalation",
+     "detail": "notify, wait for ack, escalate"
+    },
+    {
+     "id": "n",
+     "label": "Teams + email",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "t",
+     "to": "c"
+    },
+    {
+     "from": "c",
+     "to": "q"
+    },
+    {
+     "from": "q",
+     "to": "r",
+     "label": "queue trigger"
+    },
+    {
+     "from": "r",
+     "to": "d"
+    },
+    {
+     "from": "d",
+     "to": "n"
+    }
+   ]
+  }
+ },
+ "awdAwsMap": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "az",
+     "label": "Azure \u2192 AWS",
+     "detail": "each box: Azure name, AWS below",
+     "kind": "terminal"
+    },
+    {
+     "id": "f",
+     "label": "Azure Functions",
+     "detail": "AWS Lambda"
+    },
+    {
+     "id": "tt",
+     "label": "Timer trigger",
+     "detail": "EventBridge Scheduler"
+    },
+    {
+     "id": "qt",
+     "label": "Queue trigger",
+     "detail": "SQS event source for Lambda"
+    },
+    {
+     "id": "df",
+     "label": "Durable Functions",
+     "detail": "Step Functions"
+    },
+    {
+     "id": "ai",
+     "label": "App Insights alerts",
+     "detail": "CloudWatch alarms + SNS"
+    },
+    {
+     "id": "kv",
+     "label": "Key Vault",
+     "detail": "Secrets Manager"
+    },
+    {
+     "id": "mi",
+     "label": "Managed identity",
+     "detail": "Lambda execution role"
+    }
+   ],
+   "edges": [
+    {
+     "from": "az",
+     "to": "f"
+    },
+    {
+     "from": "az",
+     "to": "tt"
+    },
+    {
+     "from": "az",
+     "to": "qt"
+    },
+    {
+     "from": "az",
+     "to": "df"
+    },
+    {
+     "from": "az",
+     "to": "ai"
+    },
+    {
+     "from": "az",
+     "to": "kv"
+    },
+    {
+     "from": "az",
+     "to": "mi"
+    }
+   ]
+  }
  }
 }

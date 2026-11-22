@@ -1,0 +1,115 @@
+@p14-22
+S: awd
+D: I
+T: What is AlertWatchDog?
+V: awdArch
+K: alertwatchdog, alert watchdog, watchdog, monitoring tool, alerting tool, azure functions tool
+X: AlertWatchDog is a monitoring and alerting tool I built for our IRT team, using Azure Functions. Its job is to notice problems in our background work before users do, and tell the right people quickly.
+X: Some context: our product started as CIRT, Cenduit's IRT, and after IQVIA acquired Cenduit, new services moved to AWS, while our build and release tooling stayed on an on-premise Azure DevOps Server. A lot of important work in IRT happens in the background, like scheduled jobs that calculate site resupply, vendor files arriving over SFTP, messages flowing through RabbitMQ, and release pipelines. When one of those silently stops, nobody notices until a site calls or a shipment is late.
+X: AlertWatchDog watches exactly those things. [Every five minutes, a timer-triggered function runs a set of checks]: has each scheduled job succeeded within its expected window, has each vendor file arrived on time, are any queues growing or any dead-letter queues non-empty, did a release pipeline fail, and are the services' health endpoints answering. Each finding goes onto a queue, and a queue-triggered function applies rules: thresholds, deduplication and quiet periods, so the team isn't spammed. Then it notifies [a Microsoft Teams channel and email], and a Durable Functions orchestration escalates to the on-call person if nobody acknowledges.
+X: [It's read-only and sits outside the validated product, so we could build it without GxP re-validation.] The result was that [background failures were detected in minutes instead of hours], often before any user noticed.
+@p14-23
+S: awd
+D: A
+T: How did you build AlertWatchDog with Azure Functions?
+V: awdArch
+K: build alertwatchdog, alertwatchdog design, azure functions design, timer trigger queue trigger, monitoring design
+X: AlertWatchDog is the monitoring and alerting tool I built for our IRT team. Our product started as CIRT, Cenduit's IRT, and after IQVIA acquired Cenduit, the services moved to AWS, while releases stayed on an on-premise Azure DevOps Server. The tool watches our background jobs, vendor files, queues and pipelines, and alerts the team.
+X: I built it in C#, with Azure Functions [on the .NET isolated worker model]. There are three parts. First, a timer-triggered function, [every five minutes], loads the list of checks from a configuration file in the repository, and runs them in parallel: querying job status, the RabbitMQ management API for queue depth and dead letters, health endpoints, and the Azure DevOps API for failed releases. Each check has a timeout, so one slow target can't block the rest. Second, every finding is written to a storage queue, and a queue-triggered function evaluates it against rules: severity, thresholds, deduplication by a key, and a [30-minute] suppression window. Failed messages retry and then land in a poison queue, which itself raises an alert. Third, a Durable Functions orchestration handles escalation: notify the channel, wait [15 minutes] for an acknowledgement, then escalate to the on-call person.
+X: For security, it uses a managed identity, and secrets are in Key Vault. [It runs on a Premium plan with network integration], so it can reach internal endpoints and has no cold starts. And it watches itself: if its own heartbeat stops, an Application Insights alert fires.
+X: It's deployed through our Azure DevOps pipelines, like everything else.
+@p14-24
+S: awd
+D: I
+T: What are Azure Functions, and how do triggers and bindings work?
+K: azure functions, triggers, bindings, input binding, output binding, serverless azure, function app
+X: Azure Functions is Microsoft's serverless compute service: you write small functions, and Azure runs them when an event happens, scaling them automatically, without you managing servers. It's the Azure equivalent of AWS Lambda. I've used it to build AlertWatchDog, a monitoring and alerting tool for our IRT team.
+X: Every function has exactly one trigger, which is what starts it. Common triggers are HTTP, for small APIs and webhooks, timer, for schedules written as CRON expressions, queue triggers, for Azure Storage queues or Service Bus, blob triggers, when a file is uploaded, and Event Grid or Event Hubs triggers, for events and streams. The trigger also passes in the data, like the queue message.
+X: Bindings are a declarative way to connect to other services without writing client code. An input binding reads data, like a blob or a table row, and an output binding writes data, like putting a message on a queue or saving a document, just by returning a value or setting a parameter. They remove boilerplate, though for complex logic I still use the normal SDK clients with dependency injection.
+X: Functions live inside a Function App, which shares configuration, the hosting plan and scaling. In .NET, the isolated worker model is the current approach: functions run in their own process, with normal dependency injection, middleware and logging.
+X: In AlertWatchDog, a timer trigger runs the checks, a queue output binding writes each finding, a queue trigger evaluates rules, and Durable Functions handles escalation.
+@p14-25
+S: awd
+D: A
+T: What are Durable Functions in Azure?
+K: durable functions, orchestrator, activity function, fan-out fan-in, human interaction, durable entities
+X: Durable Functions is an extension of Azure Functions for writing stateful workflows in code. Normal functions are short and stateless, but some processes need to run many steps, wait for events, or take hours. Durable Functions lets you write that as an ordinary-looking C# method, and the framework saves its progress, so it survives restarts and doesn't pay for waiting time.
+X: There are three kinds of functions. An orchestrator function describes the workflow: call this activity, then that one, wait for an event, set a timer. Activity functions do the actual work, like calling an API or sending a message. And a client function starts orchestrations, for example from an HTTP or queue trigger. Under the hood, it uses event sourcing: the orchestrator replays its history to rebuild its state, which is why orchestrator code must be deterministic. No direct I/O, no DateTime.Now, and no random numbers inside it; those go in activities, or use the context's own time.
+X: Common patterns are function chaining, fan-out and fan-in to run work in parallel and combine results, async HTTP APIs for long jobs, monitors that poll until a condition is met, and human interaction, waiting for an approval with a timeout. Durable entities hold small pieces of state.
+X: I used the human interaction pattern in AlertWatchDog, our monitoring tool. When an alert fires, the orchestration notifies the team channel, waits [15 minutes] for someone to acknowledge, and if nobody does, escalates to the on-call person. On AWS, the equivalent is Step Functions.
+@p14-26
+S: awd
+D: I
+T: Azure Functions cold starts and hosting plans?
+K: cold start azure functions, consumption plan, premium plan, flex consumption, dedicated plan, app service plan functions
+X: A cold start is the extra delay when a function runs on a fresh instance: the platform has to allocate it, start the runtime, load your code and initialise dependencies. For .NET, that can be a second or more. It matters for user-facing HTTP functions, much less for timers and queues.
+X: The hosting plan decides cost, scaling and cold starts. The Consumption plan is pure serverless: you pay per execution, it scales to zero, and it scales out automatically, but it has cold starts, execution time limits, and no private network access. The Flex Consumption plan is the newer version, with faster scaling, virtual network integration, and the option of always-ready instances to avoid cold starts. The Premium plan keeps pre-warmed instances, so there are no cold starts, supports virtual network integration and longer runs, but you pay for the minimum instances all the time. And the Dedicated plan runs functions on an App Service plan, like a normal web app, which suits predictable load or existing spare capacity.
+X: To reduce cold starts in code: keep the package small, avoid heavy work at startup, reuse clients like HttpClient as singletons, and use the isolated worker model with ready-to-run compilation.
+X: For AlertWatchDog, our monitoring tool, [I chose the Premium plan], mainly because it needed private network access to reach internal endpoints, and pre-warmed instances meant alerts were never delayed by a cold start. On AWS, the matching ideas are Lambda's provisioned concurrency and VPC configuration.
+@p14-27
+S: awd
+D: A
+T: How would you build AlertWatchDog on AWS?
+V: awdAwsMap
+K: alertwatchdog on aws, watchdog aws, monitoring on aws, serverless monitoring aws, port azure functions to aws
+X: AlertWatchDog is the monitoring and alerting tool I built for our IRT team on Azure Functions. Our services run on AWS, IQVIA's standard cloud, so the natural next step is to run it there too, and the design maps across almost one to one.
+X: The timer trigger becomes an EventBridge Scheduler schedule, [every five minutes], invoking a Lambda function that runs the checks in parallel: scheduled job status, RabbitMQ queue depth and dead letters, health endpoints, and failed releases. Each finding goes to an SQS queue, instead of a storage queue. A second Lambda is triggered by SQS, using an event source mapping, and applies the rules: severity, thresholds, deduplication and a suppression window, with the dedupe state in a small DynamoDB table with a time-to-live. Failed messages retry and then go to a dead-letter queue, which has its own alarm. Escalation, which is Durable Functions today, becomes a Step Functions state machine: notify through SNS, wait for an acknowledgement with a task token and a timeout, then escalate to on-call.
+X: Security maps too: a managed identity becomes the Lambda execution role, Key Vault becomes Secrets Manager, and the functions run inside the VPC to reach internal endpoints. Many checks get simpler on AWS, because CloudWatch alarms can watch metrics directly, and EventBridge can react to events, like an ECS task stopping.
+X: And the watchdog watches itself: a CloudWatch alarm on its own heartbeat metric. I'd define all of it in Terraform and deploy it through our pipelines.
+@p14-28
+S: awd
+D: I
+T: Azure Functions vs AWS Lambda?
+K: azure functions vs lambda, lambda vs azure functions, serverless comparison, function app vs lambda
+X: They're the same idea: event-driven, serverless functions that scale automatically and charge for what you use. I've built AlertWatchDog, our monitoring tool, on Azure Functions, and I work with Lambda in our AWS services, so I know both.
+X: The programming models differ a bit. Azure Functions has triggers and bindings: one trigger starts the function, and input and output bindings connect to other services declaratively. Lambda has a simpler model: a handler receives an event, and other services connect through event source mappings, like SQS, Kinesis or DynamoDB streams, or invoke it directly, like API Gateway, S3 or EventBridge. Outputs are written with the SDK. Azure groups functions in a Function App that shares settings and scaling; in Lambda, each function is its own unit, with its own memory, timeout, concurrency and IAM execution role.
+X: On limits and scaling: Lambda runs up to 15 minutes per invocation, and memory, from 128 MB to 10 GB, also sets the CPU. Azure Functions' limits depend on the hosting plan. For cold starts, Lambda has provisioned concurrency and SnapStart, while Azure has Premium pre-warmed instances or always-ready instances on Flex Consumption. For workflows, Durable Functions is code-first, and Step Functions defines a state machine.
+X: Identity maps cleanly: a managed identity in Azure is the execution role in Lambda. Monitoring is Application Insights versus CloudWatch and X-Ray.
+X: My view: the concepts transfer directly, so I'd pick whichever cloud the rest of the system lives on.
+@p14-29
+S: awd
+D: I
+T: Azure Functions timer trigger vs AWS EventBridge Scheduler?
+K: timer trigger, eventbridge scheduler, cron, scheduled jobs, eventbridge rules schedule, scheduled lambda
+X: Both run code on a schedule, without a server running cron. I use a timer trigger in AlertWatchDog, our monitoring tool, which runs its checks [every five minutes], and on AWS the equivalent is EventBridge Scheduler.
+X: In Azure Functions, a timer trigger is defined on the function itself, with a CRON expression that includes seconds. It runs in the function app's time zone, UTC by default. The runtime makes sure only one instance runs each scheduled occurrence, even when the app scales out, and there's an option to run on startup, which should stay off in production. If the app was down, it can catch up on a missed run.
+X: In AWS, EventBridge Scheduler is a separate service that invokes a target on a schedule. The target is often a Lambda function, but it can also be an ECS task, an SQS queue, a Step Functions state machine, or many other AWS APIs directly. It supports cron and rate expressions, time zones with daylight saving, one-time schedules, a flexible time window to spread load, retries, and a dead-letter queue for failed invocations. The older way was EventBridge scheduled rules, which still work but have fewer features.
+X: So the main difference is that in Azure the schedule belongs to the function, while in AWS it's a separate resource that can trigger many kinds of targets.
+X: Whichever I use, the job itself must be idempotent and safe to run twice, because any scheduler can occasionally retry.
+@p14-30
+S: awd
+D: I
+T: Azure Functions queue trigger vs AWS SQS triggering Lambda?
+K: queue trigger, sqs lambda, event source mapping, poison queue, dead letter queue lambda, batch size
+X: Both let a function process messages from a queue automatically, with retries, so the producer and the consumer stay decoupled. In AlertWatchDog, our monitoring tool, every finding goes onto a queue, and a queue-triggered function applies the alert rules. On AWS, that would be SQS triggering Lambda.
+X: In Azure Functions, a queue trigger listens to an Azure Storage queue, or a Service Bus queue. The runtime polls the queue, fetches messages in batches, and calls the function once per message. If it throws, the message becomes visible again and is retried, [five times by default], and then it's moved to a poison queue, which you must monitor.
+X: In AWS, Lambda uses an event source mapping on the SQS queue. Lambda polls the queue for you and invokes the function with a batch of messages, up to a batch size and batching window you configure. If the function fails, the whole batch returns to the queue after the visibility timeout, unless you report partial batch failures, which I always enable, so only the failed messages are retried. After the maximum receive count, SQS moves the message to a dead-letter queue. You can also cap concurrency for the mapping, to protect a downstream database.
+X: The same rules apply on both: handlers must be idempotent, because delivery is at least once, the visibility timeout must be longer than the function's timeout, and the dead-letter or poison queue needs an alarm.
+@p14-31
+S: awd
+D: A
+T: Durable Functions vs AWS Step Functions?
+K: durable functions vs step functions, step functions, workflow orchestration, state machine, saga orchestration
+X: Both orchestrate multi-step, long-running workflows reliably: they keep state between steps, retry failures, wait for events or people, and survive restarts. I used Durable Functions in AlertWatchDog, our monitoring tool, for escalation, and on AWS the equivalent is Step Functions.
+X: The biggest difference is how you define the workflow. Durable Functions is code-first: the orchestrator is a C# method, with normal loops, conditions and try-catch, and the framework replays it from its history to rebuild state. That's natural for developers, but the code must be deterministic. Step Functions is definition-first: you describe a state machine in Amazon States Language, as JSON or with the visual designer, with task, choice, parallel, map and wait states. Each step can call Lambda or, directly, over two hundred AWS service APIs, like DynamoDB, SQS or ECS, often without writing a function at all. Its console shows each execution visually, which is great for support.
+X: For waiting on people, Durable Functions uses external events with a timer, and Step Functions uses a task token with a heartbeat or timeout. Step Functions has two modes: Standard, for long workflows up to a year with exactly-once steps, and Express, for high-volume, short workflows.
+X: In AlertWatchDog, escalation notifies the team, waits [15 minutes] for an acknowledgement, then escalates to on-call. In Step Functions, that's an SNS notification, a wait with a task token and timeout, and a choice state.
+@p14-32
+S: awd
+D: I
+T: Application Insights alerts vs CloudWatch alarms and SNS?
+K: application insights alerts, azure monitor alerts, action groups, cloudwatch alarms sns, alerting azure aws
+X: Both turn telemetry into notifications when something is wrong. AlertWatchDog, the monitoring tool I built on Azure Functions, uses Application Insights for its own health, and our AWS services use CloudWatch alarms, so I use both.
+X: In Azure, alerts are part of Azure Monitor. An alert rule watches a signal: a metric, like failed requests or response time from Application Insights, a log query, written in KQL, that runs on a schedule, or an availability test that pings an endpoint. When the condition is met, the rule calls an action group, which defines who is notified and how: email, SMS, Teams through a webhook, a function, or a logic app. Smart detection can also flag unusual failure rates.
+X: In AWS, a CloudWatch alarm watches a metric, with a statistic like average or p95, a threshold and a number of evaluation periods, and has three states: OK, ALARM and insufficient data. On a state change, it typically publishes to an SNS topic, and SNS fans out to email, chat, a paging tool or a Lambda. Metric filters or Logs Insights turn log patterns into metrics, composite alarms combine conditions to reduce noise, and anomaly detection learns normal patterns.
+X: So an alert rule maps to an alarm, an action group maps to an SNS topic with subscriptions, and KQL log alerts map to metric filters or Logs Insights.
+X: The principle is the same: alert on symptoms users feel, make every alert actionable, and always alert when a monitor goes silent.
+@p14-33
+S: awd
+D: A
+T: Tell me about a time AlertWatchDog caught an issue early.
+K: alertwatchdog story, star monitoring, caught issue early, proactive monitoring story, missed vendor file
+X: Situation: AlertWatchDog is the monitoring tool I built on Azure Functions for our IRT team. It watches our background work, like scheduled jobs, vendor files, queues and release pipelines, and alerts us. [In early 2025, on a Saturday morning, it raised an alert: the shipment-status file from one depot vendor hadn't arrived within its expected two-hour window.] Those files update shipment tracking, and sites rely on them to know when kits will arrive.
+X: Task: I was on call, so my job was to find the cause and fix it before it affected sites or the next resupply run.
+X: Action: The alert already told me which vendor, which file, and when the last one arrived, so I didn't start from zero. I checked our SFTP integration logs in CloudWatch, filtered by the correlation id, and saw our scheduled pull was connecting fine, but the vendor's folder was empty. [The vendor had moved their output to a new folder during maintenance, without telling us.] I contacted their support with the evidence, they confirmed it, and we pointed our pull to the new path through configuration, without a code change. The delayed files were then processed, and I checked that the shipment statuses were updated correctly.
+X: Result: [It was fixed within about two hours, before Monday, and no site saw stale shipment data.] Before AlertWatchDog, we'd typically have found out from a site call days later. Afterwards, [I added a check for an unexpected empty folder], and we agreed with the vendor to announce path changes in advance.

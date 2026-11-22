@@ -19,6 +19,9 @@ const CASES = [
  ['azure to aws mapping', ['p14-8']], ['variable groups vs parameter store', ['p14-9']], ['release pipelines vs codepipeline', ['p14-10']], ['tfs vs git', ['p14-11']], ['agent pools', ['p14-12']],
  ['service connection vs iam role', ['p14-13']], ['key vault vs secrets manager', ['p14-14']], ['application insights vs cloudwatch', ['p14-15']], ['service bus vs sqs', ['p14-16']], ['arm templates vs cloudformation', ['p14-17']], ['app service vs elastic beanstalk', ['p14-18']],
  ['azure to aws migration challenge', ['p14-6']],
+ ['more experience on azure not aws', ['p14-19']], ['how hands-on are you with aws', ['p14-20']], ['rate yourself on aws', ['p14-21']], ['alertwatchdog', ['p14-22']], ['how did you build alertwatchdog', ['p14-23']],
+ ['azure functions triggers bindings', ['p14-24']], ['durable functions', ['p14-25']], ['azure functions cold start', ['p14-26']], ['alertwatchdog on aws', ['p14-27']], ['azure functions vs lambda', ['p14-28']],
+ ['timer trigger vs eventbridge', ['p14-29']], ['queue trigger vs sqs lambda', ['p14-30']], ['durable functions vs step functions', ['p14-31']], ['application insights alerts vs cloudwatch alarms', ['p14-32']], ['alertwatchdog caught issue', ['p14-33']],
  ['outbox', ['p2-44']], ['cors', ['p1-29']], ['salary', ['p3-60']], ['strengths', ['p3-55']], ['weakness', ['p3-56']], ['clustered index', ['p1-44']], ['idempotent consumer', ['p2-42']]
 ];
 const b = await puppeteer.launch({executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox']});
