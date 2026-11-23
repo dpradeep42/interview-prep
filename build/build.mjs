@@ -128,7 +128,7 @@ const files = { 'data/index.json': JSON.stringify(index), 'data/answers.json': a
 for (const f in files) fs.writeFileSync(OUT + '/' + f, files[f]);
 fs.writeFileSync(OUT + '/app.css', css);
 fs.writeFileSync(OUT + '/app.js', js);
-fs.writeFileSync(OUT + '/sw.js', fs.readFileSync('web/sw.js', 'utf8').replace('__V__', hash).replace('__FILES__', JSON.stringify(['./', 'index.html', 'app.css?v=' + hash, 'app.js?v=' + hash, ...Object.keys(files).map(f => f + '?v=' + hash)])));
+fs.writeFileSync(OUT + '/sw.js', fs.readFileSync('web/sw.js', 'utf8').replaceAll('__V__', hash).replace('__FILES__', JSON.stringify(['./', 'index.html', 'app.css?v=' + hash, 'app.js?v=' + hash, ...Object.keys(files).map(f => f + '?v=' + hash)])));
 fs.writeFileSync(OUT + '/index.html', shell.replace(/__V__/g, hash).replace('<!--CSS-->', '<link rel="stylesheet" href="app.css?v=' + hash + '">').replace('<!--JS-->', '<script>window.__V="' + hash + '";</script><script src="app.js?v=' + hash + '" defer></script>'));
 const inline = {}; for (const f in files) inline[f] = JSON.parse(files[f]);
 fs.writeFileSync(OUT + '/interview-prep.html', shell.replace(/__V__/g, hash).replace('<!--CSS-->', () => '<style>' + css + '</style>')
