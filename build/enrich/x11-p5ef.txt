@@ -41,7 +41,7 @@ X: To avoid it, I keep the query on IQueryable until the end, rewrite custom log
 +@p5-9
 X: For EF Core performance, I start by looking at the generated SQL and the execution plan, because most problems are in the query, not in EF itself.
 X: Then I apply a set of habits. For read-only queries, AsNoTracking, so no change-tracking overhead. Project with Select into DTOs, so SQL fetches only the needed columns. Filter and page in the database, keeping everything on IQueryable. Avoid N+1 queries by using projections or Include, and use AsSplitQuery when several collections are included. Make sure the right indexes exist for the filters and sort order. For bulk changes, use ExecuteUpdate and ExecuteDelete, which run one SQL statement without loading entities. For very hot paths, compiled queries and DbContext pooling reduce overhead. And always pass cancellation tokens, so abandoned requests stop querying.
-X: I log the generated SQL in development, and in production, Query Store and CloudWatch latency metrics show which queries need attention.
+X: I log the generated SQL in development, and in production, Query Store and our Grafana latency dashboards show which queries need attention.
 X: A concrete example: our shipment list screen went from [about 9 seconds to under 300 ms] mainly through a SARGable rewrite, a covering index, and server-side paging. I can walk through that.
 +@p5-10
 X: SaveChanges is the method that writes all pending changes tracked by the DbContext to the database.

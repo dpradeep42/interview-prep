@@ -66,12 +66,12 @@ X: For security, Swagger UI is enabled only in non-production environments. I ca
 +@p4-90
 X: I secure an API in layers, so that if one control fails, the others still protect it.
 X: First, transport: HTTPS only, with HSTS. Second, authentication: every request needs a valid JWT from Keycloak, our identity provider, and we validate the issuer, audience, signature and expiry. Third, authorization: role and policy checks, plus resource-level checks, like "does this user have access to this specific study", which is critical in multi-tenant clinical data. Fourth, input: DTOs, validation, parameterised queries through EF Core, and size limits. Fifth, abuse protection: rate limiting and restricted CORS. And sixth, operations: secrets in AWS Secrets Manager, no sensitive data in logs, least-privilege IAM and database roles, dependency scanning in the pipeline, and audit logs for every change.
-X: Security also covers logout and token lifetime. We use short [15-minute] access tokens, and for immediate logout, we added a token-id denylist in ElastiCache that the API checks in about [1 ms].
+X: Security also covers logout and token lifetime. We use short [15-minute] access tokens, and for immediate logout, we added a token-id denylist in Redis that the API checks in about [1 ms].
 X: Every new endpoint goes through a security checklist in code review. I can go deeper into any of these layers.
 +@p4-91
 X: An access token and a refresh token work together, but they have very different jobs and lifetimes.
 X: The access token is short-lived, in our case [15 minutes]. It's sent with every API call, usually as a bearer JWT, and the API validates it to know who the user is and what they can do. Because it's short-lived, if it leaks, the damage window is small. The refresh token lives much longer, hours or days. It's never sent to the APIs, only to the identity provider's token endpoint, to get a new access token when the old one expires, so the user doesn't have to log in again. It must be stored securely, and it can be revoked on the server, and with rotation, each use issues a new one.
-X: We used this in a real fix. Users reported that after logging out, their old token still worked until it expired. We revoked the refresh token on logout, and added a denylist of token ids in ElastiCache, which every API checks in about [1 ms]. So logout became immediate.
+X: We used this in a real fix. Users reported that after logging out, their old token still worked until it expired. We revoked the refresh token on logout, and added a denylist of token ids in Redis, which every API checks in about [1 ms]. So logout became immediate.
 X: I can explain how token rotation detects stolen refresh tokens.
 +@p4-92
 X: Both control what an authenticated user can do, but policies are more flexible.

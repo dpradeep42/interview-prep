@@ -55,7 +55,7 @@ X: First, host key verification. When the client connects, the server presents i
 X: Then the client authenticates, usually with a password or a private key.
 X: With password authentication, the client sends a username and password over the encrypted SSH connection. It's simple, but passwords can be guessed, reused or leaked, and they have to be shared with the other party.
 X: With private key authentication, the client has a key pair. The public key is given to the vendor and added to their server, and the private key never leaves our side. When connecting, the server sends a challenge, and the client proves it has the private key by signing it. Nothing secret is sent over the network, it can't be brute-forced in practice, and keys can be revoked individually.
-X: So private keys are much more secure, and they're what we prefer with vendors. Some vendors still require passwords, so our component supports both. In either case, the keys and passwords are stored in [AWS Secrets Manager], never in code or configuration files.
+X: So private keys are much more secure, and they're what we prefer with vendors. Some vendors still require passwords, so our component supports both. In either case, the keys and passwords are stored in [an encrypted secrets store], never in code or configuration files.
 +@p7-36
 X: Our SFTP integration supports three libraries, ComponentPro, SSH.NET and Rebex, because different vendors' servers work best with different ones. The key to switching between them was one abstraction.
 X: I defined an ISftpClient interface with the operations we need: connect, upload, download, list and delete. Each library has its own implementation of that interface, an adapter that translates our calls into that library's API and its errors into our own exception types. The rest of the code, like the jobs that send order files or collect status files, only uses the interface, and has no idea which library is underneath.
@@ -84,7 +84,7 @@ X: And finally, the records inside the files are handled idempotently too, using
 X: Together, these mean that resends and retries are completely safe.
 +@p7-40
 X: SFTP credentials give access to our vendors' systems, so I treat them like any other production secret.
-X: First, storage. Private keys and passwords are stored in [AWS Secrets Manager], encrypted with KMS. They're never in the code, the repository, configuration files or build pipelines. The service reads them at runtime, using its IAM role, which only has permission to read the specific secrets it needs.
+X: First, storage. Private keys and passwords are stored [encrypted in a secrets store]. They're never in the code, the repository, configuration files or build pipelines. The service reads them at runtime, under a service account that only has permission to read the specific secrets it needs.
 X: Second, key-based authentication wherever the vendor supports it, because private keys are much stronger than passwords and are never sent over the network. Each vendor gets its own key, so one can be revoked without affecting the others.
 X: Third, host key pinning. Each vendor's expected host key fingerprint is stored in configuration, and the connection is refused if it doesn't match, which protects against man-in-the-middle attacks.
 X: Fourth, rotation. Keys and passwords are rotated on a schedule, and immediately if there's any suspicion of exposure. The rotation is coordinated with the vendor and goes through our change control process, like any production change.

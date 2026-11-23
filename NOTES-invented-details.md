@@ -14,6 +14,7 @@ Marked REAL below came from your Cursor analysis of the repositories; everything
 - REAL: integrations through MuleSoft (Mule 4, CloudHub), mostly SFTP + PGP file drops, being migrated to .NET data transfer APIs with plugin jobs; EDC, eCOA, depots and couriers, temperature devices, direct-to-patient, eConsent, sponsor data extracts. OpenTelemetry + Datadog in the newest data transfer APIs.
 - REAL: AlertWatchDog is a Quartz-scheduled alert engine in the legacy core: per-study alert definitions, then RabbitMQ, then notification consumers, then SMTP email.
 - REAL: compliance and errors. History/shadow tables, data audit log, change review, audit trail module, audit replication for inspections, reason for change; Part 11: unique accounts, password policy and lockout, security questions, idle timeout, e-signature by re-authentication, blinded/unblinded roles, automated Selenium/API test suites. Global exception middleware + ProblemDetails, RabbitMQ retry and dead-letter exchanges, a Quartz failed-jobs table, Mule error flows with email alerts, axios interceptors. Authorisation by role, module and action tables in a global security schema.
+- Consistency sweep (Nov 2026): CIRT-context answers now use Splunk and Grafana (not CloudWatch) for CIRT incidents, Redis (not ElastiCache) for the token denylist and session tickets, and the real on-premise architecture in "Draw the high-level architecture"; ECS, RDS, ElastiCache, CloudWatch, Lambda and Kafka appear only for IQVIA's newer AWS services or in generic answers. The shipment-tracking service with Kafka (design and Kafka-vs-RabbitMQ answers) is INVENTED and placed on the AWS side.
 - REAL: hosting. The CIRT platform itself is hosted on-premise (IIS). The site places your AWS (ECS, Lambda, DynamoDB, RDS) and Kafka work on IQVIA's newer services alongside the CIRT core; that scoping is an assumption, so adjust it to the services you can speak about.
 - INVENTED and kept, now consistent with the real facts: the idempotent re-randomisation fix; the configuration check service before study transfer; your DARM React screens and comparison tests; your eConsent integration reliability work; your AlertWatchDog work (moving sending to a .NET 9 consumer, retry and dead-letter handling, idempotency, new drug accountability alerts); the Azure Functions proof of concept of AlertWatchDog (Premium plan, Durable Functions escalation); the low-stock alert STAR (Saturday, early 2025, vendor moved its folder); the Grafana dashboards; "most developers joining were stronger in React".
 - Woven into (real facts): Tell me about yourself, Walk me through your resume, Explain IRT simply, Your role, Architecture, Angular vs React, the AWS architecture and ECS answers (now scoped), messaging (RabbitMQ in CIRT), identity (Keycloak), logging (Splunk), monitoring and alerting (AlertWatchDog), the Azure/AWS story and AlertWatchDog sections, and the React/Angular sections.
@@ -130,7 +131,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - about 30
   - 16 KB
   - about 13 KB
-  - ElastiCache Redis
+  - Redis
   - about 13 KB to under 1 KB
 - **p2-50** What is reverse tabnabbing?
   - about 40
@@ -516,7 +517,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p7-32** How do you structure a FastAPI application?
   - vendor file pre-validation service
 - **p7-35** How does SFTP authentication work, and password vs private-key authentication?
-  - AWS Secrets Manager
+  - an encrypted secrets store
 - **p7-36** How did you switch between providers?
   - 2024
   - one low-volume vendor
@@ -524,7 +525,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p7-37** How did you handle connection failures and retries?
   - 3
 - **p7-40** How did you secure SFTP credentials?
-  - AWS Secrets Manager
+  - encrypted in a secrets store
 - **p7-41** What problems did you face with SFTP?
   - 2024
   - 500 MB
@@ -685,6 +686,8 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p9-40** What kind of team do you prefer, what motivates you and what frustrates you?
   - 2 to 3 days
   - under an hour
+- **p9-41** You wrote 'designed and built scalable microservices.' Design one for me.
+  - a shipment-tracking service from IQVIA's newer AWS services I've worked on
 - **p9-42** You wrote '.NET 6/8/10.' What changed between these versions?
   - early 2026
   - 3 of 6
@@ -703,6 +706,8 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 10 seconds
   - 60 seconds
 - **p9-46** You wrote 'Kafka and RabbitMQ.' Give me a real use case for each.
+  - some of IQVIA's newer services on AWS
+  - In those AWS services,
   - mid-2024
   - 40-minute
   - about 1,200
