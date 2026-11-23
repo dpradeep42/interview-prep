@@ -1,0 +1,47 @@
+@p15-31
+S: ragu
+D: I
+T: RAG for end users: how did you make it simple for non-developers?
+V: ragUser
+K: rag for end users, rag for business users, irt knowledge assistant, teams bot rag, non-developer rag, simple rag
+X: After our first RAG system, which gives GitHub Copilot and Cursor the context of our codebase and standards, I saw that non-developers had the same problem in a different form. Business analysts, QA, support and the study build team, who configure studies in our Admin console, kept asking developers questions like "how does re-randomization behave if a subject is withdrawn?" or "which setting controls the drug accountability return window?" The answers existed, but were scattered across functional specs, user guides, release notes and old support tickets.
+X: So [in late 2025] I built [the IRT Knowledge Assistant]. A study is one clinical trial set up in our IRT, with its sites, arms, randomization lists and drug supply, so most questions were about how features behave in a study.
+X: For users, it had to be simple. It lives where they already work, as a Microsoft Teams bot, plus a small web page. They just type a question in plain English. Every answer is short, with citations linking to the exact section of the source document, and if the sources don't cover it, it says "I don't know" and suggests who to ask. The home screen shows suggested questions, so nobody faces a blank box. And each answer has thumbs up and down, which feeds our improvements.
+X: Behind it is the same Python retrieval service, with a separate index of approved documents, filtered by the user's role. [Within three months it had about 150 weekly users across five teams.]
+@p15-32
+S: ragu
+D: I
+T: Tell me about the RAG assistant you built for end users.
+K: end user rag star, knowledge assistant story, rag star non developers, teams bot story
+X: Situation: In our IRT team, business analysts, QA, support and the study build team, who set up studies in our Admin console, depended heavily on developers for answers about how features behave, like screening rules, re-randomization, eConsent versions or drug accountability returns. [Developers were spending several hours a week answering repeat questions], and answers were scattered across specs, user guides, release notes and support tickets.
+X: Task: I wanted to give those users self-service answers they could trust, without them needing to learn any AI tool.
+X: Action: [In late 2025], I reused the Python retrieval service I'd built for GitHub Copilot and Cursor, and created a separate index of approved, non-GxP reference content: functional specifications, user guides, release notes, Admin console configuration guides, and sanitised support resolutions with no patient or study data. On top, I built [the IRT Knowledge Assistant], a Microsoft Teams bot and a small web page. Answers are generated with our enterprise Azure OpenAI, only from retrieved sources, always with citations, and with "I don't know" when the sources don't cover it. Access follows the user's single sign-on groups. I added suggested questions and thumbs feedback, and reviewed the negative feedback weekly with the content owners.
+X: Result: [Within three months, about 150 people across five teams used it weekly, repeat questions to developers dropped by roughly 30 percent, and over 80 percent of rated answers were thumbs up.] It also exposed outdated documents, which we fixed.
+@p15-33
+S: ragu
+D: I
+T: How did you get people to actually use the RAG assistant?
+K: rag adoption, ai adoption, driving adoption, user adoption ai tool, change management ai
+X: Building the IRT Knowledge Assistant was the easy part. Getting busy business analysts, QA, support and the study build team to trust it took deliberate work. It's a RAG assistant on our Python retrieval service that answers questions from our specs, user guides and release notes, with citations.
+X: First, I put it where people already were: Microsoft Teams. No new tool, no login, no training needed. Second, I started narrow. [The first version covered only randomization and drug accountability documents for one pilot team], so the answers were good from day one, and first impressions were positive. Then we expanded topic by topic. Third, citations on every answer. People could click straight to the source paragraph, which built trust much faster than any promise. Fourth, honesty. When it didn't know, it said so and pointed to the right person, instead of guessing. One confident wrong answer can kill adoption. Fifth, suggested questions on the home screen, showing what it was good at.
+X: Then I closed the loop. Thumbs-down answers were reviewed weekly with content owners, and usually the fix was a better document, not a better prompt. I shared small wins in team meetings, like a support case resolved in minutes, and champions in each team helped others.
+X: [Within three months, it reached about 150 weekly users across five teams, and repeat questions to developers dropped by roughly 30 percent.]
+@p15-34
+S: ragu
+D: A
+T: How did you handle role-based access in the end-user RAG assistant?
+K: rag access control, role based access rag, document permissions rag, sso groups, metadata filtering security
+X: In the IRT Knowledge Assistant, our RAG tool for business analysts, QA, support and the study build team, access control was built into retrieval, not added after.
+X: Every document chunk in the index carries metadata: its source, its owning team, and an audience label, like general, study build, support or internal engineering. When a user asks a question, the Teams bot or web page passes their identity from single sign-on, and the Python service reads their Azure AD group memberships. The search query then filters chunks by the audiences those groups allow, before ranking, inside the same PostgreSQL query. So content a user can't access is never retrieved, never sent to the model, and can never leak into an answer. Filtering after generation would be too late.
+X: What goes into the index matters just as much. Only approved reference content is indexed: specs, user guides, release notes, Admin console configuration guides, and support resolutions sanitised to remove any patient, site or study data. No production systems are connected. That keeps it outside GxP scope, as an informational tool, which we stated clearly in the interface.
+X: Every question, user and set of cited sources is logged, so we can audit who saw what. And when a document's permissions change, the next indexing run updates its labels.
+X: The principle I followed: the assistant should never let someone see more than they could already open themselves.
+@p15-35
+S: ragu
+D: I
+T: What lessons did you learn from the end-user RAG assistant?
+K: rag lessons learned, end user rag lessons, knowledge assistant lessons, rag mistakes, what would you do differently rag
+X: Building the IRT Knowledge Assistant, a RAG tool on our Python retrieval service for business analysts, QA, support and the study build team, taught me lessons I now apply to every AI project.
+X: First, content quality decides answer quality. Most bad answers came from outdated or contradictory documents, not the model. The assistant actually became a way to find and fix our documentation. Second, citations build trust. Users trusted answers they could check in one click, and stopped trusting quickly when they couldn't. Third, "I don't know" is a feature. Refusing to guess protected credibility. Fourth, start narrow. A pilot with one team and two topics, done well, beat launching everything half-ready. Fifth, the feedback loop is the product. Thumbs feedback reviewed weekly with content owners drove most of the improvement. Sixth, meet users where they work. Putting it in Microsoft Teams mattered more than any feature. Seventh, measure from the start: weekly users, questions answered without escalation, and thumbs-up rate, so we could prove value with numbers.
+X: [If I did it again, I'd involve the content owners from day one, and set up document review dates], because stale content was our biggest ongoing issue.
+X: The same lessons apply to our developer RAG, which gives GitHub Copilot and Cursor the context of our codebase and coding standards: good sources, clear citations and measurement matter more than clever models.

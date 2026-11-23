@@ -39,6 +39,14 @@ These are assumed or invented so the answers hang together. Change them here and
 - AWS self-rating: about 7 out of 10 (around 8 for application workloads, 5 to 6 for the account-level platform); mentions you would happily take the AWS Developer Associate certification.
 - AlertWatchDog was woven into: Tell me about yourself, CloudWatch and Grafana, Monitoring microservices, What makes a good alert, CloudWatch alarms, the Azure-to-AWS mapping overview, and App Insights vs CloudWatch.
 
+**AI: MCP server in .NET 8, RAG and applied AI**
+- Real (from you): the CIRT MCP server was built in .NET 8; RAG was built in Python, mainly to give GitHub Copilot and Cursor the context of the existing codebase and the team's coding standards (better fit, fewer hallucinations, the right context while developing); an end-user RAG story was requested.
+- MCP (invented specifics): official ModelContextProtocol C# SDK on the .NET generic host (AddMcpServer, stdio transport, WithToolsFromAssembly, attribute tools, DI), HttpClient + Polly (no retries on writes), Serilog to stderr only, options pattern; started early 2025 with a planned move to .NET 10; tool groups ~15 builds / ~20 releases and approvals / ~25 deployments and nodes / ~17 info; the release-day prompt template and environment catalogue / runbook resources; the hardest-bug story (stdout logging from a library broke about 1 in 10 JSON-RPC calls, about a day to find); the mid-2025 story where the pre-check blocked a feature-branch build (1287 vs 1279), saving about a day of revalidation.
+- Developer RAG stack (all invented choices): Python 3.12, FastAPI + Pydantic, plain Python in production (LangChain only in a prototype), tree-sitter chunking for C#/TypeScript/SQL, markdown by headings, Azure OpenAI text-embedding-3-small, PostgreSQL + pgvector on AWS (chosen over Chroma and FAISS) with full-text search, reciprocal rank fusion, a sentence-transformers cross-encoder re-ranker, HNSW index, psycopg, pytest, Ruff, mypy, Docker; a separate small Python "knowledge MCP server" (official Python MCP SDK) with search_codebase, find_similar_implementation, get_coding_standards and get_adr, so the CIRT MCP server keeps ~77 tools; rules in .cursor/rules and .github/copilot-instructions.md; ~40 repositories, a few hundred thousand chunks; incremental re-index on every merge to main from an Azure DevOps pipeline (content hashes, under a minute) plus a nightly check; secret scanning, repository-permission filtering, no PHI.
+- Developer RAG results (invented): golden set of about 60 questions; recall@5 about 62% → about 80% (tree-sitter) → about 88% (hybrid + re-rank); standards-related review comments on AI-assisted PRs down about 40%; a search in well under a second; a few dollars a day. The older runbook assistant (the earlier "RAG workflows" answer) is now its first version.
+- End-user RAG (all invented): "IRT Knowledge Assistant", late 2025, a Microsoft Teams bot + small web page for BAs, QA, support, the study build team and new joiners; indexes approved, non-GxP reference content (functional specs, user guides, release notes, Admin console configuration guides, sanitised support resolutions); SSO / Azure AD group audience filtering inside the query; citations, "I don't know", suggested questions, thumbs feedback reviewed weekly; pilot on randomisation and drug-accountability documents with one team; results ~150 weekly users across 5 teams within three months, repeat questions to developers down ~30%, 80%+ thumbs up.
+- General AI answers (invented specifics): an AutoGen writer/reviewer experiment for release notes; temperature defaults (0–0.2 factual, 0.5–0.7 drafting); an AI usage guideline reviewed with the quality team; an AI pull-request review step with about half its suggestions accepted; the release-notes helper moving to schema-constrained output.
+- Woven into: Tell me about yourself, the MCP server project, MCP tool design, Most challenging project, Why move into AI, Team adoption of AI tools, Copilot and Cursor day to day, What is RAG, RAG vs fine-tuning, and "Explain your RAG architecture".
 
 Every detail below was **invented** to make the spoken stories concrete. They are not from the resume. On the site they appear as ordinary sentences, with no brackets. Learn them, keep them consistent, or replace them with your real numbers before an interview.
 
@@ -689,8 +697,9 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 4 to 6
   - AutoGen experiment
 - **p9-48** You wrote 'RAG workflows.' Explain your RAG architecture.
-  - internal assistant over our release runbooks, deployment guides and past incident notes
-  - 30
+  - Its first version was an assistant over our release runbooks and incident notes
+  - about 60
+  - recall at five from about 62 to about 88 percent
 - **p9-49** You wrote 'React reusable components.' Give me an example.
   - configurable data table component
 - **p9-50** You wrote 'Python FastAPI.' Why FastAPI?
@@ -848,3 +857,95 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - The vendor had moved their output to a new folder during maintenance, without telling us.
   - It was fixed within about two hours, before Monday, and no site saw stale shipment data.
   - I added a check for an unexpected empty folder
+- **p15-5** Why .NET 8 for your MCP server, and not Python or TypeScript?
+  - early 2025
+  - Moving it to .NET 10, the current long-term support release, is planned, since we've already upgraded several services.
+- **p15-10** What was the hardest bug in your MCP server?
+  - It happened maybe one call in ten
+  - a third-party library and one of my early console logging settings
+  - It took about a day to find
+- **p15-11** Tell me about a time your MCP server prevented a bad deployment.
+  - In mid-2025, an engineer asked the agent to deploy "the latest build" to UAT on a busy release day.
+  - A wrong build never reached UAT, and no re-run of validation tests was needed, which would have cost the team about a day.
+- **p15-12** How did you measure the impact of your MCP server?
+  - 8 deployments with it and 8 without
+  - 4 to 6
+  - within about two months, most release deployments used it, without anyone mandating it
+- **p15-13** Did you use MCP resources and prompts, or only tools?
+  - For prompts, I added a few templates for common jobs, like a release-day prompt that takes a release number and an environment, and walks the agent through the standard sequence: pre-checks, deploy, monitor each node, verify versions, and summarise.
+  - For resources, I exposed things like the environment catalogue and the deployment runbook
+- **p15-15** How did you build your MCP server step by step?
+  - early 2025
+  - about two days
+  - about 10 minutes
+  - about two months
+- **p15-16** Why did you build RAG for GitHub Copilot and Cursor?
+  - After rollout, standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent.
+- **p15-17** How does your RAG pipeline work, from ingestion to retrieval?
+  - about 40
+- **p15-18** How do you chunk code for RAG?
+  - Switching from fixed-size to tree-sitter chunking raised our retrieval hit rate on the golden question set from about 62 percent to about 80 percent
+- **p15-19** Which embeddings and vector store did you use, and why?
+  - I used Azure OpenAI's text-embedding-3-small model.
+  - I picked pgvector, on PostgreSQL in our AWS account
+  - a few hundred thousand chunks
+- **p15-20** What are hybrid search and re-ranking, and why did you use them?
+  - a small cross-encoder model
+  - hybrid search plus re-ranking lifted recall at five from about 80 percent to about 88 percent
+- **p15-21** How do Copilot and Cursor get context from your RAG system?
+  - I built a small knowledge MCP server, in Python with the official MCP SDK, separate from the C# deployment server
+- **p15-22** How do you keep the RAG index up to date?
+  - under a minute per merge
+  - Since moving to merge-triggered indexing, the index is normally within minutes of main
+- **p15-23** How did you evaluate your RAG system?
+  - about 60
+  - Recall at five went from about 62 percent with the first version to about 88 percent.
+  - Standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent
+- **p15-24** How does RAG reduce hallucinations in AI coding tools?
+  - After rollout, developers reported far fewer invented methods, and standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent.
+- **p15-25** Why use RAG instead of just a long context window?
+  - about 40
+- **p15-27** How did you keep RAG cost and latency low?
+  - text-embedding-3-small
+  - tens of milliseconds
+  - End to end, a search tool call usually returns in well under a second.
+  - Running cost stayed small, a few dollars a day
+- **p15-28** What are common RAG failure modes, and how do you fix them?
+  - from about 62 to about 88 percent
+- **p15-29** What Python stack did you use for your RAG service?
+  - I prototyped with LangChain, but kept the production pipeline in plain Python
+- **p15-30** Tell me about building RAG for your AI coding tools.
+  - In 2025
+  - roughly 40
+  - about 60
+  - Recall at five went from about 62 to about 88 percent, standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent
+- **p15-31** RAG for end users: how did you make it simple for non-developers?
+  - in late 2025
+  - the IRT Knowledge Assistant
+  - Within three months it had about 150 weekly users across five teams.
+- **p15-32** Tell me about the RAG assistant you built for end users.
+  - Developers were spending several hours a week answering repeat questions
+  - In late 2025
+  - the IRT Knowledge Assistant
+  - Within three months, about 150 people across five teams used it weekly, repeat questions to developers dropped by roughly 30 percent, and over 80 percent of rated answers were thumbs up.
+- **p15-33** How did you get people to actually use the RAG assistant?
+  - The first version covered only randomization and drug accountability documents for one pilot team
+  - Within three months, it reached about 150 weekly users across five teams, and repeat questions to developers dropped by roughly 30 percent.
+- **p15-35** What lessons did you learn from the end-user RAG assistant?
+  - If I did it again, I'd involve the content owners from day one, and set up document review dates
+- **p15-36** What is the difference between an AI agent and an AI workflow?
+  - I also tried a multi-agent setup with AutoGen, for drafting release notes with a writer and a reviewer agent
+- **p15-38** What do temperature and top-p do, and how do you set them?
+  - around 0 to 0.2
+  - around 0.5 to 0.7
+- **p15-40** How do you use AI responsibly in a GxP-regulated environment?
+  - We documented these rules in a short AI usage guideline, reviewed with our quality team
+- **p15-41** How do you use rules files to make Copilot and Cursor follow your standards?
+  - Together with RAG, this cut standards-related review comments on AI-assisted pull requests by roughly 40 percent.
+- **p15-42** How do you use AI for code review?
+  - we added an AI review step on pull requests that posts suggestions as comments
+  - About half of the AI suggestions were accepted after tuning the prompt, and reviewers said they spent less time on routine comments.
+- **p15-43** How do you write a good system prompt?
+  - the same approach we used in our Python RAG service and our CIRT MCP server tool descriptions
+- **p15-44** How do you get reliable structured output from an LLM?
+  - In our release-notes helper, which drafts notes from Azure DevOps work items, moving from prompt-only JSON to schema-constrained output with Pydantic validation took parsing failures from a few percent to practically zero.

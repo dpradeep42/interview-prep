@@ -1,0 +1,92 @@
+@p15-36
+S: ai
+D: I
+T: What is the difference between an AI agent and an AI workflow?
+K: agents vs workflows, ai agent, agentic workflow, when to use agents, llm workflow, autogen
+X: A workflow is a fixed sequence of steps, written in code, where the language model does specific tasks inside it, like classifying, summarising or extracting. An agent is when the model itself decides the next step: which tool to call, what to do with the result, and when it's finished, in a loop.
+X: Workflows are predictable, cheaper, easier to test and easier to audit. Agents are flexible and handle open-ended tasks, but they're less predictable, use more tokens, and can go wrong in more ways. My rule: use the simplest thing that works. If the steps are known, build a workflow. Use an agent only when the path really depends on what it finds.
+X: I've used both. Our CIRT MCP server, built in .NET 8 with about 77 tools for Azure DevOps Server, is used by agents in Cursor and GitHub Copilot, because a release question can go many ways: check a build, then the release, then approvals. But the risky parts are fixed. Our deployment pre-check is a deterministic workflow inside one tool, not something the model improvises, and write actions require human approval.
+X: Our RAG indexing, by contrast, is a pure workflow: parse, chunk, embed, store, every time. [I also tried a multi-agent setup with AutoGen, for drafting release notes with a writer and a reviewer agent], and learned that a simple two-step workflow gave the same quality with fewer surprises.
+@p15-37
+S: ai
+D: I
+T: Explain context windows and tokens, and why they matter.
+K: context window, tokens, token limit, tokenization, context management, token cost
+X: A token is a small piece of text, roughly three quarters of an English word on average. Code often uses more tokens, because of symbols and names. Models read and write in tokens, and pricing, speed and limits are all counted in tokens.
+X: The context window is the maximum number of tokens a model can consider at once: the system prompt, the conversation, tool definitions, retrieved documents, and its own answer. Anything outside the window, the model simply can't see.
+X: It matters in three ways. Cost and speed: every token is paid for and slows the response, on every request. Quality: even with very large windows, models use information less reliably when it's buried in a long, noisy context, so more isn't always better. And limits: long agent sessions fill up, and older details drop out or get summarised.
+X: In my work, this shaped design decisions. In our CIRT MCP server, built in .NET 8 with about 77 tools, every tool's name and description takes tokens in every request, so I kept descriptions short and tool results compact, returning summaries instead of raw Azure DevOps JSON. In our Python RAG service, which gives GitHub Copilot and Cursor the context of our codebase and standards, retrieval returns only the few most relevant chunks, trimmed to a token budget, instead of whole files.
+X: So my approach is: give the model the smallest context that fully answers the task.
+@p15-38
+S: ai
+D: I
+T: What do temperature and top-p do, and how do you set them?
+K: temperature, top p, sampling, deterministic output, llm parameters, creativity setting
+X: Both control how random a model's output is. At each step, the model has a probability for every possible next token. Temperature reshapes those probabilities: low temperature, near zero, makes it pick the most likely tokens, so output is focused and repeatable; higher temperature flattens them, so output is more varied and creative, but also more likely to drift. Top-p, also called nucleus sampling, limits choices to the smallest set of tokens whose probabilities add up to p, like 0.9, cutting off unlikely options. Usually you tune one of them, not both.
+X: How I set them depends on the task. For anything factual or structured, like extracting fields, classifying, generating code, or answering from retrieved documents in our RAG assistant, I use low temperature, [around 0 to 0.2], because I want consistent, grounded answers. For drafting text, like release note summaries or brainstorming test scenarios, I use a moderate value, [around 0.5 to 0.7].
+X: Two cautions. Temperature zero isn't fully deterministic on most hosted models, so tests shouldn't depend on exact text; they should check structure and facts. And low temperature doesn't prevent hallucination. A model can be consistently wrong. Grounding, through RAG with citations, and validation matter far more.
+X: In a GxP environment like ours, predictability is valuable, so my default is low temperature, with creativity only where a human reviews the result.
+@p15-39
+S: ai
+D: A
+T: What guardrails do you put around LLM applications?
+K: guardrails, llm guardrails, ai safety controls, input validation llm, output validation, prompt injection defence
+X: I think of guardrails in layers, because no single control is enough. I'll explain them with examples from our CIRT MCP server, built in .NET 8 with about 77 tools for Azure DevOps Server, and our Python RAG services.
+X: Input guardrails. Validate what comes in: allowed values, lengths and formats. In the MCP server, every tool parameter is validated, like environment names against a known list. In our end-user RAG assistant, questions are checked for personal or patient data before anything is sent.
+X: Least privilege. The model can only do what its tools allow. Our RAG tools are read-only. MCP calls run with the engineer's own access token, so the AI never has more access than the person.
+X: Human in the loop. Anything that changes state, like approving a release or redeploying, needs explicit approval in the client, plus our own confirmation step, and production rules are enforced in code, not in the prompt.
+X: Grounding. Answers come from retrieved sources with citations, and the model is told to say "I don't know" instead of guessing.
+X: Output guardrails. Structured outputs are validated against a schema. Secrets are masked before results reach the model. Generated code goes through the compiler, tests, SonarQube and code review.
+X: Prompt injection defence. Retrieved text and tool results are treated as data, never as instructions.
+X: And monitoring: every call is logged and audited, so we can see what happened and improve the controls.
+@p15-40
+S: ai
+D: A
+T: How do you use AI responsibly in a GxP-regulated environment?
+K: responsible ai, ai in gxp, ai compliance, ai regulated environment, ai validation, ai audit trail, 21 cfr part 11 ai
+X: Our IRT supports clinical trials, so patient safety and data integrity come first, and any AI use has to respect GxP: validated systems, audit trails and human accountability. My approach rests on a few principles.
+X: Clear boundaries. AI helps engineers and staff work faster, but it doesn't make GxP decisions or touch patient data. Our CIRT MCP server, built in .NET 8, works on Azure DevOps Server, our build and release tooling, not on study data. Our end-user RAG assistant indexes only approved reference documents, sanitised of any patient or study data, and is clearly labelled informational.
+X: Humans stay accountable. AI-generated code goes through the same validated process as any code: code review, automated tests, SonarQube, and QA validation. Production changes still follow approvals, and our MCP server requires human confirmation for every write action.
+X: Traceability. Every MCP call and RAG query is logged with the user, inputs and sources. Answers carry citations, so a person can verify them. That supports audits.
+X: Data protection. We use our enterprise Azure OpenAI tenant, where our data isn't used for training, secrets are masked, and nothing sensitive goes into prompts.
+X: Measured quality. We evaluate with golden question sets before changes, and monitor feedback after.
+X: [We documented these rules in a short AI usage guideline, reviewed with our quality team], so everyone knew what was allowed. Responsible AI, for me, means AI makes us faster, without ever weakening compliance.
+@p15-41
+S: ai
+D: I
+T: How do you use rules files to make Copilot and Cursor follow your standards?
+K: cursor rules, copilot instructions, rules files, coding standards ai, agents.md, ai coding standards, project rules
+X: Rules files are instructions the AI coding tool reads on every request. Cursor has project rules in the .cursor/rules folder, which can apply always, or only to matching files, like our React components. GitHub Copilot reads a copilot-instructions file in the .github folder. They're the simplest way to make AI output match the team's way of working.
+X: In our repositories, the rules cover four things. Project facts: our stack, like .NET 8 services and React with TypeScript, alongside older Angular screens, and where things live. Standards: our logging and audit patterns, error handling, naming, and testing expectations. Workflow: before implementing, call get_coding_standards and find_similar_implementation from our knowledge MCP server, which is backed by our Python RAG service, and reuse what's found. And boundaries: never put secrets in code, never touch patient data handling without flagging it, and say when something is unclear instead of guessing.
+X: The lesson I learned is to keep rules short and specific. Long rules files cost tokens on every request and get ignored. So the rules hold the instructions and pointers, and the detailed standards live in the RAG index, retrieved only when relevant. Rules are in the repository and reviewed like code, so they change with the project.
+X: [Together with RAG, this cut standards-related review comments on AI-assisted pull requests by roughly 40 percent.]
+@p15-42
+S: ai
+D: I
+T: How do you use AI for code review?
+K: ai code review, llm code review, copilot code review, automated review, pr review ai, claude code review
+X: I use AI in code review as a first reviewer, never the final one. In a GxP product like our IRT, a human reviewer stays accountable for every merge.
+X: As an author, before raising a pull request, I ask Cursor or Claude Code to review my change against our standards. Because our Python RAG service gives these tools the context of our codebase and coding standards, through MCP tools like get_coding_standards, the review checks our actual rules, like logging, audit and error handling patterns, not just generic advice. It catches missing null checks, untested branches, inconsistent naming, and places where we already have a shared helper.
+X: For the team, [we added an AI review step on pull requests that posts suggestions as comments], using GitHub Copilot code review where available. The prompt focuses it on real issues: correctness, security, standards and missing tests, and tells it to skip style that our linters already handle. That keeps it from producing noise, which is the main reason people stop reading AI reviews.
+X: Human reviewers then focus on design, business logic and domain risks, like how a change affects randomization or drug supply, which AI can't judge reliably.
+X: What I measure is whether the comments are accepted. [About half of the AI suggestions were accepted after tuning the prompt, and reviewers said they spent less time on routine comments.] AI review complements SonarQube and tests; it doesn't replace them.
+@p15-43
+S: ai
+D: I
+T: How do you write a good system prompt?
+K: system prompt, writing prompts, prompt structure, prompt design, instructions for llm, few-shot
+X: A good system prompt reads like a clear brief for a capable new colleague. I build it in a fixed structure.
+X: First, role and goal: who the assistant is and what success looks like. For our IRT Knowledge Assistant, a RAG tool for business analysts, QA and support, it's: answer questions about IRT features using only the provided sources. Second, context: the audience, the domain terms, like study, randomization or drug accountability, and anything it must know. Third, rules: answer only from the sources; cite every claim; if the sources don't cover it, say you don't know; never give advice on patient data. Fourth, output format: short answer first, then details, then citations, or a JSON schema when code consumes the result. Fifth, examples: one or two good examples, because models follow examples more closely than descriptions.
+X: A few habits make the difference. Be specific: "under 120 words" works better than "be concise". Separate instructions from data with clear tags, so retrieved text isn't mistaken for instructions, which also helps against prompt injection. Explain why a rule exists; models follow reasons better. And keep it as short as possible, because every token is sent on every request.
+X: Most importantly, I treat prompts like code. They're versioned in the repository, and every change runs against a golden question set before release, [the same approach we used in our Python RAG service and our CIRT MCP server tool descriptions].
+@p15-44
+S: ai
+D: I
+T: How do you get reliable structured output from an LLM?
+K: structured output, json output, json schema llm, function calling output, parse llm response, pydantic llm
+X: When code consumes the model's output, free text isn't good enough. I need valid, predictable structure, and I get it in layers.
+X: First, use the model's built-in structured outputs. Azure OpenAI supports a JSON schema response format, where the output is constrained to match the schema, so required fields and types are always there. Tool calling works the same way: the model fills in arguments against a defined schema. That's exactly how our CIRT MCP server, built in .NET 8, receives tool calls: each tool's parameters are typed, and the SDK turns them into a schema the model must follow.
+X: Second, validate anyway. In Python, I define the schema as a Pydantic model and validate every response; in C#, I deserialise into typed classes. Validation checks business rules too, like an environment name being in our list, not just the format.
+X: Third, handle failure. If validation fails, retry once with the error message included, and if it still fails, return a clear error rather than guessing. Never silently accept a half-parsed result.
+X: Fourth, design simple schemas. Fewer fields, clear names, enums instead of free text, and descriptions on each field. Complex nested schemas fail more often.
+X: [In our release-notes helper, which drafts notes from Azure DevOps work items, moving from prompt-only JSON to schema-constrained output with Pydantic validation took parsing failures from a few percent to practically zero.]

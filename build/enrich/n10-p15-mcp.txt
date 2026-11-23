@@ -1,0 +1,150 @@
+@p15-1
+S: mcp
+D: I
+T: How does your MCP server work end to end?
+V: mcpFlow
+K: mcp end to end, how mcp server works, mcp flow, cirt mcp flow, mcp walkthrough
+X: Let me walk through one real request. Our builds and releases run on an on-premise Azure DevOps Server, and I built the CIRT MCP server, in C# on .NET 8, so AI assistants like Cursor, Copilot and Claude Code can run those operations safely.
+X: An engineer types something like "deploy release 4.2 to UAT and verify all nodes". When the AI host starts, it launches my server as a local process over stdio, and its MCP client calls tools/list. My server answers with about 77 tools, each with a name, a description and a JSON schema for its parameters. The model reads those and plans: first run the pre-deployment checks for UAT. The client sends a JSON-RPC tools/call message, and my server validates the arguments, calls the Azure DevOps Server REST API with that engineer's own personal access token, and returns a short structured summary, like "all checks passed on 5 nodes".
+X: Next, the model wants to deploy. That's a write tool, so the host asks the engineer to approve the call, and my server also requires an explicit confirmation flag for production-affecting steps. The deploy tool starts the deployment and returns an id straight away, and the model polls a status tool, which returns a per-node table. If a node fails, it can fetch a summary of the failing step's logs and, with confirmation, retry just that node. Finally, a verification tool checks that every node runs the release version.
+X: Every call is written to an audit log. The result: deployments went from 6 hours to 2, and from 6 people to 1.
+@p15-2
+S: mcp
+D: A
+T: What is the architecture of your MCP server in .NET 8?
+V: mcpArch
+K: mcp architecture, mcp server architecture, dotnet 8 mcp, net 8 mcp, generic host mcp, mcp design layers
+X: The CIRT MCP server is a .NET 8 console application that lets AI assistants run builds, releases and multi-node deployments on our on-premise Azure DevOps Server. It's built in layers, using the normal .NET hosting model.
+X: At the top is the generic host. Program.cs creates a host builder, registers the MCP server with the official ModelContextProtocol C# SDK, chooses the stdio transport, and discovers tools from the assembly. Configuration comes from appsettings and environment variables, bound to strongly typed options, with validation at startup, so a missing server URL fails immediately with a clear message.
+X: Next is the tool layer: about 77 tools in classes grouped by domain, like builds, releases, deployments and diagnostics. Each tool is a normal C# method with attributes and a description, and the SDK generates its JSON schema. Tools get their dependencies through dependency injection.
+X: Under that is a guard layer: argument validation, enums for environments, confirmation checks for risky actions, and the audit logger, which records the user, tool, arguments with secrets removed, duration and result.
+X: At the bottom is a typed Azure DevOps client, built on IHttpClientFactory, with the engineer's personal access token, timeouts, and Polly retries with backoff only for safe, read-only calls. Our install scripts are wrapped the same way. Logging uses Serilog, writing to standard error and a rolling file, never to standard output, because stdout carries the protocol.
+X: It's packaged as a .NET global tool. The result: deployments went from 6 hours to 2, and from 6 people to 1.
+@p15-3
+S: mcp
+D: I
+T: What can your MCP server do?
+K: mcp capabilities, what can mcp do, mcp tools list, mcp features, variable groups, work items, pull requests, release notes, environment checks
+X: The CIRT MCP server, which I built in C# on .NET 8, gives AI assistants about 77 tools for our on-premise Azure DevOps Server and our deployment process. They fall into four groups.
+X: Builds, about 15 tools: queue a build for a branch, get build status, get a summary of a failed build's logs, list artifacts, and check that a build came from the right release branch.
+X: Releases and approvals, about 20 tools: create a release from build artifacts, get release status per environment, list pending approvals, compare what changed between two releases, and generate release notes from the linked pull requests and work items. It can also read work items and pull requests to answer "what's in this release?", but approvals themselves stay with named people.
+X: Deployments and nodes, about 25 tools, the biggest group: run pre-deployment checks on every node, like disk space, service accounts and ports, deploy a release stage, show per-node install status, rerun a step on one node, and verify that every node runs the release version.
+X: Information and diagnostics, about 17 tools: environment details, recent deployment history, a variable group check that compares required keys per environment, without ever returning secret values, a configuration parity check against AWS Parameter Store, and a health check that confirms connectivity and permissions.
+X: A few composite tools, like "deploy to an environment and verify all nodes", combine common sequences, so the model makes fewer mistakes. Together, they took deployments from 6 hours to 2, and from 6 people to 1.
+@p15-4
+S: mcp
+D: A
+T: How do you register MCP tools in C# with the official SDK?
+K: mcp c# sdk, modelcontextprotocol package, mcpservertool, mcpservertooltype, addmcpserver, withtoolsfromassembly, register tools c#
+X: I built the CIRT MCP server in C# on .NET 8, with the official ModelContextProtocol SDK for C#, and its tool registration is one of the nicest parts, because tools are just normal C# methods.
+X: In Program.cs, on the generic host builder, I call AddMcpServer, then WithStdioServerTransport, and WithToolsFromAssembly. The SDK scans the assembly for classes marked with the McpServerToolType attribute, and inside them, methods marked with McpServerTool, where I set the tool name, like get_release_status. The Description attribute on the method tells the model when to use the tool, and Description attributes on each parameter explain what to pass. From the method signature, the SDK generates the JSON schema automatically: types, required parameters, and enums from C# enum types, like our environment names.
+X: Dependencies come in through dependency injection. A tool method can take services, like our Azure DevOps client, the audit logger or options, as parameters, and the SDK resolves them from the container, separately from the arguments the model provides. Methods can be async, receive a CancellationToken, so a cancelled request stops the work, and return a string or a structured object.
+X: For errors, a tool returns a clear error result the model can understand, like "release 4.2 not found; latest is 4.1", instead of throwing raw exceptions.
+X: Because it's plain C#, every tool is easy to unit test with a fake client. That made it practical to build and maintain about 77 tools on my own.
+@p15-5
+S: mcp
+D: I
+T: Why .NET 8 for your MCP server, and not Python or TypeScript?
+K: why dotnet for mcp, why c# mcp, mcp python vs c#, mcp typescript, why net 8, language choice mcp
+X: Python and TypeScript have the most MCP examples, and I'm comfortable in both, but for the CIRT MCP server, C# on .NET 8 was clearly the right choice for our team.
+X: First, the team. Our engineers work in C# every day, and everyone already had the .NET SDK installed. That meant anyone could read, debug and contribute to the server, and installing it is one dotnet tool install command. A Python tool would have needed Python environments on every machine, which is a real source of setup problems.
+X: Second, reuse. Our deployment logic and Azure DevOps client code were already in C#, tested and trusted. Rewriting them in another language would have added risk in a GxP environment.
+X: Third, the official C# SDK, ModelContextProtocol, built with Microsoft. Tools are just methods with attributes, the schemas are generated from the method signatures, and I get the standard .NET generic host, dependency injection, options, logging and HttpClient with Polly, all patterns the team already knows.
+X: Fourth, .NET 8 was the long-term support release when I built it in [early 2025], with good performance and fast startup, which matters because the AI host launches the server as a process. [Moving it to .NET 10, the current long-term support release, is planned, since we've already upgraded several services.]
+X: And where Python is the better fit, I use it: our RAG service, which gives AI coding tools the context of our codebase and standards, is written in Python. I pick the language for the job and the team, not the trend.
+@p15-6
+S: mcp
+D: A
+T: stdio vs Streamable HTTP transport in MCP: which did you use and why?
+K: mcp transports, stdio, streamable http, sse, http transport mcp, local vs remote mcp server
+X: MCP messages are JSON-RPC, and a transport is how they travel between the AI host's client and the server. There are two standard options.
+X: With stdio, the host starts the server as a local child process and they exchange messages through standard input and output. It's simple and fast, there's no network port and nothing to host, and the server runs with the local user's identity and environment. The catch is that each user runs their own copy, and anything written to standard output must be protocol messages only.
+X: Streamable HTTP is for remote servers. The client sends JSON-RPC messages as HTTP POST requests to one endpoint, and the server can reply with a single JSON response or stream several messages using server-sent events. It replaced the older HTTP plus SSE transport, which needed two separate endpoints. A remote server can serve many users, so you need proper authentication, which the MCP spec defines with OAuth, plus all the usual concerns: TLS, scaling and monitoring.
+X: For the CIRT MCP server, built in C# on .NET 8, I chose stdio. Each engineer runs it locally inside the company network, with their own Azure DevOps personal access token, so every action happens with their permissions and shows their name, and there was no shared server to secure or operate. That fitted a team tool well.
+X: If we rolled it out across the whole organisation, I'd move to Streamable HTTP with OAuth, for central updates, audit and monitoring.
+@p15-7
+S: mcp
+D: I
+T: How do GitHub Copilot and Cursor use your MCP server?
+K: copilot mcp, cursor mcp, mcp.json, agent mode, mcp configuration, mcp client config, use mcp in cursor
+X: Both Cursor and GitHub Copilot are MCP hosts: they include an MCP client and can connect to any MCP server, including the CIRT MCP server I built in C# on .NET 8.
+X: Setup is a small configuration entry. In Cursor, it goes in an mcp.json file, either in the user's settings or in the project's .cursor folder. In VS Code with Copilot, it's a similar mcp.json in the .vscode folder. The entry gives a name, the command to start the server, which for us is the global tool's command, and environment variables, like the Azure DevOps server URL. The personal access token comes from the engineer's own environment, never from a committed file.
+X: When the engineer opens chat in agent mode, the host starts the server, lists its tools, and gives the model their names, descriptions and schemas. The model then decides which tools to call, based on the request. Both hosts show each tool call before it runs, and ask for approval, which we keep on for write tools. The engineer can also enable or disable individual tools, which is useful because about 77 tools is a lot of context.
+X: We also add project rules, in Cursor rules files and Copilot's instructions file, with guidance like "run the pre-deployment checks before any deploy, and never deploy to production without explicit confirmation".
+X: The result is that the same server works in whichever assistant an engineer prefers, which helped adoption, and deployments went from 6 hours to 2, and from 6 people to 1.
+@p15-8
+S: mcp
+D: A
+T: How do you keep 77 MCP tools usable and avoid token bloat?
+K: token bloat, too many tools, tool selection, 77 tools, context budget, tool descriptions, how llm picks tool
+X: About 77 tools is a lot. Every tool's name, description and schema is sent to the model as context, so too many, or too wordy, tools cost tokens and make it more likely the model picks the wrong one. In the CIRT MCP server, which I built in C# on .NET 8, I handled it in five ways.
+X: First, naming. A strict verb-noun convention, like queue_build, get_release_status and deploy_release_stage, so the name alone tells the model what the tool does. Second, short, precise descriptions that say when to use the tool and what it returns, plus "use this instead of" hints where two tools are close. Third, tight schemas: enums for environments and stages, required parameters marked, and no free text where a fixed value exists. Fourth, small outputs. Tools return short structured summaries, like status, the failing step and a link, never raw logs or full JSON, which protects the context window during long sessions. Fifth, composite tools for common sequences, like deploy and verify, so the model makes one call instead of six.
+X: On the host side, engineers can switch off tool groups they don't need, and project rules give the model a recommended order for common jobs.
+X: I check selection with realistic prompts, like "why did last night's UAT deployment fail?", and see whether the right tool is called with the right arguments. If I rebuilt it, I'd merge more tools into higher-level ones. But this design already made deployments go from 6 hours to 2.
+@p15-9
+S: mcp
+D: A
+T: How did you use HttpClient, Polly and Serilog in your MCP server?
+K: polly mcp, serilog mcp, httpclient mcp, resilience mcp server, logging mcp, retries mcp
+X: The CIRT MCP server, which I built in C# on .NET 8, spends most of its time calling our on-premise Azure DevOps Server, so resilience and logging were essential.
+X: For HTTP, I built a typed Azure DevOps client registered with IHttpClientFactory, so connections are pooled properly and configuration is in one place. A delegating handler adds the engineer's personal access token and a correlation id to every request. Each call has a timeout, so a slow server can't hang a tool call, and cancellation flows through, so if the user stops the agent, the request stops too.
+X: For resilience, I used Polly through the standard resilience handler: retries with exponential backoff and jitter, but only for safe, idempotent calls, like reading a build status, and only on transient errors, like timeouts and 503s. Write calls, like starting a deployment, are never retried automatically, because a retry could start a second deployment. Instead, the tool reports the problem and the model can check status first. A circuit breaker stops hammering the server if it's down, and the tool returns a clear message.
+X: For logging, I used Serilog with structured logs: the tool, the user, duration, result and correlation id. Crucially, it writes to standard error and a rolling file, never standard output, because over stdio, standard output carries the JSON-RPC protocol. Separately, an audit log records every tool call, with secrets removed.
+X: That combination is why the server stayed reliable enough to cut deployments from 6 hours to 2.
+@p15-10
+S: mcp
+D: A
+T: What was the hardest bug in your MCP server?
+K: hardest bug mcp, mcp bug story, stdout logging bug, mcp disconnects, debugging mcp
+X: Situation: Early on, when I was building the CIRT MCP server in C# on .NET 8, it worked perfectly in my unit tests, but in Cursor, the server would randomly disconnect, or tool calls would fail with parse errors. [It happened maybe one call in ten], with no pattern I could see.
+X: Task: I had to find the cause before anyone else on the team used it, because an unreliable tool around deployments would destroy trust immediately.
+X: Action: I started by capturing the raw traffic. Using the MCP Inspector, and by logging what the client received, I noticed that some messages on standard output weren't JSON-RPC at all. They were log lines. Over the stdio transport, standard output is the protocol channel, and any extra text corrupts the stream. The cause was that [a third-party library and one of my early console logging settings] wrote to the console, and only on certain code paths, like a retry, which is why it looked random. I fixed it properly: Serilog configured to write only to standard error and a rolling file, the default console logger removed, and a startup check, plus a test, that fails if anything writes to standard output outside the protocol.
+X: Result: The disconnects disappeared completely, and the test makes sure they can't come back. [It took about a day to find], and it taught me a lesson I now share with anyone building MCP servers: with stdio, standard output belongs to the protocol, and nothing else.
+X: After that, the server became the reliable tool that took deployments from 6 hours to 2.
+@p15-11
+S: mcp
+D: A
+T: Tell me about a time your MCP server prevented a bad deployment.
+K: mcp prevented deployment, mcp safety story, wrong branch build, pre-check caught, star mcp safety
+X: Situation: The CIRT MCP server, which I built in C# on .NET 8, lets AI assistants run deployments on our on-premise Azure DevOps Server. [In mid-2025, an engineer asked the agent to deploy "the latest build" to UAT on a busy release day.] The latest successful build was actually from a feature branch, not from the release branch, and in a GxP product, UAT must only receive the validated release build.
+X: Task: The server's job is to make that kind of mistake hard, without slowing people down.
+X: Action: Because of how I'd designed the tools, the agent first called the pre-deployment check tool, which validates the target environment, the nodes, and the release itself. One of its rules checks that the build's source branch matches the release branch pattern for that environment. It failed with a clear message: "build 1287 is from a feature branch; UAT accepts release branches only; latest release build is 1279". The agent showed that to the engineer, who picked the right build, and the deployment went ahead normally. The audit log recorded both the blocked attempt and the correct one.
+X: Result: [A wrong build never reached UAT, and no re-run of validation tests was needed, which would have cost the team about a day.] Afterwards, I added the same branch rule to the release creation tool, so the check happens even earlier.
+X: The lesson for me is that safety belongs in the tools themselves, not just in prompts, which is also why the time savings, 6 hours to 2, came with fewer mistakes, not more.
+@p15-12
+S: mcp
+D: I
+T: How did you measure the impact of your MCP server?
+K: measure impact mcp, mcp metrics, 6 hours to 2 measurement, mcp roi, before after deployments
+X: I wanted the result to be evidence, not an opinion, because deployments in our GxP product are serious, and the team needed a real reason to change how they worked.
+X: The CIRT MCP server, which I built in C# on .NET 8, automates builds, releases and multi-node deployments on our on-premise Azure DevOps Server. To measure it, I compared [8 deployments with it and 8 without], matched as fairly as possible: the same environments, the same number of nodes, [4 to 6], and similar release sizes. For duration, I used the release start and end timestamps from Azure DevOps, so nobody's memory was involved. For people, I counted who actually had to take part in each deployment.
+X: The result was that a typical deployment went from about 6 hours to about 2, and the people needed went from about 6 to 1. I also looked at quality, not just speed: failed or repeated steps, and issues found after deployment, to make sure we weren't trading safety for time. Verification became more consistent, because the version check across every node runs the same way every time.
+X: Since then, the audit log gives ongoing data: which tools are used most, how long they take, and where they fail, which tells me what to improve next. Adoption itself was a signal too: [within about two months, most release deployments used it, without anyone mandating it].
+@p15-13
+S: mcp
+D: I
+T: Did you use MCP resources and prompts, or only tools?
+K: mcp resources, mcp prompts, prompt templates, resources vs tools, mcp primitives
+X: MCP servers can expose three kinds of capabilities. Tools are actions the model decides to call, like starting a deployment. Resources are read-only data identified by a URI, which the host or user can attach as context, like a document or a configuration file. And prompts are reusable templates the user chooses explicitly, often shown as slash commands in the host, which can take arguments and include resources.
+X: In the CIRT MCP server, which I built in C# on .NET 8, tools are the core, about 77 of them, because the main job is to act on our on-premise Azure DevOps Server. But I also used the other two where they helped.
+X: [For prompts, I added a few templates for common jobs, like a release-day prompt that takes a release number and an environment, and walks the agent through the standard sequence: pre-checks, deploy, monitor each node, verify versions, and summarise.] That gives every engineer the same proven process, instead of everyone writing their own instructions. [For resources, I exposed things like the environment catalogue and the deployment runbook], so the model can read the rules without the engineer pasting them.
+X: The difference matters: tools are model-controlled, resources are application-controlled, and prompts are user-controlled. Support for resources and prompts also varies between hosts, which is why the critical behaviour lives in tools and their guard checks.
+X: Together, this is how deployments went from 6 hours to 2, and from 6 people to 1.
+@p15-14
+S: mcp
+D: A
+T: How do you make sure secrets never reach the LLM through MCP?
+K: secrets llm, no secrets to llm, pat security, redact secrets, mcp secret handling, variable group secrets
+X: The rule is simple: anything a tool returns goes into the model's context, and may be logged by the host, so a secret must never appear in a tool's output, its arguments, or its errors.
+X: In the CIRT MCP server, which I built in C# on .NET 8 for our on-premise Azure DevOps Server, I applied that at several points. Credentials: each engineer's personal access token comes from their own environment variable, is used only by the HTTP client, and never appears in a tool parameter or result, so the model never sees it. Tokens are scoped to the minimum permissions needed. Variable groups: the check tool only returns key names and whether each key is set per environment, never the values, and secret variables are masked by Azure DevOps anyway. Logs: before any build or deployment log summary is returned, a redaction step removes anything that looks like a password, connection string, key or token, using patterns, and the output is truncated. Errors: exceptions are turned into safe messages, without request headers or raw responses. And the audit log records arguments with sensitive fields removed.
+X: There's also the reverse direction: the model shouldn't be able to ask for secrets. There's simply no tool that reads secret values.
+X: Because it's a GxP product, I also kept patient and study data out of scope entirely: the server works with builds, releases and environments only. That design is why the team trusted it enough to use it for every deployment.
+@p15-15
+S: mcp
+D: I
+T: How did you build your MCP server step by step?
+K: mcp build story, how you built mcp, mcp prototype, mcp development journey, star mcp build
+X: Situation: In [early 2025], MCP was very new and nobody on my team had built a server. Our deployments on the on-premise Azure DevOps Server took about 6 hours and about 6 people, mostly repetitive steps.
+X: Task: I wanted to prove, safely, that an AI assistant could do those steps, without touching live releases.
+X: Action: I worked in stages. First, a prototype in [about two days], in C# on .NET 8 with the official ModelContextProtocol SDK, with three read-only tools: list builds, get build status, and get logs, against a test Azure DevOps project. Seeing Cursor answer "why did the last build fail?" convinced the team it was worth continuing. Second, I mapped the manual deployment steps and built read-only tools for all of them first, like release status and node versions, so people could trust it with zero risk. Third, write tools, like queue build, create release and deploy stage, with confirmations, per-user tokens, and audit logging, starting in FV and TechOps, then UAT and production, with existing approvals unchanged. Fourth, packaging as a .NET global tool on our internal feed, so setup took [about 10 minutes]. Throughout, I used Cursor and Copilot to speed up writing the tool wrappers, and every tool got unit tests.
+X: Result: It grew to about 77 tools, and deployments went from 6 hours to 2, and from 6 people to 1. Most of the team adopted it within [about two months], and I still own and extend it.

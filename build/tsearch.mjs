@@ -22,6 +22,11 @@ const CASES = [
  ['more experience on azure not aws', ['p14-19']], ['how hands-on are you with aws', ['p14-20']], ['rate yourself on aws', ['p14-21']], ['alertwatchdog', ['p14-22']], ['how did you build alertwatchdog', ['p14-23']],
  ['azure functions triggers bindings', ['p14-24']], ['durable functions', ['p14-25']], ['azure functions cold start', ['p14-26']], ['alertwatchdog on aws', ['p14-27']], ['azure functions vs lambda', ['p14-28']],
  ['timer trigger vs eventbridge', ['p14-29']], ['queue trigger vs sqs lambda', ['p14-30']], ['durable functions vs step functions', ['p14-31']], ['application insights alerts vs cloudwatch alarms', ['p14-32']], ['alertwatchdog caught issue', ['p14-33']],
+ ['mcp architecture', ['p15-2']], ['mcp end to end', ['p15-1']], ['what can your mcp server do', ['p15-3']], ['register mcp tools c#', ['p15-4']], ['why dotnet for mcp', ['p15-5']], ['stdio vs streamable http', ['p15-6']],
+ ['token bloat', ['p15-8']], ['polly serilog mcp', ['p15-9']], ['mcp hardest bug', ['p15-10']], ['mcp prevented bad deployment', ['p15-11']], ['mcp resources and prompts', ['p15-13']], ['secrets llm mcp', ['p15-14']],
+ ['why rag for copilot', ['p15-16']], ['rag pipeline', ['p15-17']], ['code chunking', ['p15-18']], ['pgvector', ['p15-19']], ['hybrid search', ['p15-20']], ['rag index up to date', ['p15-22']], ['rag evaluation', ['p15-23']],
+ ['rag vs long context', ['p15-25']], ['rag security', ['p15-26']], ['rag failure modes', ['p15-28']], ['python rag stack', ['p15-29']], ['rag for end users', ['p15-31']], ['rag adoption', ['p15-33']],
+ ['agents vs workflows', ['p15-36']], ['context window', ['p15-37']], ['temperature', ['p15-38']], ['guardrails', ['p15-39']], ['responsible ai gxp', ['p15-40']], ['cursor rules', ['p15-41']], ['ai code review', ['p15-42']], ['system prompt', ['p15-43']], ['structured output', ['p15-44']],
  ['outbox', ['p2-44']], ['cors', ['p1-29']], ['salary', ['p3-60']], ['strengths', ['p3-55']], ['weakness', ['p3-56']], ['clustered index', ['p1-44']], ['idempotent consumer', ['p2-42']]
 ];
 const b = await puppeteer.launch({executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox']});

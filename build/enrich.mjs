@@ -46,7 +46,8 @@ const NEWPARTS = {
   p11: { T: { ng: 'Angular' }, ORDER: ['ng'] },
   p12: { T: { rts: 'React and TypeScript' }, ORDER: ['rts'] },
   p13: { T: { fe: 'Front end in IRT: Angular and React', irt: 'IRT: clinical studies and modules', irts: 'IRT stories' }, ORDER: ['fe', 'irt', 'irts'] },
-  p14: { T: { hyb: 'On-premise Azure DevOps and AWS: the CIRT story', map: 'Azure to AWS: how the concepts map', awd: 'AlertWatchDog and Azure Functions (and the AWS way)' }, ORDER: ['hyb', 'map', 'awd'] }
+  p14: { T: { hyb: 'On-premise Azure DevOps and AWS: the CIRT story', map: 'Azure to AWS: how the concepts map', awd: 'AlertWatchDog and Azure Functions (and the AWS way)' }, ORDER: ['hyb', 'map', 'awd'] },
+  p15: { T: { mcp: 'AI: the CIRT MCP server in .NET 8', rag: 'AI: RAG for Copilot and Cursor (Python)', ragu: 'AI: the RAG assistant for end users', ai: 'AI: applied AI engineering' }, ORDER: ['mcp', 'rag', 'ragu', 'ai'] }
 };
 const vis10 = fs.existsSync('vis10.json') ? JSON.parse(fs.readFileSync('vis10.json', 'utf8')) : {};
 const OUTP = {};

@@ -1055,5 +1055,270 @@
     }
    ]
   }
+ },
+ "mcpArch": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "u",
+     "label": "Engineer",
+     "detail": "Cursor / Copilot / Claude Code",
+     "kind": "terminal"
+    },
+    {
+     "id": "c",
+     "label": "MCP client",
+     "detail": "inside the AI host"
+    },
+    {
+     "id": "s",
+     "label": "CIRT MCP server",
+     "detail": ".NET 8, stdio, ~77 tools"
+    },
+    {
+     "id": "g",
+     "label": "Guard layer",
+     "detail": "validation, confirm, audit log"
+    },
+    {
+     "id": "a",
+     "label": "Azure DevOps client",
+     "detail": "HttpClient + Polly, user PAT"
+    },
+    {
+     "id": "t",
+     "label": "Azure DevOps Server",
+     "detail": "builds, releases, nodes",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "u",
+     "to": "c"
+    },
+    {
+     "from": "c",
+     "to": "s",
+     "label": "JSON-RPC"
+    },
+    {
+     "from": "s",
+     "to": "g"
+    },
+    {
+     "from": "g",
+     "to": "a"
+    },
+    {
+     "from": "a",
+     "to": "t",
+     "label": "REST"
+    }
+   ]
+  }
+ },
+ "mcpFlow": {
+  "type": "Sequence",
+  "props": {
+   "actors": [
+    {
+     "id": "e",
+     "label": "Engineer + AI"
+    },
+    {
+     "id": "m",
+     "label": "CIRT MCP server"
+    },
+    {
+     "id": "d",
+     "label": "Azure DevOps"
+    }
+   ],
+   "messages": [
+    {
+     "from": "e",
+     "to": "m",
+     "label": "tools/list"
+    },
+    {
+     "from": "m",
+     "to": "e",
+     "label": "77 tools + schemas",
+     "reply": true
+    },
+    {
+     "from": "e",
+     "to": "m",
+     "label": "run_predeployment_checks(UAT)"
+    },
+    {
+     "from": "m",
+     "to": "d",
+     "label": "read env, nodes, variable groups"
+    },
+    {
+     "from": "m",
+     "to": "e",
+     "label": "all checks passed",
+     "reply": true
+    },
+    {
+     "note": "engineer confirms the write step",
+     "over": "e"
+    },
+    {
+     "from": "e",
+     "to": "m",
+     "label": "deploy_release_stage(4.2, UAT)"
+    },
+    {
+     "from": "m",
+     "to": "d",
+     "label": "start deployment"
+    },
+    {
+     "from": "m",
+     "to": "e",
+     "label": "deployment id",
+     "reply": true
+    },
+    {
+     "from": "e",
+     "to": "m",
+     "label": "get_deployment_status(id)"
+    },
+    {
+     "from": "m",
+     "to": "e",
+     "label": "per-node table, versions verified",
+     "reply": true
+    }
+   ]
+  }
+ },
+ "ragPipe": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "src",
+     "label": "Repos, standards, ADRs",
+     "detail": "merged to main",
+     "kind": "terminal"
+    },
+    {
+     "id": "ch",
+     "label": "Chunk",
+     "detail": "tree-sitter: by class / method"
+    },
+    {
+     "id": "em",
+     "label": "Embed",
+     "detail": "Azure OpenAI embeddings"
+    },
+    {
+     "id": "db",
+     "label": "pgvector + full-text",
+     "detail": "chunks + metadata"
+    },
+    {
+     "id": "q",
+     "label": "search tool",
+     "detail": "hybrid search + re-rank"
+    },
+    {
+     "id": "ai",
+     "label": "Cursor / Copilot",
+     "detail": "code with citations",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "src",
+     "to": "ch"
+    },
+    {
+     "from": "ch",
+     "to": "em"
+    },
+    {
+     "from": "em",
+     "to": "db"
+    },
+    {
+     "from": "db",
+     "to": "q"
+    },
+    {
+     "from": "q",
+     "to": "ai",
+     "label": "MCP"
+    }
+   ]
+  }
+ },
+ "ragUser": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "u",
+     "label": "BA, QA, support, study build",
+     "detail": "plain-English question",
+     "kind": "terminal"
+    },
+    {
+     "id": "t",
+     "label": "Teams bot / web page",
+     "detail": "suggested questions"
+    },
+    {
+     "id": "r",
+     "label": "RAG API",
+     "detail": "SSO roles filter documents"
+    },
+    {
+     "id": "l",
+     "label": "Azure OpenAI",
+     "detail": "answer only from sources"
+    },
+    {
+     "id": "a",
+     "label": "Answer + citations",
+     "detail": "thumbs up / down",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "u",
+     "to": "t"
+    },
+    {
+     "from": "t",
+     "to": "r"
+    },
+    {
+     "from": "r",
+     "to": "l"
+    },
+    {
+     "from": "l",
+     "to": "a"
+    },
+    {
+     "from": "a",
+     "to": "r",
+     "label": "feedback",
+     "dashed": true
+    }
+   ]
+  }
  }
 }

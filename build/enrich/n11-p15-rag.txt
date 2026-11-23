@@ -1,0 +1,142 @@
+@p15-16
+S: rag
+D: I
+T: Why did you build RAG for GitHub Copilot and Cursor?
+K: why rag, rag for copilot, rag for cursor, codebase context, ai coding context, rag purpose
+X: Because AI coding tools are only as good as the context they get. GitHub Copilot and Cursor know general C# and React very well, but they don't know our project: our IRT codebase spread across many repositories, our patterns for logging, error handling and auditing, our shared libraries, or the standards a GxP product requires.
+X: Without that context, they produced code that looked right but didn't fit. They invented helper methods that didn't exist, used a different logging style, skipped our audit pattern, or re-implemented something we already had in a shared library. Reviewers then spent time explaining the same standards again and again.
+X: So I built a RAG service in Python. RAG, retrieval-augmented generation, means that before the model writes anything, we retrieve the most relevant pieces of our own content and put them in its context. We index our repositories, coding standards, architecture decision records and API contracts. Then, through a small MCP server, the AI tools can call search tools, like search_codebase, get_coding_standards and find_similar_implementation, and pull exactly the context they need for the task, with links to the sources.
+X: The goals were three: implementations that fit the project from the first attempt, fewer hallucinations, because the model sees real code instead of guessing, and the standards applied automatically rather than remembered. [After rollout, standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent.]
+@p15-17
+S: rag
+D: A
+T: How does your RAG pipeline work, from ingestion to retrieval?
+V: ragPipe
+K: rag pipeline, rag architecture, rag end to end, ingestion query, rag design, python rag pipeline
+X: Our RAG service is written in Python, and its main job is to give AI coding tools, like GitHub Copilot and Cursor, the context of our codebase and our coding standards. It has two halves: ingestion and retrieval.
+X: Ingestion. A pipeline collects content from [about 40] repositories, plus our coding standards, architecture decision records and API contracts. Code is chunked by structure using tree-sitter: one chunk per class or method, with its file path, namespace and signature, rather than cutting at a fixed number of characters. Documents are chunked by headings. Each chunk gets metadata, like the repository, path, language, module and last commit, and an embedding from Azure OpenAI. Everything is stored in PostgreSQL with pgvector, which also gives us full-text search and metadata filters in the same database.
+X: Retrieval. When Copilot or Cursor calls the search tool through our MCP server, the query runs as a hybrid search: vector similarity for meaning, and full-text search for exact names, like a class or an error code, merged with reciprocal rank fusion. Filters narrow it by repository or language. Then a re-ranker reorders the top results, and we return the best few chunks, trimmed to a token budget, each with its file path and line numbers, so the tool can cite them and open the real file.
+X: Freshness is handled by an incremental re-index on every merge to main. And it's evaluated with a golden question set, measuring whether the right chunks come back.
+@p15-18
+S: rag
+D: A
+T: How do you chunk code for RAG?
+K: code chunking, chunking strategy, tree-sitter, ast chunking, fixed size chunking, chunk size overlap
+X: Chunking decides what the retriever can find, so for code it's one of the most important choices. In our Python RAG service, which gives GitHub Copilot and Cursor the context of our codebase and standards, I chunk code by its structure, not by character count.
+X: Fixed-size chunking, say a thousand characters with some overlap, is simple and works for prose, but for code it cuts methods in half, separates a method from its class, and mixes unrelated code in one chunk. The retrieved pieces then make little sense to the model.
+X: So I used tree-sitter, a parser that builds a syntax tree for many languages, including C#, TypeScript and SQL. From the tree, each chunk is a complete unit: a method, with its class name, namespace and signature added as a header, or a small class as a whole. Very long methods are split at statement boundaries, keeping the signature in each part. Every chunk carries metadata: repository, file path, line numbers, language, symbol name and the last commit, which helps filtering and lets the AI tool open the exact lines.
+X: Some content needs its own rules. Markdown standards and decision records are split by headings, so each rule stays together with its title. Configuration and pipeline YAML is chunked by top-level sections. And generated code, build output and secrets files are excluded entirely.
+X: [Switching from fixed-size to tree-sitter chunking raised our retrieval hit rate on the golden question set from about 62 percent to about 80 percent], before any other tuning.
+@p15-19
+S: rag
+D: I
+T: Which embeddings and vector store did you use, and why?
+K: embeddings, vector store, pgvector, vector database, azure openai embeddings, chroma, faiss, embedding model
+X: Our RAG service, written in Python, gives AI coding tools like Copilot and Cursor the context of our codebase and coding standards. For it, I chose Azure OpenAI embeddings and PostgreSQL with the pgvector extension.
+X: An embedding is a list of numbers that represents the meaning of a piece of text, so similar content ends up close together, and we can find relevant code even when the words differ. [I used Azure OpenAI's text-embedding-3-small model.] It's good on both code and English, inexpensive, and it runs in our enterprise Azure OpenAI tenant, where our data isn't used for training, which matters for an internal codebase. The query and the chunks must always use the same model, so changing models means re-embedding everything, which I planned for with a model version on every row.
+X: For storage, I compared Chroma, FAISS and pgvector. FAISS is a fast library, but not a database: no metadata filtering or updates out of the box. Chroma is easy to start with. [I picked pgvector, on PostgreSQL in our AWS account], because one database gives vector search, full-text search for hybrid retrieval, metadata filters like repository and language, transactions for incremental updates, and standard backups and access control. At our scale, [a few hundred thousand chunks], an HNSW index keeps queries in milliseconds, so a specialised vector database wasn't needed.
+X: The lesson I'd share: choose the simplest store that supports hybrid search and filtering, because retrieval quality matters far more than the database brand.
+@p15-20
+S: rag
+D: A
+T: What are hybrid search and re-ranking, and why did you use them?
+K: hybrid search, bm25, keyword search, vector search, reranking, re-ranker, reciprocal rank fusion, cross-encoder
+X: In our Python RAG service, which gives GitHub Copilot and Cursor the context of our codebase and standards, retrieval quality improved most from two things: hybrid search and re-ranking.
+X: Vector search finds content by meaning. That's great for questions like "how do we handle vendor file retries?", but weak for exact identifiers, like a class name, an error code or a configuration key, because embeddings blur precise tokens. Keyword search, like BM25, is the opposite: excellent for exact terms, poor at meaning. Code questions mix both, so hybrid search runs both and combines them. I used PostgreSQL full-text search alongside pgvector, and merged the two ranked lists with reciprocal rank fusion, which rewards items that rank well in either list, without having to tune scores against each other.
+X: Re-ranking is a second, more careful pass. The first stage retrieves, say, the top 30 candidates quickly. Then a re-ranker, [a small cross-encoder model], reads the query and each candidate together and scores how well they actually match. It's slower, which is why it only runs on the shortlist. The top few results go to the AI tool.
+X: Then I add metadata filters, like repository, language or module, and boost chunks from shared libraries and standards, because those are what we want reused.
+X: On our golden question set, [hybrid search plus re-ranking lifted recall at five from about 80 percent to about 88 percent], and exact-name lookups, which vector search often missed, became reliable.
+@p15-21
+S: rag
+D: A
+T: How do Copilot and Cursor get context from your RAG system?
+K: rag mcp, search_codebase, get_coding_standards, rag in cursor, rag in copilot, rules files, context for ai coding
+X: Our RAG service is written in Python, and its purpose is to give GitHub Copilot and Cursor the context of our existing codebase and our coding standards. The AI tools reach it in two ways.
+X: The main way is MCP. [I built a small knowledge MCP server, in Python with the official MCP SDK, separate from the C# deployment server], that exposes four tools: search_codebase, which takes a natural-language question and optional filters, like repository or language; find_similar_implementation, which finds existing code that does something similar, so the model reuses our patterns; get_coding_standards, which returns the relevant rules for a topic, like logging, error handling or audit trails; and get_adr, for architecture decisions. Each returns a few short chunks with file paths and line numbers, so the agent can open the real files and cite them. Because it's MCP, the same server works in Cursor, Copilot and Claude Code.
+X: The second way is rules files. In Cursor's project rules and Copilot's instructions file, we tell the agent how to work: before implementing anything, call get_coding_standards for the area, and search for a similar implementation; follow the patterns found; and if no source supports something, say so instead of guessing. The rules stay short, because the detail lives in the index and is pulled only when needed.
+X: That's the key benefit: instead of pasting huge files into every prompt, the agent pulls exactly the context it needs for the current task.
+@p15-22
+S: rag
+D: I
+T: How do you keep the RAG index up to date?
+K: rag freshness, reindex, incremental indexing, stale index, index on merge, rag pipeline trigger
+X: A stale index is dangerous, because the AI tool will confidently suggest code that no longer exists. In our Python RAG service, which gives GitHub Copilot and Cursor the context of our codebase and standards, freshness is automatic.
+X: Re-indexing happens on every merge to the main branch. A step in our Azure DevOps pipeline calls the indexing job with the repository and the list of changed files. For each changed file, the job re-parses it with tree-sitter, recalculates the chunks, and compares a content hash for each chunk with what's stored. Only chunks that actually changed are re-embedded, and chunks from deleted code or deleted files are removed. That keeps it fast and cheap, usually [under a minute per merge].
+X: There's also a nightly full consistency check, comparing the index with the repositories, in case a pipeline run was missed. Every chunk records its commit, so a search result shows how recent it is. Standards and architecture decision records are indexed the same way when their documents change, so a new rule is available to the AI tools the same day.
+X: If we change the embedding model, that's a full re-index into a new table, switched over only after the golden question set passes, so quality never drops during the change.
+X: [Since moving to merge-triggered indexing, the index is normally within minutes of main], and reports of "the AI suggested a method that doesn't exist" became rare.
+@p15-23
+S: rag
+D: A
+T: How did you evaluate your RAG system?
+K: rag evaluation, golden set, recall at k, hit rate, faithfulness, evaluate retrieval, rag metrics
+X: I evaluated it at two levels: is retrieval finding the right content, and is the AI tool using it well. Our RAG service, in Python, gives GitHub Copilot and Cursor the context of our codebase and coding standards.
+X: For retrieval, I built a golden question set of [about 60] real questions from the team, like "how do we log an audit entry for a site change?" or "where is the vendor file retry logic?", each labelled with the files or standards that should come back. I measured hit rate and recall at five, meaning: is a correct chunk in the top five, and mean reciprocal rank, meaning how high the first correct one is. Every change, like a new chunking strategy, hybrid search or the re-ranker, had to improve those numbers. [Recall at five went from about 62 percent with the first version to about 88 percent.] The set runs automatically when the pipeline code changes.
+X: For answers and code, I checked faithfulness: does the output only use what was retrieved, with correct citations, and does it follow the standard it was given. I used a mix of human review on samples and an LLM judge with a clear rubric.
+X: And for real impact, I compared before and after. [Standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent], and developers reported fewer invented methods. We also logged searches with no good result, which showed gaps in our documentation, and fixed them.
+@p15-24
+S: rag
+D: I
+T: How does RAG reduce hallucinations in AI coding tools?
+K: rag hallucinations, reduce hallucination coding, grounded code generation, invented methods, ai coding accuracy
+X: A coding assistant hallucinates mostly when it has to guess. It doesn't know our helper methods, so it invents one with a plausible name. It doesn't know our logging pattern, so it uses a generic one. RAG reduces that by replacing guessing with looking up.
+X: In our setup, a Python RAG service indexes our repositories, coding standards and architecture decisions, and GitHub Copilot and Cursor reach it through MCP tools, like search_codebase and get_coding_standards. Several things then reduce hallucinations. Grounding: before writing code, the agent retrieves real, similar implementations, so it reuses the classes and methods that actually exist. Citations: every result comes with a file path and line numbers, so both the agent and the developer can open and check the real code. Explicit rules: our rules files tell the agent to follow the retrieved patterns, and to say when nothing relevant was found, instead of inventing. Freshness: the index updates on every merge, so it doesn't suggest deleted code. And precise retrieval, with hybrid search and re-ranking, so the context is relevant, because irrelevant context also causes confident nonsense.
+X: RAG doesn't remove the need for checks. The compiler, tests, SonarQube and code review still catch what slips through, which is essential in a GxP product.
+X: [After rollout, developers reported far fewer invented methods, and standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent.]
+@p15-25
+S: rag
+D: I
+T: Why use RAG instead of just a long context window?
+K: rag vs long context, long context window, why not paste whole repo, context window vs retrieval, rag vs fine-tuning
+X: Modern models accept very large contexts, so it's a fair question: why not just give the model the whole codebase? For our project, RAG was clearly better, for five reasons.
+X: First, size. Our IRT codebase spans [about 40] repositories, far more than any context window, plus standards and design documents. Second, quality. Models get worse at using information buried in the middle of a very long context, so a few highly relevant chunks often beat a huge dump. Third, cost and speed. Every token is paid for and slows the response, on every single request. Retrieval sends only what's needed. Fourth, freshness and control. The index updates on every merge, we can filter by repository or module, and every result has a source, so we know exactly what the model saw. Fifth, access control. Retrieval can respect which repositories a user is allowed to see, which a pasted dump can't.
+X: Fine-tuning is the other alternative, but it changes how a model behaves, not what it knows today, and it goes stale with every merge. So my rule is: RAG for knowledge, fine-tuning for behaviour, and long context for working deeply on the few files you're actually changing.
+X: That's how our setup works: our Python RAG service, through MCP tools in Copilot and Cursor, finds the relevant code and standards, and then the agent opens those few files fully in its context to make the change.
+@p15-26
+S: rag
+D: A
+T: How did you secure your RAG system?
+K: rag security, rag access control, no phi, prompt injection rag, secrets in index, enterprise rag security
+X: Security came first, because our RAG system indexes internal source code in a GxP company. It's a Python service that gives GitHub Copilot and Cursor the context of our codebase and coding standards, and I secured it in five layers.
+X: First, what goes in. Only source code, standards and engineering documents are indexed. No patient data, study data or production data, ever. Before indexing, a secret scanner checks every file, and anything that looks like a key, password or connection string is excluded, along with configuration files that hold secrets.
+X: Second, who can see what. Every chunk carries its repository, and search results are filtered by the repositories the caller can access in Azure DevOps, so the index never becomes a way around normal permissions.
+X: Third, where it runs. The service and its PostgreSQL database run inside our private network, and embeddings and generation use our enterprise Azure OpenAI tenant, where data isn't used for model training and stays under our agreements.
+X: Fourth, prompt injection. Retrieved content is treated as data, not instructions. The tools return it clearly marked as source excerpts, and the search tools are read-only, so even a malicious comment in code can't make the agent do anything beyond reading.
+X: Fifth, auditing. Every query is logged with the user, tool and returned sources, which supports our audit requirements and helps spot misuse.
+X: The result is that teams could use it confidently, because it follows the same rules as the code itself.
+@p15-27
+S: rag
+D: I
+T: How did you keep RAG cost and latency low?
+K: rag cost, rag latency, token budget, caching embeddings, rag performance, cheap rag
+X: Our RAG service, in Python, gives GitHub Copilot and Cursor the context of our codebase and standards. It's called many times during a coding session, so it had to be fast and cheap, or people would stop using it.
+X: For cost, the biggest saving was embedding only what changed. Incremental indexing on every merge re-embeds only chunks whose content hash changed, instead of the whole repository. Embeddings use a small, inexpensive model, [text-embedding-3-small], which performed almost as well as larger ones on our golden question set. Query embeddings for repeated questions are cached. And the service returns short, relevant chunks, trimmed to a token budget, so the AI tool doesn't pay to read thousands of irrelevant lines.
+X: For latency, retrieval happens in one PostgreSQL query using pgvector with an HNSW index plus full-text search, typically [tens of milliseconds]. The re-ranker only scores the top 30 candidates, not everything. The FastAPI service is async, keeps database connections pooled, and loads the re-ranker model once at startup. [End to end, a search tool call usually returns in well under a second.]
+X: I also measured before optimising: latency per stage, and cost per day from Azure OpenAI usage, so I fixed the slowest step first, which was originally re-ranking too many candidates.
+X: [Running cost stayed small, a few dollars a day], because the expensive part, the AI coding tool itself, was already licensed.
+@p15-28
+S: rag
+D: A
+T: What are common RAG failure modes, and how do you fix them?
+K: rag failure modes, rag problems, bad retrieval, rag debugging, rag pitfalls, irrelevant context
+X: Most RAG failures are retrieval failures, not model failures, so I always debug retrieval first. From our Python RAG service, which gives Copilot and Cursor the context of our codebase and standards, these are the ones I've seen most.
+X: Wrong chunks. Fixed-size chunks cut methods in half or mix unrelated content. The fix is structure-aware chunking, like tree-sitter for code and headings for documents. Missed exact names. Vector search struggles with identifiers and error codes. The fix is hybrid search, adding keyword search. Relevant but not best. The right chunk is in the top 30 but not the top 5. A re-ranker fixes that. Stale content. The model suggests code that was deleted. The fix is incremental re-indexing on every merge, plus a nightly consistency check. Too much context. Stuffing in many chunks confuses the model and costs tokens. The fix is a token budget and fewer, better results. Content gaps. The answer simply isn't written down anywhere. Logging queries with weak results shows those gaps, and the fix is better documentation, not more AI. And the model ignoring the context. Clear instructions, citations and "say if it's not in the sources" fix most of that.
+X: The way to find which one you have is a golden question set with labelled answers, measured on every change. In our case, that took recall at five [from about 62 to about 88 percent]. Without measurement, RAG tuning is just guessing.
+@p15-29
+S: rag
+D: I
+T: What Python stack did you use for your RAG service?
+K: python rag stack, fastapi rag, langchain, llamaindex, tree-sitter python, rag libraries
+X: Our RAG service gives GitHub Copilot and Cursor the context of our codebase and coding standards, and I built it in Python, because the best libraries for parsing, embeddings and retrieval live there.
+X: The pieces are these. FastAPI for the service: async endpoints for search and indexing, with Pydantic models for requests and responses, so inputs are validated and the API documents itself. Tree-sitter, through its Python bindings, to parse C#, TypeScript and SQL into syntax trees for structure-aware chunking. The OpenAI Python SDK, pointed at our enterprise Azure OpenAI, for embeddings and, in the end-user assistant, for answers. PostgreSQL with pgvector, accessed with psycopg, for vector and full-text search in one query. A small cross-encoder from the sentence-transformers library for re-ranking. And the official MCP Python SDK for the knowledge MCP server that exposes search tools to the AI coding assistants.
+X: [I prototyped with LangChain, but kept the production pipeline in plain Python], because each step is simple, and plain code made it easier to debug, test and control exactly what goes into the prompt. Frameworks are useful for quick experiments, but I didn't want hidden behaviour in a GxP company's tooling.
+X: Around that: pytest for unit tests and the golden-question evaluation, Ruff and mypy for code quality, Docker for packaging, and an Azure DevOps pipeline that tests and deploys it, like our other services.
+@p15-30
+S: rag
+D: A
+T: Tell me about building RAG for your AI coding tools.
+K: rag star, rag story, rag for developers story, star rag coding, rag project story
+X: Situation: [In 2025], most of our team used GitHub Copilot and Cursor daily, but the suggestions often didn't fit our project. They invented helper methods, ignored our logging and audit patterns, and re-implemented things that already existed in our shared libraries. Reviewers kept writing the same standards comments, and the AI tools couldn't see across our [roughly 40] repositories.
+X: Task: I set out to give the AI tools the context of our existing codebase and our coding standards, so implementations would fit the project, and hallucinations would drop.
+X: Action: I built a RAG service in Python. It chunks code by structure with tree-sitter, one chunk per method or class with its path and signature, splits standards and decision records by headings, embeds everything with our enterprise Azure OpenAI, and stores it in PostgreSQL with pgvector. Retrieval is hybrid, vector plus full-text, with a re-ranker. I exposed it through a small knowledge MCP server, with tools like search_codebase, find_similar_implementation and get_coding_standards, and added project rules telling Copilot and Cursor to check standards and similar code before implementing. Re-indexing runs on every merge. I measured it with a golden set of [about 60] questions.
+X: Result: [Recall at five went from about 62 to about 88 percent, standards-related review comments on AI-assisted pull requests dropped by roughly 40 percent], and new joiners used it to learn the codebase. It later became the base for an assistant for non-developers too.
