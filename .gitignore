@@ -4,3 +4,5 @@ build/*.png
 build/*.txt
 build/p*.mjs
 user-questions.txt
+cursor-answers/
+*.pdf

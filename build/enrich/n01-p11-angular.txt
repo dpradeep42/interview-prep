@@ -6,7 +6,7 @@ K: angular, angular basics, angular architecture, spa
 X: Angular is a complete front-end framework from Google for building single-page applications, written in TypeScript. Unlike React, which is a UI library, Angular gives you everything in one box: components, dependency injection, a router, forms, an HTTP client, and RxJS for asynchronous work, plus a CLI that generates code and builds the app.
 X: An Angular app is a tree of components. Each component has a TypeScript class with the logic, an HTML template, and its own styles. Business logic and API calls live in services, which Angular injects into components through its dependency injection system. Routes map URLs to components, and features are usually loaded lazily, so the browser only downloads what the user needs. Older apps group things into NgModules; newer apps use standalone components, which declare their own imports.
 X: The main building blocks, then, are components for the UI, services for logic and data, directives and pipes to extend templates, the router for navigation, and RxJS or signals for reactive data.
-X: In our IRT product, the older screens are built in Angular and the newer modules in React with TypeScript. Both are component-based: small reusable UI components that call the same .NET Web APIs. So I work in Angular when a feature touches those older screens, and in React for the new ones.
+X: In our IRT product, Angular is used in the legacy portal's sub-applications and our newer internal study builder, while new site modules are built in React with TypeScript. Both are component-based: small reusable UI components that call our .NET backends. So I work in Angular when a feature touches those older screens, and in React for the new ones.
 @p11-2
 S: ng
 D: B
@@ -162,7 +162,7 @@ K: httpclient, http interceptor, interceptors, auth token interceptor, error han
 X: HttpClient is Angular's service for calling HTTP APIs. You inject it into a service and call methods like get and post, typed with the response model, and they return observables. In a well-structured app, components don't call HttpClient directly; they call a service, like a shipment API service, which keeps URLs and mapping in one place.
 X: Interceptors sit in the middle of every request and response, like middleware in ASP.NET Core. They're perfect for cross-cutting concerns. An auth interceptor adds the access token to the Authorization header. A correlation interceptor adds a correlation id header, so a request can be traced through the backend logs. An error interceptor handles common errors in one place: on 401, it redirects to login or refreshes the token; on 403, it shows a permission message; and on validation errors, it passes the ProblemDetails through to the form. A loading interceptor can show a global spinner. Interceptors run in the order they're provided, and in modern Angular they're simple functions registered with provideHttpClient and withInterceptors.
 X: For testing, HttpTestingController lets unit tests check the exact request and return a fake response.
-X: In our IRT UI, the Angular interceptors and the React API client do the same jobs: token, correlation id and error mapping, so both parts of the UI behave identically against our .NET APIs.
+X: In our IRT UI, the Angular interceptors and the React axios interceptors do the same jobs: the Keycloak token, correlation id and error mapping, so both parts of the UI behave identically against our .NET APIs.
 @p11-19
 S: ng
 D: A
@@ -180,7 +180,7 @@ K: ngrx, state management angular, store, signal store, services state, redux an
 X: I choose the simplest option that fits how widely the state is shared and how complex it is.
 X: Local state stays in the component, as properties or signals, like whether a panel is open. Shared state for one feature lives in a service, using a BehaviorSubject or signals, exposed as read-only, with methods to change it. That covers most needs, like the currently selected study and site shared across a few screens. Server data, like lists from the API, can be cached in those services too, with care to refresh it.
 X: For large applications with complex, widely shared state, NgRx is the standard library. It follows the Redux pattern: a single store, actions that describe events, reducers that produce new state, selectors to read it efficiently, and effects for side effects like API calls. It's very predictable and has great dev tools, but it adds a lot of boilerplate, so I only use it where it pays off. The newer NgRx Signal Store is lighter and based on signals.
-X: Whatever the tool, the principles are the same: one source of truth, immutable updates, and keeping server state separate from UI state. That's the same thinking as Redux Toolkit and React Query in the React part of our IRT UI, which makes it easier for the team to work in both frameworks.
+X: Whatever the tool, the principles are the same: one source of truth, immutable updates, and keeping server state separate from UI state. That's the same thinking as the Redux Toolkit slices in the React part of our IRT UI, which makes it easier for the team to work in both frameworks.
 @p11-21
 S: ng
 D: A

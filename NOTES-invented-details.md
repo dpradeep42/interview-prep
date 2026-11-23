@@ -4,40 +4,31 @@
 
 These are assumed or invented so the answers hang together. Change them here and in the answers if your real project differs.
 
-**Front end: Angular to React**
-- The IRT web UI started on Angular and is moving to React with TypeScript, module by module (no big-bang rewrite, because re-validation in a GxP product is costly).
-- Today both run side by side: older screens in Angular, new modules in React + TypeScript. Both are component-based and call the same .NET Web APIs.
-- A thin web shell owns login, top navigation and routes; each module (Angular or React) is mounted under its own route. One SSO session.
-- One design system: shared design tokens (CSS variables) for colours, spacing and fonts; common components have one written behaviour spec, built in React first, Angular follows.
-- TypeScript types for both front ends are generated from the same OpenAPI documents.
-- Reasons for React: team and hiring skills, lightweight libraries (React Query, React Hook Form, Redux Toolkit), older Angular code on an older version with NgModules that needed redesign anyway.
-- Your part: typed API client (token, correlation id, ProblemDetails mapping), reusable React components (configurable data table, import error grid), short guidelines on typing, hooks and testing; you keep maintaining Angular modules (the ~40-link tabnabbing fix covered both).
-- Woven into: Tell me about yourself, Walk me through your resume, Explain IRT to a non-technical person, Your role, Architecture, Front-end work, Backend vs frontend split, Full-stack, Angular vs React, Why React over Angular, Production-ready API, Platform design, Technology choice.
-
-**IRT domain**
-- Client-facing modules: Screening, Randomisation, Re-randomisation, eConsent, DARM (Drug Accountability and Return Management); internal Admin console builds and configures studies.
-- Assumed module split: Screening and Randomisation screens are older Angular; eConsent and DARM screens are newer React modules.
-- Admin console flow: create, configure, validate (config checks + UAT), transfer to production (protected by the study-transfer guard), go live. The CSV site import is described as part of study setup in the Admin console.
-- Screening details entered (date of birth, gender, consent date) are typical examples, not confirmed for your product.
-- Backend: same as the existing architecture answer (ASP.NET Core microservices on AWS ECS, SQL Server on RDS, Kafka for events, RabbitMQ work queues, outbox, SFTP vendor integrations).
-- The one-sentence "what a study is" definition was added to answers that talk about studies (CSV import, study-transfer guard, randomisation design, IRT meaning, security, integrations, platform design and others).
+**Real platform facts (from your Cursor answers, Nov 2026)**
+Marked REAL below came from your Cursor analysis of the repositories; everything marked INVENTED is still made up. Confidential specifics (client, sponsor and vendor names, internal repo, product and table names, hostnames) were deliberately left out of the site; you can say them aloud if appropriate.
+- REAL: hybrid estate. Legacy .NET Framework 4.8 core (120+ projects: WCF-style services, transaction engine, supply and drug management, randomisation, kit tracking, randomisation list management, Quartz jobs, DevExpress). Newer domain APIs on .NET 6 to 10 with clean architecture, EF Core, MediatR, FluentValidation, Serilog to Splunk, JWT from Keycloak; they call the legacy engine through a transaction engine API. .NET 9 RabbitMQ workers plus older .NET 4.8 consumers.
+- REAL: front ends. Legacy site portal = ASP.NET MVC 4.8 with Angular 8/12 sub-apps (advanced subject view, material forecasting dashboard, temperature excursion management). Target = React 17 + TypeScript + Vite + MUI 5 + IQVIA's React design system + Redux Toolkit; a React shell app with feature modules (admin, material block, manual drug assignment, dose management, cohort management, commercial supplies, audit trail) as separate repos published as npm packages to the Azure DevOps feed; MVC links into the React app sharing the Keycloak SSO session; axios interceptors add the token; Vite env vars; idle timer. Modules migrate one at a time; DARM is the active one (accountability entry, return shipment). The newer web study builder is Angular 17.
+- REAL: "Admin console" = the internal study-build tooling: a classic WinForms desktop designer and a newer web study builder (.NET 4.8 API + Angular 17), plus a React admin app for users and permissions. Flow: create or clone, configure (protocol, countries, sites, depots, arms and cohorts, visits, dynamic forms and call flows, kit types, supply settings incl. expiry and do-not-ship rules, randomisation design and lists, roles, alert templates, reports, integrations), simulate, publish (per-study DB from the model schema, master data to the global master DB), transfer build to UAT to production with a diff review.
+- REAL: data. SQL Server, SSDT database projects, one database per study (model schema of roughly 560 tables), a global master DB, a Quartz scheduler DB, a staging DB, and an audit replication DB for inspections. Caching: memcached historically, Redis now; RabbitMQ study events refresh caches.
+- REAL: modules. Screening with dynamic forms and rule expressions; randomisation from pre-generated lists (central or site/stratum-blocked), permuted block and Pocock-Simon minimisation, cohort caps, role/field-level blinding; re-randomisation as a follow-up transaction (e.g. crossover) with reason; emergency unblinding with reason, optional e-signature, history, optional sponsor notification. eConsent is integration-based (external eConsent system; status via SFTP/API flows, Mule being migrated into a .NET data transfer API; gates screening and randomisation; re-consent and withdrawal emails). DARM journey and statuses as in the DARM answer. Dispensing incl. replacements, partial dispensing and dose management; resupply min/max and predictive; material block/quarantine, relabelling, manual drug assignment, temperature excursion management (API + Angular 8 UI), material forecasting (SSIS), reports (DevExpress, legacy BusinessObjects, audit trail extracts, a dashboard), 48 HTML email templates, mobile access via a Mule API layer.
+- REAL: integrations through MuleSoft (Mule 4, CloudHub), mostly SFTP + PGP file drops, being migrated to .NET data transfer APIs with plugin jobs; EDC, eCOA, depots and couriers, temperature devices, direct-to-patient, eConsent, sponsor data extracts. OpenTelemetry + Datadog in the newest data transfer APIs.
+- REAL: AlertWatchDog is a Quartz-scheduled alert engine in the legacy core: per-study alert definitions, then RabbitMQ, then notification consumers, then SMTP email.
+- REAL: compliance and errors. History/shadow tables, data audit log, change review, audit trail module, audit replication for inspections, reason for change; Part 11: unique accounts, password policy and lockout, security questions, idle timeout, e-signature by re-authentication, blinded/unblinded roles, automated Selenium/API test suites. Global exception middleware + ProblemDetails, RabbitMQ retry and dead-letter exchanges, a Quartz failed-jobs table, Mule error flows with email alerts, axios interceptors. Authorisation by role, module and action tables in a global security schema.
+- REAL: hosting. The CIRT platform itself is hosted on-premise (IIS). The site places your AWS (ECS, Lambda, DynamoDB, RDS) and Kafka work on IQVIA's newer services alongside the CIRT core; that scoping is an assumption, so adjust it to the services you can speak about.
+- INVENTED and kept, now consistent with the real facts: the idempotent re-randomisation fix; the configuration check service before study transfer; your DARM React screens and comparison tests; your eConsent integration reliability work; your AlertWatchDog work (moving sending to a .NET 9 consumer, retry and dead-letter handling, idempotency, new drug accountability alerts); the Azure Functions proof of concept of AlertWatchDog (Premium plan, Durable Functions escalation); the low-stock alert STAR (Saturday, early 2025, vendor moved its folder); the Grafana dashboards; "most developers joining were stronger in React".
+- Woven into (real facts): Tell me about yourself, Walk me through your resume, Explain IRT simply, Your role, Architecture, Angular vs React, the AWS architecture and ECS answers (now scoped), messaging (RabbitMQ in CIRT), identity (Keycloak), logging (Splunk), monitoring and alerting (AlertWatchDog), the Azure/AWS story and AlertWatchDog sections, and the React/Angular sections.
 
 **On-premise Azure DevOps and AWS (CIRT story)**
-- Real (from you): the product began as CIRT (Cenduit IRT); IQVIA acquired Cenduit; IQVIA standardises on AWS; you still use both on-premise Azure DevOps Server / TFS (variable groups, build and release pipelines) and AWS.
-- Invented phases: (1) before you joined, TFS upgraded to Azure DevOps Server (still on-premise) and TFVC moved to Git with YAML builds; (2) from about 2022, new .NET services built on AWS (ECS, RDS, Secrets Manager, Parameter Store, Terraform) but still built and released from the same on-premise Azure DevOps Server; (3) older workloads moving lowest-risk first: lower environments (FV, TechOps) before UAT and production.
-- Still on-premise today (invented specifics): the Azure DevOps Server with its repos, pipelines, variable groups and approval history (kept because it is validation evidence); parts of the validated core CIRT environments (multi-node installs on 4 to 6 nodes); some older WCF integrations.
-- Agents that deploy to AWS run on EC2 in your AWS account, registered with the on-premise server, and use IAM roles; on-premise agents install the core.
-- Releases have not moved to CodePipeline; you deploy to AWS from Azure DevOps.
+- Real (from you): the product began as CIRT (Cenduit IRT); IQVIA acquired Cenduit; IQVIA standardises on AWS; you use on-premise Azure DevOps Server / TFS (variable groups, build and release pipelines).
+- Real (from Cursor): CIRT itself is on-premise (IIS, SQL Server, RabbitMQ, Keycloak, Splunk); MuleSoft apps run on CloudHub.
+- Invented phases: (1) before you joined, TFS upgraded to Azure DevOps Server (still on-premise) and code moved to Git with YAML builds; (2) modernising CIRT in place (new .NET 6 to 10 APIs, React, Keycloak, Mule to .NET), built cloud-ready but still on-premise; in parallel, IQVIA's newer services outside the CIRT core run on AWS (ECS, Lambda, DynamoDB, RDS, Terraform), and you worked on some of them; (3) hosting moves only when there's a strong reason, because of re-validation.
+- Invented specifics: multi-node installs on 4 to 6 nodes per environment; agents that deploy to AWS run on EC2 and use IAM roles; releases have not moved to CodePipeline.
 - Why the MCP server: AI assistants (Copilot, Cursor) and ready-made integrations target cloud Azure DevOps Services and could not reach the on-premise server (older API versions, inside the company network); the server runs locally inside the network.
-- Migration STAR: the existing UAT "missing setting" incident (about 8% errors, rolled back in 15 minutes) is now explained as config drift between variable groups and Parameter Store; fixes: ValidateOnStart, a per-service configuration manifest, and a configuration parity check tool in the CIRT MCP server; no configuration-related release failures since.
-- Woven into: Tell me about yourself, Walk me through your resume, MCP server (why), Most challenging project, Azure DevOps pipeline and release flow, YAML vs classic, Explain your AWS architecture, Why AWS, Deploy to AWS from Azure DevOps, Multi-node deployments, How MCP interacts with Azure DevOps.
+- Migration STAR (invented): the UAT "missing setting" incident (about 8% errors, rolled back in 15 minutes) explained as config drift between variable groups and Parameter Store for an AWS service in the release; fixes: ValidateOnStart, a per-service configuration manifest, and a configuration parity check in the CIRT MCP server.
 
 **AWS experience and AlertWatchDog**
-- AlertWatchDog is not on the resume, the question list or earlier answers, so the whole story is invented (the resume does list Microsoft Azure: App Service, Azure OpenAI). Change anything that differs from the real tool.
-- Invented: a C# Azure Functions app (.NET isolated worker) on a Premium plan with network integration; a timer trigger every 5 minutes runs checks (scheduled job success windows, vendor SFTP file arrival, RabbitMQ queue depth and dead letters, health endpoints, failed Azure DevOps releases); findings go to a storage queue; a queue-triggered rules function (thresholds, dedupe, 30-minute suppression); a Durable Functions escalation (notify Teams and email, wait 15 minutes for an ack, then escalate to on-call); managed identity and Key Vault; it alerts on its own silence through Application Insights; read-only and outside the validated product, so no GxP re-validation; background failures detected in minutes instead of hours.
-- STAR (invented): early 2025, Saturday; a depot vendor's shipment-status file was missing for its 2-hour window because the vendor moved the folder during maintenance; fixed by changing configuration in about 2 hours, before Monday, with no stale data at sites; an empty-folder check was added afterwards.
-- AWS self-rating: about 7 out of 10 (around 8 for application workloads, 5 to 6 for the account-level platform); mentions you would happily take the AWS Developer Associate certification.
-- AlertWatchDog was woven into: Tell me about yourself, CloudWatch and Grafana, Monitoring microservices, What makes a good alert, CloudWatch alarms, the Azure-to-AWS mapping overview, and App Insights vs CloudWatch.
+- AlertWatchDog is REAL (from Cursor): a Quartz-scheduled alert engine in the legacy core. The earlier invented Azure Functions version was removed. Your contributions to it, and the Azure Functions proof of concept, are INVENTED (see above).
+- AWS self-rating (invented): about 7 out of 10 (around 8 for application workloads, 5 to 6 for the account-level platform); mentions you would happily take the AWS Developer Associate certification. The AWS work is scoped to IQVIA's newer services, as above.
 
 **AI: MCP server in .NET 8, RAG and applied AI**
 - Real (from you): the CIRT MCP server was built in .NET 8; RAG was built in Python, mainly to give GitHub Copilot and Cursor the context of the existing codebase and the team's coding standards (better fit, fewer hallucinations, the right context while developing); an end-user RAG story was requested.
@@ -105,6 +96,8 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - two graduate developers in 2024
 - **p1-73** What front-end security issues do you watch for?
   - about 40
+- **p2-1** ECS vs Lambda vs EC2: when do you use each?
+  - The newer IQVIA services I've worked on
 - **p2-17** How do you write a production Dockerfile for a .NET service?
   - Trivy
 - **p2-25** Describe your Azure DevOps pipeline and release flow.
@@ -166,6 +159,8 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 2
 - **p2-75** Design the deployment orchestration platform you built (as a system design question).
   - over stdio
+- **p2-76** How do you design for high availability?
+  - the newer IQVIA services on AWS
 - **p3-4** What is your exact role in the IRT team?
   - ~8 people
 - **p3-8** Tell me about the MCP server you built. Why, what, how and impact?
@@ -347,6 +342,8 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 3
   - 10-15%
   - 9 seconds to under 300 milliseconds
+- **p4-3** What technologies do you work with daily?
+  - the newer IQVIA services I work on run on AWS
 - **p4-4** What was the most challenging project you worked on?
   - about 30
 - **p4-6** Tell me about a time you improved an existing system.
@@ -366,6 +363,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 3
   - 5
 - **p4-66** What is ASP.NET Core?
+  - the newer IQVIA services I've worked on run in Docker containers on AWS ECS behind an Application Load Balancer
   - .NET 10 in early 2026
   - 10 to 15 percent
   - 3
@@ -396,6 +394,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - about 9 seconds to under 300 ms
   - about 400,000 to 2,000
 - **p5-38** What are microservices?
+  - IQVIA's newer services run on AWS ECS
   - about 5
 - **p5-47** What is distributed tracing?
   - 2024
@@ -415,11 +414,18 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 2024
   - 4
   - about an hour to a few minutes
+- **p5-58** How would you design a scalable microservices architecture?
+  - the newer IQVIA services I've worked on
 - **p5-61** What happens if Kafka is unavailable?
   - mid-2024
   - about 1,200
 - **p5-63** Explain your AWS architecture.
+  - the newer IQVIA services I've worked on run on AWS
   - about 5
+- **p5-65** ECS vs EKS?
+  - the newer IQVIA services I worked on
+- **p5-73** What is RDS, and RDS vs an EC2-hosted database?
+  - the newer IQVIA services on AWS
 - **p5-74** Redis vs database?
   - 1 ms
 - **p5-79** How do you troubleshoot an AWS production issue?
@@ -453,6 +459,10 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 2 to 3 days
 - **p6-29** How do you build Docker images in a pipeline?
   - Trivy
+- **p6-30** How do you deploy to AWS from Azure DevOps?
+  - IQVIA's newer services, which I've worked on,
+- **p6-33** What is Kafka, and what are broker, topic, partition, offset, producer and consumer?
+  - the AWS-side services I've worked on
 - **p6-45** What is acknowledgement, and publisher confirm vs consumer acknowledgement?
   - mid-2024
   - 40-minute
@@ -539,6 +549,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - about 1,200
 - **p7-58** What external integrations does your system have?
   - 2 to 3 days
+  - Kafka is used for event streaming in some newer AWS services
 - **p7-59** How do you ensure data integrity?
   - mid-2024
   - about 1,200
@@ -577,6 +588,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - 2 to 3 days
   - under an hour
 - **p8-59** Design an event-driven microservices system.
+  - with Kafka in some newer services
   - about 1,200
   - mid-2024
 - **p8-60** Design a scalable authentication system.
@@ -679,10 +691,13 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - about six weeks
   - 10 to 15 percent
   - Trivy
+- **p9-43** You wrote 'AWS ECS.' Explain your ECS architecture.
+  - Each of the newer .NET services I've worked on in AWS
 - **p9-44** You wrote 'Terraform and CloudFormation.' Why both?
   - Our core platform stacks were already in CloudFormation, owned by the platform team.
   - Newer, smaller pieces and tooling used Terraform modules.
 - **p9-45** You wrote 'Kubernetes.' What exactly did you deploy using Kubernetes?
+  - the production services I've worked on in AWS
   - some internal workloads, like the Node.js build-log summariser and the FastAPI vendor file validator, in a shared non-production cluster
   - about 40 seconds
   - 10 seconds
@@ -743,65 +758,54 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p11-23** What are AOT compilation and the Ivy engine in Angular?
   - We keep strictTemplates switched on in our Angular projects
 - **p12-8** How do you share API types between a .NET backend and a React TypeScript front end?
-  - Both front ends generate their types from the same OpenAPI documents
-- **p13-1** What front-end stack does your project use: Angular or React?
-  - both parts sit behind one login and one navigation shell
+  - We type the React API calls from the APIs' OpenAPI documents
 - **p13-2** Why did your team move from Angular to React?
-  - Most of the developers joining the team, and most of the existing team, were more experienced with React
-  - an older Angular version with NgModules
-- **p13-3** How do you run Angular and React side by side in one product?
-  - a thin web shell owns the login, the top navigation and the URL space, and each module, Angular or React, is mounted under its own route
-- **p13-4** How do you keep one design system across Angular and React?
-  - as CSS variables in a shared stylesheet package
-  - The React version is built first for new work, and the Angular version follows the same specification.
+  - most developers joining the team were stronger in React
 - **p13-5** Tell me about the Angular to React migration in your project.
-  - the Angular code was on an older version with NgModules
-  - A thin web shell handles login and navigation, and each module is mounted under its own route, either Angular or React
-  - a typed API client generated from our .NET OpenAPI documents
-  - about 40
-  - New modules have been delivered in React since then without any change to the backend APIs
+  - I worked on the accountability entry and return shipment screens
+  - Drug accountability is on track to retire its MVC screens after validation.
 - **p13-7** What does a study contain in IRT?
-  - All of this is configured by internal study teams in our Admin console
-- **p13-9** What is Screening in IRT, and how does it work end to end?
-  - like date of birth, gender and consent date
-  - an older Angular screen
+  - about 560
+- **p13-10** How does randomisation work in IRT end to end?
+  - I added idempotency on the API side, so a retried request returns the original result instead of randomising twice.
 - **p13-12** What is re-randomisation in IRT?
-  - A double re-randomisation is exactly the kind of bug the design must make impossible.
-- **p13-13** What is eConsent in IRT?
-  - In our product, the newer eConsent screens are built in React with TypeScript.
-- **p13-14** What is DARM (Drug Accountability and Return Management)?
-  - Our DARM screens are among the newer React modules.
+  - I worked on making the re-randomisation request idempotent, so a double click or a network retry can't re-randomise a subject twice.
+- **p13-22** How would you design the data model for studies in IRT?
+  - about 560
 - **p13-24** Tell me about a time you prevented a double randomisation or re-randomisation.
-  - In 2024, while we were adding re-randomisation support for a study with a second treatment stage, we found in testing that if a site user double-clicked, or the network retried a slow request, the patient could, in rare cases, be re-randomised twice.
+  - In 2024, while we were adding re-randomisation support for a study with a second treatment stage, we found in testing that if a site user double-clicked, or a slow request was retried, a subject could, in rare cases, be re-randomised twice.
+  - a unique constraint, so a subject can have only one assignment per randomisation stage
   - The concurrency tests that previously produced a duplicate now always produce exactly one assignment
   - The same pattern was then reused for the first randomisation and for kit dispensing.
 - **p13-25** Tell me about a time you improved study setup in the Admin console.
   - Configuration mistakes, like a visit that dispensed a kit type not assigned to any arm, or a site without a depot, were often only found late, in user acceptance testing, which meant rework and delayed go-lives.
-  - I was asked to help catch these problems earlier, inside the Admin console, before the study reached UAT.
+  - I was asked to help catch these problems earlier, before the study reached UAT.
+  - I designed a configuration check service in .NET that inspects a study's database as a whole before transfer.
+  - The results appear alongside the transfer diff, and errors must be resolved before transfer
   - Configuration defects found in UAT dropped noticeably
 - **p13-26** Tell me about a feature you built for drug accountability (DARM).
-  - Monitors reconciling kits at large sites were exporting data to spreadsheets and comparing counts by hand, which took hours per site and caused mistakes.
-  - I worked on a reconciliation view and API, so monitors could see, per site, every kit's status and any mismatch, and confirm reconciliation in the system.
-  - Reconciliation for a site went from hours of spreadsheet work to minutes in the system
-- **p13-27** Tell me about a time you worked on eConsent versioning and re-consent.
-  - Sites were tracking who needed to re-consent manually, and there was a risk of a patient having a visit without valid consent on the current version.
-  - I worked on the backend that tracks consent versions per patient and flags re-consent automatically.
-  - The site-facing screens are in React with TypeScript.
-  - Sites now get a clear list of patients to re-consent at their next visit
+  - I worked on the first migrated part: the accountability entry and return shipment screens, and the .NET APIs behind them.
+  - I wrote comparison test cases that ran the same scenarios against both
+  - The new screens passed validation with no behaviour differences, sites found them faster to use
+- **p13-27** Tell me about a time you worked on the eConsent integration and re-consent.
+  - We had occasional issues where a status file arrived late or out of order, so a subject's re-consent after a new consent version could briefly show the wrong status.
+  - I worked on the .NET side of the consent integration, to make status processing reliable and re-consent clear for sites.
+  - I made processing idempotent, using each record's source id, so a re-sent file never created duplicates, and ordered updates by the event time in the file, not the arrival time, so an older status could never overwrite a newer one.
+  - Out-of-order status problems stopped
 - **p14-1** Why do you use both on-premise Azure DevOps and AWS?
-  - which was later upgraded to Azure DevOps Server, still on-premise
+  - The newer IQVIA services I've worked on outside the CIRT core run there: Docker containers on ECS, Lambda, DynamoDB and RDS, with Terraform and CloudWatch
 - **p14-2** Tell me about the CIRT to IQVIA transition from on-premise to AWS.
-  - The first phase was about tooling, before I joined. Team Foundation Server was upgraded to Azure DevOps Server, still on-premise, and source code moved from TFVC to Git, with YAML build pipelines.
-  - The second phase, from around 2022, when I joined,
-  - The third phase is moving older workloads, lowest risk first: the lower environments, like FV and TechOps, before UAT and production
+  - The first phase was tooling, before I joined: Team Foundation Server was upgraded to Azure DevOps Server, still on-premise, and code moved to Git with YAML builds.
+  - I also upgraded several services to .NET 10.
+  - IQVIA's newer services outside the CIRT core are built directly on AWS, on ECS, Lambda and DynamoDB, and I've worked on some of those
 - **p14-3** What still runs on-premise today, and why?
-  - Its build agents also run on-premise, with some agents for AWS work running in our AWS account.
-  - parts of the validated core CIRT application environments
   - 4 to 6
-  - like older WCF services
+- **p14-4** How do you keep validated releases safe across two platforms?
+  - IQVIA's newer services, which some of our releases include,
 - **p14-5** Why did you build an MCP server for on-premise Azure DevOps?
   - older API versions
 - **p14-6** Tell me about a challenge during the Azure-to-AWS transition.
+  - some newer services in our releases
   - In 2024,
   - about 8 percent
   - 15 minutes
@@ -816,6 +820,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p14-12** Azure DevOps agent pools vs AWS CodeBuild and self-hosted runners?
   - In our setup, the agents that deploy to AWS run on EC2 inside our AWS account and are registered with our on-premise Azure DevOps Server.
 - **p14-15** Application Insights vs CloudWatch: how do Azure Monitor and AWS monitoring compare?
+  - my Azure Functions proof of concept for AlertWatchDog
   - 2024
   - 4
 - **p14-16** Azure Service Bus vs AWS SQS and SNS?
@@ -824,39 +829,55 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - the core AWS stacks, like networking, are in CloudFormation, owned by the platform team, and newer service infrastructure, like queues and alarms, is in Terraform.
 - **p14-18** Azure App Service and VMs vs AWS Elastic Beanstalk, ECS and EC2?
   - still runs on servers rather than containers
+- **p14-19** So you have much more experience on Azure, not AWS, right?
+  - alongside it, I've designed, built, deployed and supported IQVIA services that run on AWS
+  - Those .NET services run as Docker containers on ECS
+  - a proof of concept moving AlertWatchDog, our alert engine, to Azure Functions
 - **p14-20** How hands-on are you with AWS, and what have you done yourself?
+  - the IQVIA services I've worked on alongside it run on AWS
   - 8 to 12 seconds to under 300 milliseconds
 - **p14-21** How would you rate yourself on AWS?
   - 7 out of 10
+  - I build and support IQVIA services that run on AWS
   - I'd also happily take an AWS certification, like the Developer Associate, to formalise it.
 - **p14-22** What is AlertWatchDog?
-  - Every five minutes, a timer-triggered function runs a set of checks
-  - a Microsoft Teams channel and email
-  - It's read-only and sits outside the validated product, so we could build it without GxP re-validation.
-  - background failures were detected in minutes instead of hours
-- **p14-23** How did you build AlertWatchDog with Azure Functions?
-  - on the .NET isolated worker model
-  - every five minutes
-  - 30-minute
-  - 15 minutes
-  - It runs on a Premium plan with network integration
+  - about 48
+  - My work on it was mainly on the notification side: moving sending to a .NET 9 consumer, adding retry and dead-letter handling, and adding new alert types for drug accountability.
+- **p14-23** How does AlertWatchDog work, and what did you build in it?
+  - What I built was on the consumer side. The original consumer was a .NET Framework service. I moved sending into a .NET 9 worker, using our shared RabbitMQ library, with manual acknowledgements, a retry exchange with delays, and a dead-letter exchange after the last retry, so a temporary SMTP problem no longer loses an email.
+  - I made sending idempotent, keyed on the alert id, so a redelivered message doesn't send a duplicate email.
+  - I also added new alert types for drug accountability, like a return shipment waiting for depot confirmation
+  - The result was no lost alert emails during SMTP outages, and faster answers when a site asked why they did or didn't get an alert.
+- **p14-24** What are Azure Functions, and how do triggers and bindings work?
+  - a proof of concept of AlertWatchDog, our IRT alert engine, on Azure Functions
 - **p14-25** What are Durable Functions in Azure?
+  - my Azure Functions proof of concept of AlertWatchDog, our alert engine
   - 15 minutes
 - **p14-26** Azure Functions cold starts and hosting plans?
+  - my AlertWatchDog proof of concept
   - I chose the Premium plan
-- **p14-27** How would you build AlertWatchDog on AWS?
-  - every five minutes
+- **p14-28** Azure Functions vs AWS Lambda?
+  - I built a proof of concept of AlertWatchDog, our alert engine, on Azure Functions
 - **p14-29** Azure Functions timer trigger vs AWS EventBridge Scheduler?
+  - my Azure Functions proof of concept of AlertWatchDog
   - every five minutes
 - **p14-30** Azure Functions queue trigger vs AWS SQS triggering Lambda?
+  - my Azure Functions proof of concept of AlertWatchDog
   - five times by default
 - **p14-31** Durable Functions vs AWS Step Functions?
-  - 15 minutes
+  - my AlertWatchDog proof of concept
+  - a set time
+- **p14-32** Application Insights alerts vs CloudWatch alarms and SNS?
+  - My Azure Functions proof of concept of AlertWatchDog
 - **p14-33** Tell me about a time AlertWatchDog caught an issue early.
-  - In early 2025, on a Saturday morning, it raised an alert: the shipment-status file from one depot vendor hadn't arrived within its expected two-hour window.
+  - In early 2025, on a Saturday morning, it sent a low-stock alert for a busy site in a fast-enrolling study.
   - The vendor had moved their output to a new folder during maintenance, without telling us.
-  - It was fixed within about two hours, before Monday, and no site saw stale shipment data.
-  - I added a check for an unexpected empty folder
+  - It was fixed within about two hours, before Monday, the kits arrived on time, and no subject missed a dose.
+  - I added an alert for an unexpectedly empty vendor folder
+- **p14-34** How would you move AlertWatchDog to Azure Functions?
+  - I built a small proof of concept of the same pipeline on Azure Functions
+  - I used the Premium plan in the proof of concept, because it needs private network access to the on-premise SQL Server and pre-warmed instances avoid cold starts.
+  - We kept the production engine on Quartz for now, because moving a validated component means re-validation
 - **p15-5** Why .NET 8 for your MCP server, and not Python or TypeScript?
   - early 2025
   - Moving it to .NET 10, the current long-term support release, is planned, since we've already upgraded several services.
@@ -949,3 +970,19 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - the same approach we used in our Python RAG service and our CIRT MCP server tool descriptions
 - **p15-44** How do you get reliable structured output from an LLM?
   - In our release-notes helper, which drafts notes from Azure DevOps work items, moving from prompt-only JSON to schema-constrained output with Pydantic validation took parsing failures from a few percent to practically zero.
+- **p16-2** How do your new .NET APIs work with the legacy transaction engine?
+  - This is the pattern I followed when building the new endpoints for drug accountability and re-randomisation.
+- **p16-3** Why does your IRT use one database per study, and how do you manage schema changes?
+  - about 560
+- **p16-4** How do your integrations work, and how are you migrating them from MuleSoft to .NET?
+  - I worked on the SFTP side, including the pluggable SFTP component supporting three providers, and on migrating the eConsent status integration.
+- **p16-5** What integrations does your IRT have with external systems?
+  - I owned the pluggable SFTP integration component, with three providers behind one abstraction, and released the Rebex provider to production.
+- **p16-8** How is RabbitMQ used in your IRT platform?
+  - In mid-2024, about 1,200 updates were silently lost during a broker problem
+- **p16-11** How do logging and monitoring work in your IRT platform?
+  - I also built Grafana dashboards for the services I own.
+- **p16-13** How do reports work in your IRT?
+  - I tuned a slow shipment report from 8 to 12 seconds down to under 300 milliseconds with a covering index and a rewritten query.
+- **p16-17** How does supply forecasting work in your IRT?
+  - a newer version of the forecasting backend is being built as a .NET API

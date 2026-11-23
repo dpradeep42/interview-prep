@@ -131,7 +131,7 @@ K: ecs architecture, aws, fargate, alb, task definition
 Y: [Our core platform stacks were already in CloudFormation, owned by the platform team], so we extended them there. [Newer, smaller pieces and tooling used Terraform modules], for reuse and multi-provider support. I can read and change both, and for new work I'd standardise on one to avoid duplication.
 K: terraform, cloudformation, iac, why both
 +@p9-45
-Y: To be honest, our production IRT services run on ECS. I used Kubernetes for [some internal workloads, like the Node.js build-log summariser and the FastAPI vendor file validator in a shared non-production cluster], writing Deployments, Services, ConfigMaps and probes. So my production container experience is mainly ECS, but the concepts transfer directly.
+Y: To be honest, [the production AWS services I've worked on run on ECS]. I used Kubernetes for [some internal workloads, like the Node.js build-log summariser and the FastAPI vendor file validator in a shared non-production cluster], writing Deployments, Services, ConfigMaps and probes. So my production container experience is mainly ECS, but the concepts transfer directly.
 K: kubernetes experience, ecs, honest answer
 +@p9-46
 Y: We use Kafka for shipment status events, which several services consume, like supply, notifications and reporting. They need order per shipment and the ability to replay. We use RabbitMQ for task-style messages, like sending notifications and generating reports, where per-message acknowledgement, routing and retries matter. That's also where I root-caused the outage we fixed with publisher confirms.

@@ -27,7 +27,7 @@ X: React Query, now called TanStack Query, is a library for managing server stat
 X: Without it, every component needs its own useEffect, loading flag, error flag and caching logic, which leads to duplicated requests and stale data. With React Query, you call useQuery with a query key, like shipments and a study id, and a function that calls the API. It returns the data, plus isLoading and error states. It caches the result by that key, so other components asking for the same data reuse it, deduplicates requests that happen at the same time, retries failures, and refetches in the background when data becomes stale or the window regains focus.
 X: For changes, useMutation sends a POST or PUT, and on success I invalidate the related query keys, so lists refresh automatically. Optimistic updates are also possible, where the UI updates immediately and rolls back if the server fails.
 X: My rule is to keep server state in React Query and only UI state, like open panels or selected filters, in useState, context or Redux Toolkit. That removes a lot of state management code.
-X: In the newer React modules of our IRT UI, data fetching is wrapped in small typed hooks around React Query, calling the same .NET Web APIs as the older Angular screens.
+X: In the newer React modules of our IRT UI, data fetching is wrapped in small typed hooks around shared axios instances, which add the Keycloak token, with Redux Toolkit slices for shared state, calling our newer .NET 9 and 10 APIs.
 @p12-4
 S: rts
 D: I
@@ -76,7 +76,7 @@ K: openapi, swagger, generated types, api contract, typescript client generation
 X: The most reliable way is to make the API's OpenAPI definition the single source of truth, and generate TypeScript types from it, instead of writing them by hand.
 X: On the .NET side, ASP.NET Core produces an OpenAPI document from the controllers and DTOs, using Swashbuckle or the built-in OpenAPI support, with nullable and required annotations so the generated types are precise. On the front end, a tool like openapi-typescript or NSwag generates TypeScript types, and optionally a typed client, from that document. We run the generator as part of the build, so when a backend developer renames a field or adds a required property, the front-end build fails right away, instead of a user finding a broken screen.
 X: A few practices make it work well. The API is versioned, and breaking changes go into a new version, so older screens keep working. DTOs are designed for the API, not copied from database entities. Dates are sent as ISO strings, and enums as strings, so they're readable on both sides. And contract tests check the important responses.
-X: This mattered a lot in our project, because the same .NET Web APIs serve both the older Angular screens and the newer React modules. [Both front ends generate their types from the same OpenAPI documents], so they always agree with the backend and with each other.
+X: This mattered a lot in our project, because our React modules call the newer .NET 9 and 10 APIs, while the legacy portal still uses older endpoints. [We type the React API calls from the APIs' OpenAPI documents], so the front end always agrees with the backend.
 @p12-9
 S: rts
 D: I

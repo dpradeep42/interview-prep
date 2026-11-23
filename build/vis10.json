@@ -375,69 +375,61 @@
    "nodes": [
     {
      "id": "u",
-     "label": "Site / study users",
+     "label": "Site users",
+     "detail": "one Keycloak login",
      "kind": "terminal"
     },
     {
+     "id": "mvc",
+     "label": "Legacy MVC portal",
+     "detail": ".NET 4.8 + Angular 8/12 sub-apps"
+    },
+    {
      "id": "sh",
-     "label": "IRT web shell",
-     "detail": "one login, one menu"
+     "label": "React shell app",
+     "detail": "React 17 + TS + Vite + MUI"
     },
     {
-     "id": "ng",
-     "label": "Angular modules",
-     "detail": "older screens"
-    },
-    {
-     "id": "rx",
-     "label": "React + TS modules",
-     "detail": "new screens"
-    },
-    {
-     "id": "ds",
-     "label": "Shared design system",
-     "detail": "tokens, styles, patterns"
+     "id": "pk",
+     "label": "Feature npm packages",
+     "detail": "DARM, material block, dose mgmt..."
     },
     {
      "id": "api",
-     "label": ".NET Web APIs",
-     "detail": "one OpenAPI contract"
+     "label": ".NET 9/10 APIs",
+     "detail": "axios + Keycloak token"
     }
    ],
    "edges": [
     {
      "from": "u",
+     "to": "mvc"
+    },
+    {
+     "from": "u",
      "to": "sh"
     },
     {
-     "from": "sh",
-     "to": "ng",
-     "label": "route"
-    },
-    {
-     "from": "sh",
-     "to": "rx",
-     "label": "route"
-    },
-    {
-     "from": "ds",
-     "to": "ng",
+     "from": "mvc",
+     "to": "sh",
+     "label": "links, same SSO",
      "dashed": true
     },
     {
-     "from": "ds",
-     "to": "rx",
+     "from": "pk",
+     "to": "sh",
+     "label": "composed in"
+    },
+    {
+     "from": "sh",
+     "to": "api",
+     "label": "HTTPS + JWT"
+    },
+    {
+     "from": "mvc",
+     "to": "api",
+     "label": "legacy calls",
      "dashed": true
-    },
-    {
-     "from": "ng",
-     "to": "api",
-     "label": "HTTPS + token"
-    },
-    {
-     "from": "rx",
-     "to": "api",
-     "label": "HTTPS + token"
     }
    ]
   }
@@ -515,55 +507,64 @@
    "actors": [
     {
      "id": "s",
-     "label": "Site (IRT UI)"
+     "label": "Site (MVC / React)"
     },
     {
      "id": "api",
-     "label": "Randomisation API"
+     "label": ".NET IRT API"
+    },
+    {
+     "id": "te",
+     "label": "Transaction engine"
     },
     {
      "id": "db",
-     "label": "SQL Server"
+     "label": "Study database"
     },
     {
      "id": "q",
-     "label": "Events"
+     "label": "RabbitMQ / Mule"
     }
    ],
    "messages": [
     {
      "from": "s",
      "to": "api",
-     "label": "POST + idempotency key"
+     "label": "randomise + idempotency key"
     },
     {
      "from": "api",
-     "to": "db",
-     "label": "lock next slot"
+     "to": "te",
+     "label": "transaction engine API"
     },
     {
-     "note": "slot, kit, audit, outbox in one transaction",
+     "from": "te",
+     "to": "db",
+     "label": "stratum, cap, next slot"
+    },
+    {
+     "note": "assignment, kit, audit in one transaction",
      "over": "db"
     },
     {
-     "from": "db",
+     "from": "te",
      "to": "api",
-     "label": "slot + kit",
+     "label": "result",
      "reply": true
     },
     {
      "from": "api",
      "to": "s",
-     "label": "kit number only",
+     "label": "kit number only (blinded)",
      "reply": true
     },
     {
-     "from": "api",
+     "from": "te",
      "to": "q",
-     "label": "subject randomised"
+     "label": "post-randomisation hooks"
     },
     {
-     "note": "resupply, notifications",
+     "note": "EDC/eCOA sync, notifications",
      "over": "q"
     }
    ]
@@ -575,54 +576,49 @@
    "direction": "horizontal",
    "nodes": [
     {
-     "id": "rc",
-     "label": "Kit received",
-     "detail": "at site",
+     "id": "a",
+     "label": "Accountability entry",
+     "detail": "used / unused / damaged",
      "kind": "terminal"
     },
     {
-     "id": "dp",
-     "label": "Dispensed",
-     "detail": "to subject at a visit"
+     "id": "r",
+     "label": "Return shipment",
+     "detail": "air waybill to depot"
     },
     {
-     "id": "rt",
-     "label": "Returned",
-     "detail": "used / unused / lost"
+     "id": "d",
+     "label": "Depot confirms",
+     "detail": "receipt"
     },
     {
-     "id": "ac",
-     "label": "Reconciled",
-     "detail": "counts checked"
+     "id": "c",
+     "label": "Reconciliation",
+     "detail": "CRA review, discrepancies"
     },
     {
-     "id": "ds",
-     "label": "Destroyed or sent to depot",
+     "id": "x",
+     "label": "Destruction",
+     "detail": "location + final approval",
      "kind": "terminal"
     }
    ],
    "edges": [
     {
-     "from": "rc",
-     "to": "dp"
+     "from": "a",
+     "to": "r"
     },
     {
-     "from": "dp",
-     "to": "rt"
+     "from": "r",
+     "to": "d"
     },
     {
-     "from": "rt",
-     "to": "ac"
+     "from": "d",
+     "to": "c"
     },
     {
-     "from": "ac",
-     "to": "ds"
-    },
-    {
-     "from": "rc",
-     "to": "ac",
-     "label": "unused stock",
-     "dashed": true
+     "from": "c",
+     "to": "x"
     }
    ]
   }
@@ -634,24 +630,29 @@
    "nodes": [
     {
      "id": "cr",
-     "label": "Create study",
-     "detail": "in Admin console",
+     "label": "Create or clone",
+     "detail": "study designer / builder",
      "kind": "terminal"
     },
     {
      "id": "cf",
      "label": "Configure",
-     "detail": "arms, visits, kits, sites, roles"
+     "detail": "arms, visits, forms, kits, supply, roles"
     },
     {
-     "id": "vl",
+     "id": "sim",
      "label": "Validate",
-     "detail": "config checks + UAT"
+     "detail": "simulator + UAT"
+    },
+    {
+     "id": "pub",
+     "label": "Publish",
+     "detail": "study DB from model schema"
     },
     {
      "id": "tr",
      "label": "Transfer",
-     "detail": "to production, guarded"
+     "detail": "build → UAT → prod, diff review"
     },
     {
      "id": "gl",
@@ -667,16 +668,20 @@
     },
     {
      "from": "cf",
-     "to": "vl"
+     "to": "sim"
     },
     {
-     "from": "vl",
+     "from": "sim",
      "to": "cf",
      "label": "fix",
      "dashed": true
     },
     {
-     "from": "vl",
+     "from": "sim",
+     "to": "pub"
+    },
+    {
+     "from": "pub",
      "to": "tr"
     },
     {
@@ -693,56 +698,61 @@
    "nodes": [
     {
      "id": "ui",
-     "label": "Angular + React UI",
+     "label": "MVC + React UIs",
+     "detail": "Keycloak SSO",
      "kind": "terminal"
     },
     {
-     "id": "gw",
-     "label": "API Gateway",
-     "detail": "SSO token"
+     "id": "api",
+     "label": ".NET 6–10 APIs",
+     "detail": "MediatR, FluentValidation"
     },
     {
-     "id": "svc",
-     "label": ".NET services",
-     "detail": "screening, randomisation, supply, eConsent, DARM"
+     "id": "core",
+     "label": "Legacy .NET 4.8 core",
+     "detail": "transaction engine, SDM, Quartz"
     },
     {
      "id": "db",
      "label": "SQL Server",
-     "detail": "study data + audit"
+     "detail": "DB per study + global master"
     },
     {
      "id": "mq",
-     "label": "Kafka / RabbitMQ",
-     "detail": "events + work queues"
+     "label": "RabbitMQ",
+     "detail": "notifications, cache refresh"
     },
     {
-     "id": "ext",
-     "label": "Vendors",
-     "detail": "depots, couriers via SFTP"
+     "id": "mule",
+     "label": "MuleSoft → .NET",
+     "detail": "EDC, depots, eConsent via SFTP"
     }
    ],
    "edges": [
     {
      "from": "ui",
-     "to": "gw"
+     "to": "api"
     },
     {
-     "from": "gw",
-     "to": "svc"
+     "from": "api",
+     "to": "core",
+     "label": "transaction engine API"
     },
     {
-     "from": "svc",
+     "from": "api",
      "to": "db"
     },
     {
-     "from": "svc",
-     "to": "mq",
-     "label": "outbox"
+     "from": "core",
+     "to": "db"
     },
     {
-     "from": "mq",
-     "to": "ext"
+     "from": "core",
+     "to": "mq"
+    },
+    {
+     "from": "mule",
+     "to": "api"
     }
    ]
   }
@@ -755,33 +765,33 @@
     {
      "id": "c",
      "label": "CIRT at Cenduit",
-     "detail": "on-prem servers, TFS + TFVC",
+     "detail": "on-prem, TFS",
      "kind": "terminal"
     },
     {
      "id": "a",
      "label": "IQVIA acquisition",
-     "detail": "AWS becomes the standard"
+     "detail": "AWS is the cloud standard"
     },
     {
      "id": "g",
-     "label": "TFS to Azure DevOps Server",
-     "detail": "TFVC to Git, YAML builds"
+     "label": "TFS → Azure DevOps Server",
+     "detail": "Git, YAML builds"
     },
     {
-     "id": "n",
-     "label": "New services on AWS",
-     "detail": "ECS, Terraform, same pipelines"
+     "id": "m",
+     "label": "Modernise CIRT",
+     "detail": ".NET 8–10 APIs, React, Keycloak"
     },
     {
-     "id": "l",
-     "label": "Lower environments move",
-     "detail": "FV, TechOps first"
+     "id": "i",
+     "label": "Mule → .NET",
+     "detail": "integrations migrating"
     },
     {
      "id": "t",
-     "label": "Today: both",
-     "detail": "validated core on-prem, new on AWS",
+     "label": "Today",
+     "detail": "CIRT on-prem; newer IQVIA services on AWS",
      "kind": "terminal"
     }
    ],
@@ -796,14 +806,14 @@
     },
     {
      "from": "g",
-     "to": "n"
+     "to": "m"
     },
     {
-     "from": "n",
-     "to": "l"
+     "from": "m",
+     "to": "i"
     },
     {
-     "from": "l",
+     "from": "i",
      "to": "t"
     }
    ]
@@ -816,7 +826,7 @@
    "nodes": [
     {
      "id": "az",
-     "label": "Azure \u2192 AWS",
+     "label": "Azure → AWS",
      "detail": "each box: Azure name, AWS below",
      "kind": "terminal"
     },
@@ -921,58 +931,59 @@
    "direction": "horizontal",
    "nodes": [
     {
-     "id": "t",
-     "label": "Timer trigger",
-     "detail": "every 5 minutes",
+     "id": "q",
+     "label": "Quartz.NET job",
+     "detail": "scheduler DB",
      "kind": "terminal"
     },
     {
+     "id": "e",
+     "label": "Evaluate alert definitions",
+     "detail": "per study"
+    },
+    {
+     "id": "m",
+     "label": "RabbitMQ",
+     "detail": "retry + dead-letter"
+    },
+    {
      "id": "c",
-     "label": "Run checks",
-     "detail": "jobs, queues, DLQs, releases, health"
+     "label": "Notification consumer",
+     "detail": ".NET 9 worker"
     },
     {
-     "id": "q",
-     "label": "Storage queue",
-     "detail": "one message per finding"
+     "id": "t",
+     "label": "HTML template",
+     "detail": "notification API"
     },
     {
-     "id": "r",
-     "label": "Rules function",
-     "detail": "threshold, dedupe, suppress"
-    },
-    {
-     "id": "d",
-     "label": "Durable escalation",
-     "detail": "notify, wait for ack, escalate"
-    },
-    {
-     "id": "n",
-     "label": "Teams + email",
+     "id": "s",
+     "label": "SMTP email",
+     "detail": "role-based recipients",
      "kind": "terminal"
     }
    ],
    "edges": [
     {
-     "from": "t",
+     "from": "q",
+     "to": "e"
+    },
+    {
+     "from": "e",
+     "to": "m",
+     "label": "one message per alert"
+    },
+    {
+     "from": "m",
      "to": "c"
     },
     {
      "from": "c",
-     "to": "q"
+     "to": "t"
     },
     {
-     "from": "q",
-     "to": "r",
-     "label": "queue trigger"
-    },
-    {
-     "from": "r",
-     "to": "d"
-    },
-    {
-     "from": "d",
-     "to": "n"
+     "from": "t",
+     "to": "s"
     }
    ]
   }
@@ -984,74 +995,65 @@
    "nodes": [
     {
      "id": "az",
-     "label": "Azure \u2192 AWS",
-     "detail": "each box: Azure name, AWS below",
+     "label": "Today → AWS",
+     "detail": "each box: today, AWS below",
      "kind": "terminal"
     },
     {
-     "id": "f",
-     "label": "Azure Functions",
-     "detail": "AWS Lambda"
-    },
-    {
-     "id": "tt",
-     "label": "Timer trigger",
+     "id": "q",
+     "label": "Quartz.NET job",
      "detail": "EventBridge Scheduler"
     },
     {
-     "id": "qt",
-     "label": "Queue trigger",
-     "detail": "SQS event source for Lambda"
+     "id": "e",
+     "label": "Evaluation in core",
+     "detail": "Lambda or ECS task"
     },
     {
-     "id": "df",
-     "label": "Durable Functions",
-     "detail": "Step Functions"
+     "id": "m",
+     "label": "RabbitMQ",
+     "detail": "SQS (+ SNS)"
     },
     {
-     "id": "ai",
-     "label": "App Insights alerts",
-     "detail": "CloudWatch alarms + SNS"
+     "id": "c",
+     "label": "Notification consumer",
+     "detail": "queue-triggered Lambda"
     },
     {
-     "id": "kv",
-     "label": "Key Vault",
-     "detail": "Secrets Manager"
+     "id": "s",
+     "label": "SMTP",
+     "detail": "Amazon SES"
     },
     {
-     "id": "mi",
-     "label": "Managed identity",
-     "detail": "Lambda execution role"
+     "id": "l",
+     "label": "Serilog → Splunk",
+     "detail": "CloudWatch"
     }
    ],
    "edges": [
     {
      "from": "az",
-     "to": "f"
+     "to": "q"
     },
     {
      "from": "az",
-     "to": "tt"
+     "to": "e"
     },
     {
      "from": "az",
-     "to": "qt"
+     "to": "m"
     },
     {
      "from": "az",
-     "to": "df"
+     "to": "c"
     },
     {
      "from": "az",
-     "to": "ai"
+     "to": "s"
     },
     {
      "from": "az",
-     "to": "kv"
-    },
-    {
-     "from": "az",
-     "to": "mi"
+     "to": "l"
     }
    ]
   }
@@ -1317,6 +1319,211 @@
      "to": "r",
      "label": "feedback",
      "dashed": true
+    }
+   ]
+  }
+ },
+ "irtSystem": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "u",
+     "label": "Site + internal users",
+     "kind": "terminal"
+    },
+    {
+     "id": "ui",
+     "label": "MVC portal + React shell",
+     "detail": "study designer + builder"
+    },
+    {
+     "id": "kc",
+     "label": "Keycloak SSO"
+    },
+    {
+     "id": "api",
+     "label": ".NET 6–10 domain APIs"
+    },
+    {
+     "id": "core",
+     "label": "Legacy .NET 4.8 core",
+     "detail": "transaction engine, Quartz"
+    },
+    {
+     "id": "data",
+     "label": "SQL Server + Redis",
+     "detail": "DB per study, global master"
+    },
+    {
+     "id": "mq",
+     "label": "RabbitMQ",
+     "detail": "retry + dead-letter"
+    },
+    {
+     "id": "ext",
+     "label": "MuleSoft / .NET data transfer",
+     "detail": "EDC, eCOA, depots, eConsent"
+    }
+   ],
+   "edges": [
+    {
+     "from": "u",
+     "to": "ui"
+    },
+    {
+     "from": "ui",
+     "to": "kc",
+     "label": "sign in",
+     "dashed": true
+    },
+    {
+     "from": "ui",
+     "to": "api",
+     "label": "HTTPS + JWT"
+    },
+    {
+     "from": "api",
+     "to": "core"
+    },
+    {
+     "from": "api",
+     "to": "data"
+    },
+    {
+     "from": "core",
+     "to": "data"
+    },
+    {
+     "from": "core",
+     "to": "mq"
+    },
+    {
+     "from": "ext",
+     "to": "api",
+     "label": "SFTP + PGP files"
+    }
+   ]
+  }
+ },
+ "intFlow": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "v",
+     "label": "Vendor / EDC / depot",
+     "detail": "SFTP + PGP files",
+     "kind": "terminal"
+    },
+    {
+     "id": "m",
+     "label": "MuleSoft flows today",
+     "detail": "poll, decrypt, map"
+    },
+    {
+     "id": "n",
+     "label": ".NET data transfer API",
+     "detail": "plugin job per integration"
+    },
+    {
+     "id": "a",
+     "label": "IRT APIs",
+     "detail": "validate + apply"
+    },
+    {
+     "id": "d",
+     "label": "Study database",
+     "detail": "audited",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "v",
+     "to": "m"
+    },
+    {
+     "from": "v",
+     "to": "n",
+     "label": "migrating",
+     "dashed": true
+    },
+    {
+     "from": "m",
+     "to": "a"
+    },
+    {
+     "from": "n",
+     "to": "a"
+    },
+    {
+     "from": "a",
+     "to": "d"
+    }
+   ]
+  }
+ },
+ "rmqRetry": {
+  "type": "Diagram",
+  "props": {
+   "direction": "horizontal",
+   "nodes": [
+    {
+     "id": "p",
+     "label": "Publisher",
+     "detail": "publisher confirms",
+     "kind": "terminal"
+    },
+    {
+     "id": "x",
+     "label": "Exchange",
+     "detail": "shared messaging library"
+    },
+    {
+     "id": "c",
+     "label": "Consumer",
+     "detail": ".NET 9 worker, manual ack"
+    },
+    {
+     "id": "r",
+     "label": "Retry exchange",
+     "detail": "delay, limited attempts"
+    },
+    {
+     "id": "d",
+     "label": "Dead-letter exchange",
+     "detail": "alert + investigate",
+     "kind": "terminal"
+    }
+   ],
+   "edges": [
+    {
+     "from": "p",
+     "to": "x"
+    },
+    {
+     "from": "x",
+     "to": "c"
+    },
+    {
+     "from": "c",
+     "to": "r",
+     "label": "fails",
+     "dashed": true
+    },
+    {
+     "from": "r",
+     "to": "c",
+     "label": "re-deliver",
+     "dashed": true
+    },
+    {
+     "from": "c",
+     "to": "d",
+     "label": "last retry"
     }
    ]
   }

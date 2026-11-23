@@ -1,0 +1,225 @@
+@p16-1
+S: plat
+D: A
+T: Walk me through the overall architecture of your IRT platform.
+V: irtSystem
+K: overall architecture, system architecture, irt platform architecture, draw the architecture, high level design irt, hybrid estate
+X: Our IRT platform is IQVIA's interactive response technology, which runs randomisation and drug supply for clinical trials. It started as CIRT, Cenduit's IRT, before IQVIA acquired it, so today it's a hybrid estate of a legacy core and newer services. Each trial is set up as a study, with its own sites, arms, visits, kits and users.
+X: At the front, site users, like investigators and pharmacists, use the legacy ASP.NET MVC portal with embedded Angular sub-applications, and increasingly the new React and TypeScript shell app, whose features are separate npm packages. Internal teams build studies with a desktop study designer and a newer Angular study builder.
+X: In the middle, the legacy .NET Framework 4.8 core, with over 120 projects, holds the transaction engine for screening, randomisation and dispensing, the supply and drug management logic, kit tracking, and Quartz scheduled jobs, including AlertWatchDog, our alert engine. Around it are newer domain APIs on .NET 6 to 10, with clean architecture, MediatR and FluentValidation, which call the core through a transaction engine API.
+X: For data, SQL Server holds one database per study, a global master database, a scheduler database, and an audit replication database for inspections. RabbitMQ carries asynchronous work, like notifications, cache refreshes and integration events, and Redis caches study configuration.
+X: At the edges, MuleSoft flows connect EDC, eCOA, depots, couriers and eConsent systems, mostly through SFTP files with PGP, and we're migrating them into .NET data transfer APIs. Keycloak provides single sign-on for everything, and logs go to Splunk.
+@p16-2
+S: plat
+D: A
+T: How do your new .NET APIs work with the legacy transaction engine?
+K: transaction engine, legacy core, strangler fig, wrap legacy, .net framework and .net 8, transaction engine api, modernisation pattern
+X: Our IRT started as CIRT, Cenduit's IRT, before IQVIA acquired it, and its business heart is the transaction engine in a legacy .NET Framework 4.8 core. It runs subject transactions, like screening, randomisation, re-randomisation and dispensing, for each study, meaning one clinical trial set up in our system. Those rules are validated and complex, so rewriting them would be risky.
+X: So we use a strangler-style approach. New domain APIs are built on .NET 6 through 10, and for anything transactional, they don't reimplement the rules; they call the legacy engine through a transaction engine API, a thin service that exposes it over HTTP. The new API handles everything around it: authentication with Keycloak tokens, input validation with FluentValidation in the MediatR pipeline, idempotency, mapping to clean request and response models, and structured logging with Serilog.
+X: Where a feature is new, like dose management or material block, the logic lives fully in the new service, with EF Core against the study database. Over time, more logic moves into the new services, one capability at a time, each with its own validation evidence.
+X: There are rules that keep this safe. One owner per rule, so the same business logic never exists in both places. Backward-compatible contracts, because the legacy MVC portal and the new React app both depend on the same engine. And tests that compare behaviour, so a migrated path does exactly what the old one did.
+X: [This is the pattern I followed when building the new endpoints for drug accountability and re-randomisation.]
+@p16-3
+S: plat
+D: A
+T: Why does your IRT use one database per study, and how do you manage schema changes?
+K: database per study, multi-tenant database, tenant per database, schema changes many databases, ssdt, dacpac, model schema, global master database
+X: In our IRT, a study is one clinical trial set up in the system, and each study gets its own SQL Server database, provisioned from a common model schema of [about 560] tables. Shared data, like users, security roles and global settings, lives in a global master database.
+X: It's database-per-tenant, and it suits clinical trials well. Isolation: one sponsor's trial data can never mix with another's, which helps both security and audits. Lifecycle: when a study closes, its database can be archived on its own. Performance: a heavy study doesn't slow down others, and each database stays a manageable size. And restore: one study can be recovered without touching the rest.
+X: The cost is operational. Schema changes must reach hundreds of databases consistently. We manage the schema in SQL Server Data Tools database projects in source control, so every change is reviewed, and deployments compare the model to each study database and apply the changes. Changes are backward-compatible, like adding nullable columns first, so the application works during the rollout, and deployment verifies that every study database ends on the expected version. Data fixes go through reviewed scripts, never manual edits, because it's GxP.
+X: Applications pick the right database per request: the study is resolved from the request, and the connection is built for that study's database, with EF Core in the new APIs.
+X: If I designed it again, I'd keep database per study for regulated data, and invest early in automation and monitoring across all the databases.
+@p16-4
+S: plat
+D: A
+T: How do your integrations work, and how are you migrating them from MuleSoft to .NET?
+V: intFlow
+K: mulesoft, mule integration, mule to dotnet, integration migration, sftp pgp, data transfer api, plugin jobs, api-led connectivity, cloudhub
+X: Our IRT, which runs randomisation and drug supply for clinical trials, talks to many external systems: EDC systems that hold trial data, eCOA systems, depots and couriers that ship drug, temperature monitoring devices, direct-to-patient services, and external eConsent systems.
+X: Historically, these were built in MuleSoft, as Mule 4 applications running in MuleSoft's managed cloud, CloudHub. Most are file-based: a scheduled flow polls an SFTP folder, decrypts the file with PGP, transforms it and calls our IRT APIs or databases, or the reverse for outbound files, like sending randomisation results to an EDC after the post-randomisation hook fires. Errors go to Mule error flows with email alerts. There's also an API-led layer used by a mobile app.
+X: We're migrating these into .NET, into a data transfer API and library built around plugin jobs. Each integration becomes a plugin that implements a common interface: fetch the file over SFTP with our shared SFTP library, decrypt, validate, map, and apply through our APIs, with a shared framework handling scheduling, retries, idempotency, audit and logging. The newest of these use OpenTelemetry with Datadog for tracing.
+X: Why move? One stack and one team skill set, the same testing and release process as the rest of the platform, easier debugging, and lower licence cost. We move one integration at a time, running old and new in parallel and comparing outputs before switching.
+X: [I worked on the SFTP side, including the pluggable SFTP component supporting three providers, and on migrating the eConsent status integration.]
+@p16-5
+S: plat
+D: I
+T: What integrations does your IRT have with external systems?
+K: irt integrations, edc integration, ecoa, depot integration, courier, temperature devices, direct to patient, sponsor data extracts, vendor integrations
+X: Our IRT runs randomisation and drug supply for clinical trials, where each trial is set up as a study, so it sits at the centre of several other systems. Most integrations exchange files over SFTP, encrypted with PGP, through MuleSoft flows that we're migrating into .NET data transfer APIs, and a few use APIs.
+X: The main groups are these. EDC, electronic data capture, where sites record clinical data: we send subject and randomisation data, so both systems agree. eCOA, electronic patient-reported outcomes: subject status and visit information are synced. Depots and couriers: we send shipment requests, and receive dispatch, delivery and inventory files, which drive shipment tracking and resupply. Supply chain and ERP systems, for commercial supplies. Temperature monitoring devices on shipments: excursion data feeds our temperature excursion management module. Direct-to-patient services, for trials where drug is shipped to the patient's home. External eConsent systems: we receive consent status, which gates screening and randomisation. And data extracts: scheduled exports of study data to sponsors' SFTP servers, plus audit trail extracts.
+X: Each integration is configured per study by our integration operations team, so a study only uses the feeds it needs.
+X: The engineering challenges are the same everywhere: files arrive late, twice or out of order, so processing must be idempotent and ordered; failures must alert someone, not fail silently; and every exchange must be auditable, because it's GxP.
+X: [I owned the pluggable SFTP integration component, with three providers behind one abstraction, and released the Rebex provider to production.]
+@p16-6
+S: plat
+D: A
+T: How does single sign-on with Keycloak work across your legacy and new apps?
+K: keycloak, sso, single sign-on, oidc, openid connect, jwt bearer, owin cookie, oidc-client-ts, legacy and new authentication
+X: Our IRT has three kinds of clients: a legacy ASP.NET MVC portal on .NET Framework, a new React and TypeScript app, and newer .NET APIs, plus integration callers. Keycloak, an open-source identity provider, gives all of them one login using OpenID Connect.
+X: The React app signs in with an OIDC client library, using the authorisation code flow with PKCE. It receives an access token, and axios interceptors add it as a bearer token to every API call, refreshing it before expiry. The new .NET APIs validate those JWT bearer tokens: the signature against Keycloak's keys, the issuer, the audience and the expiry. The legacy MVC portal uses an OWIN cookie with an SSO bridge to the same Keycloak realm, so moving between the MVC portal and the React app doesn't need a second login. Integration callers, like MuleSoft flows, use tokens or API keys.
+X: Authentication is only half. Authorisation uses our own global security model: roles map to modules, and modules to actions, with site access per user, enforced in API attributes, and the UI trims menus to match.
+X: Part 11 adds requirements: a password policy and lockout, idle session timeout handled consistently with an idle timer in React, and re-authentication as an electronic signature on critical actions, like emergency unblinding.
+X: From my resume work: I fixed token-based logout so logged-out tokens stop working immediately, and an SSO cookie "header too long" failure, by keeping only a small session key in the cookie.
+@p16-7
+S: plat
+D: I
+T: How do you use Quartz.NET for scheduled jobs?
+K: quartz, quartz.net, scheduled jobs, job scheduler, cron jobs dotnet, background jobs, failed jobs, scheduler database
+X: Our IRT, which runs randomisation and drug supply for clinical trials, has many scheduled jobs: AlertWatchDog, our alert engine, report generation, imports and exports, and housekeeping. In the legacy core, they run on Quartz.NET.
+X: Quartz.NET is a job scheduling library. A job is a class with an Execute method, and a trigger says when it runs, either simple intervals or CRON expressions. We use the persistent job store in a dedicated SQL Server scheduler database, which matters for three reasons: schedules survive restarts, several servers can run in a cluster without running the same job twice, because Quartz takes database locks, and missed runs can be handled with misfire rules after downtime.
+X: Some practices we follow. Jobs are idempotent, so a re-run after a failure is safe. Long jobs work in batches and respect cancellation, so a deployment can stop them cleanly. Concurrent execution is disallowed for jobs that must not overlap. Failures are recorded in a custom failed-jobs table, with the error and the study, so support can see and re-run them. And every run logs a start, an end and counts, with a correlation id.
+X: For newer services, we use .NET hosted services and RabbitMQ consumers, and some file processing runs as SSIS packages, like the material forecasting load. If I were building fresh on AWS, EventBridge Scheduler would replace Quartz; on Azure, a Functions timer trigger.
+X: The key lesson: a scheduler must make failures visible, because a job that silently stops is worse than one that fails loudly.
+@p16-8
+S: plat
+D: A
+T: How is RabbitMQ used in your IRT platform?
+V: rmqRetry
+K: rabbitmq in irt, rabbitmq retry, dead letter exchange, retry exchange, rabbitmq consumers, messaging library, cache refresh events, publisher confirms
+X: In our IRT, which runs randomisation and drug supply for clinical trials, RabbitMQ carries the asynchronous work: notifications from AlertWatchDog, our alert engine, study configuration events that refresh caches, and integration events.
+X: Every service uses a shared messaging library, built on .NET Standard, so publishing and consuming work the same way everywhere, with the same connection handling, serialisation and message metadata, including a correlation id for tracing across services.
+X: Consumers run as .NET 9 worker services, with some older .NET Framework consumers still running. Reliability is built into the library. Consumers use manual acknowledgements, so a message is only removed after it's processed. If processing fails, the message goes to a retry exchange, which holds it for a delay and sends it back, a limited number of times. After the last retry, it goes to a dead-letter exchange, where it's kept for investigation, and it raises an alert. Consumers are idempotent, because RabbitMQ delivers at least once.
+X: On the publishing side, I learned the importance of publisher confirms the hard way. [In mid-2024, about 1,200 updates were silently lost during a broker problem], because publishes weren't confirmed. I root-caused it and added publisher confirms, so the publisher knows the broker has safely stored each message, and retries if not.
+X: Study configuration uses events too: when a study's configuration changes, an event tells the study consumer services to refresh their caches, so every server sees the new configuration quickly.
+@p16-9
+S: plat
+D: I
+T: How do you cache study configuration, and keep the cache fresh?
+K: caching study configuration, redis, memcached, cache invalidation, cache refresh, distributed cache, config cache
+X: In our IRT, a study is one clinical trial set up in the system, and its configuration, like sites, arms, visits, kit types, forms and permissions, is read on almost every request. It lives in the study's own SQL Server database, so reading it from the database every time would be slow and wasteful.
+X: So configuration is cached. Historically the platform used memcached, and it now uses Redis, which is faster to operate with and supports richer data types. Services use cache-aside: read from the cache, and on a miss, load from the study database and store it, keyed by study and configuration area.
+X: The hard part is invalidation. Study configuration changes rarely, but when it changes, for example after a protocol amendment is transferred to production, every server must see it quickly. We do that with events: the change publishes a study event on RabbitMQ, and the study consumer and cache refresh services clear and reload the affected keys. There's also a time-to-live as a safety net, so even a missed event can't leave stale configuration forever.
+X: Some rules matter in a regulated system. Blinded data is never cached in a way that could be returned to blinded users. Transactional data, like inventory or randomisation slots, is never served from cache, because it must be exact. And caches are warmed after deployments, so the first users don't pay the cost.
+X: The principle: cache what's read often and changes rarely, and make invalidation explicit and event-driven.
+@p16-10
+S: plat
+D: I
+T: How are your new IRT APIs structured: clean architecture, MediatR and FluentValidation?
+K: clean architecture irt, mediatr, fluentvalidation, cqrs handlers, pipeline behaviour, api structure, domain microservices
+X: Our newer IRT APIs, on .NET 6 through 10, follow the same structure, so any developer can move between them. Our IRT runs randomisation and drug supply for clinical trials, and these APIs sit around the legacy .NET Framework core.
+X: They use clean architecture with four layers. The domain layer has entities and business rules, with no dependencies. The application layer has use cases, written as MediatR commands and queries, each with one handler. The infrastructure layer has EF Core, the study database connections, the RabbitMQ messaging library, SFTP and calls to the legacy transaction engine. And the API layer has thin controllers that just send a command or query and return the result.
+X: MediatR pipeline behaviours handle cross-cutting concerns once, for every request. A validation behaviour runs FluentValidation validators before the handler, so bad input never reaches business logic, and returns clear field errors. Other behaviours handle logging with timings and a correlation id, and transactions for commands.
+X: Around that, there's global exception middleware that returns ProblemDetails responses, so clients get a consistent error format, JWT bearer authentication with Keycloak, authorisation attributes based on our role, module and action model, and Serilog with enrichers writing to files and Splunk.
+X: The benefits are testability, because handlers can be unit tested without HTTP, consistency across services, and cheap new features, because adding a use case means adding a command, a validator and a handler.
+@p16-11
+S: plat
+D: I
+T: How do logging and monitoring work in your IRT platform?
+K: logging irt, serilog splunk, log4net, opentelemetry datadog, correlation id, monitoring irt, observability
+X: Our IRT runs randomisation and drug supply for clinical trials, and because it's a hybrid of a legacy core and newer services, logging has three generations.
+X: The legacy .NET Framework core uses log4net and Enterprise Library logging. The newer .NET APIs and workers use Serilog, with enrichers that add the service, environment, study, user and correlation id to every event, writing to rolling files and to Splunk, which is where support and developers search across services. The newest data transfer APIs use OpenTelemetry, sending traces and metrics to Datadog, which gives end-to-end traces across service calls.
+X: Correlation is what ties it together. Every request gets a correlation id, which is passed in HTTP headers and in RabbitMQ message metadata, so one search in Splunk shows a transaction from the React screen, through the API and the queue, to the consumer that sent the email.
+X: For monitoring, we watch error rates and latency on the APIs, dead-letter queues on RabbitMQ, failed scheduled jobs in the Quartz failed-jobs table, and missing integration files, and AlertWatchDog sends business alerts, like low stock, by email. [I also built Grafana dashboards for the services I own.]
+X: Some rules matter in a regulated product: no patient-identifying data or secrets in logs, structured fields rather than free text, and log levels that keep production readable. Audit trails are separate from logs, stored in the database, because logs can be rotated but audit records must be permanent.
+@p16-12
+S: plat
+D: A
+T: How do you handle errors consistently across your IRT platform?
+K: error handling irt, problemdetails, global exception middleware, retry dead letter, quartz failed jobs, axios interceptor errors, mule error flows
+X: Our IRT is a hybrid of a legacy core and newer services, with APIs, queue consumers, scheduled jobs, integrations and two front ends, so we handle errors in each layer, with one goal: nothing fails silently, and users get a clear message.
+X: In the new .NET APIs, validation errors are caught early by FluentValidation in the MediatR pipeline and returned as field errors. Anything unexpected is caught by global exception middleware, logged with Serilog including the correlation id, and returned as a ProblemDetails response, with no stack traces exposed. Expected business failures, like a subject not eligible for randomisation, return specific, meaningful errors.
+X: In messaging, RabbitMQ consumers use retry exchanges with delays for temporary failures, then a dead-letter exchange, which raises an alert, and consumers are idempotent, so retries are safe.
+X: In scheduled jobs, Quartz job failures are written to a custom failed-jobs table, with the error and the study, so support can see and re-run them.
+X: In integrations, MuleSoft error flows send email alerts, and the new .NET data transfer jobs record failures per file, so a bad file can be fixed and re-processed.
+X: In the React app, axios interceptors handle errors centrally: an expired session redirects to login, and other errors show a friendly message using the ProblemDetails response, with an idle timer logging users out after inactivity.
+X: The shared principle is fail visibly, retry only what's safe to retry, and always keep a correlation id to trace it.
+@p16-13
+S: plat
+D: I
+T: How do reports work in your IRT?
+K: reports irt, devexpress reports, businessobjects, reporting, audit trail extract, dashboards, report generation
+X: Our IRT runs randomisation and drug supply for clinical trials, where each trial is set up as a study, and reports are essential for sites, sponsors and supply managers: enrolment, randomisation, inventory, shipments, drug accountability and audit trails.
+X: There are two generations. The current reports are DevExpress reports rendered on the server, by a report execution component and a reports API, so users can view them or download PDF and Excel versions. The older reports were built in SAP BusinessObjects, with a legacy reports API and a copy tool for moving report definitions, and they're being replaced. Report definitions are part of a study's configuration, so each study gets the reports it needs.
+X: There are also special cases. Audit trail extracts come from a dedicated audit trail module, with a React viewer in the new app, for sponsor and inspection requests. A dashboard gives project managers an overview across studies. Scheduled reports run as Quartz jobs and can be delivered by email or to a sponsor's SFTP server. And material forecasting dashboards are fed by SSIS jobs.
+X: Engineering rules matter here. Reports respect blinding, so blinded users never see treatment data. Heavy reports run against indexed, set-based queries, and long ones run in the background rather than blocking a web request. [I tuned a slow shipment report from 8 to 12 seconds down to under 300 milliseconds with a covering index and a rewritten query.]
+X: Every report generated is logged, so we know who saw which data.
+@p16-14
+S: plat
+D: I
+T: How does your IRT manage cold-chain excursions on shipments?
+K: tems, temperature excursion, cold chain, temperature monitoring, shipment temperature, excursion approval, quarantine kits
+X: Many study drugs must stay within a temperature range, like two to eight degrees, from the depot to the site. A temperature excursion is when a shipment goes outside that range, and the drug may no longer be safe to give. Our IRT, which runs drug supply for clinical trials, has a module to manage this.
+X: Shipments carry temperature monitoring devices. Their data arrives through an integration, so when a shipment is received, the system knows whether an excursion happened, for how long, and at what temperature. If there's an excursion, the affected kits are put into quarantine automatically, so they can't be dispensed. Then a reviewer, usually the sponsor or the supply team, assesses it against the drug's stability data and decides whether the kits are acceptable, which releases them, or not acceptable, which marks them damaged for return or destruction.
+X: Because the decision affects patient safety, it's a controlled action: only authorised roles can approve it, it requires an electronic signature by re-authentication, and the full history is audited.
+X: Technically, it's a separate API with an Angular 8 UI, one of the Angular sub-applications in our legacy portal, with its own kit statuses connected to inventory, so quarantined kits are excluded from dispensing and resupply calculations, and replacements can be triggered.
+X: It's a good example of IRT protecting patients: no subject should receive a kit that has been out of range unless it's explicitly approved.
+@p16-15
+S: plat
+D: I
+T: What are material block, quarantine and relabelling in your IRT?
+K: material block, quarantine, block lot, relabelling, relabeling, expiry extension, kit replacement
+X: These features protect subjects from receiving drug that shouldn't be used, in our IRT, which runs drug supply for clinical trials, where each trial is set up as a study.
+X: Material block lets the supply team block a whole lot, or batch, of drug, or specific kits, for example after a quality issue at manufacturing, or when a lot is close to expiry. Blocked kits immediately become unavailable for dispensing and shipping, at every depot and site, and resupply calculations treat them as missing, so replacements can be sent. When the issue is resolved, the block can be lifted. Quarantine is similar but usually automatic and temporary, like after a temperature excursion, until someone reviews it.
+X: Relabelling is about expiry. Drug is labelled with an expiry date, and when stability data supports a longer shelf life, kits can be relabelled with a new date instead of being destroyed. The system tracks which kits were relabelled, the new expiry, and where they are, and dispensing rules use the new date.
+X: Technically, material block is one of our newer features: a .NET API and a React module, published as an npm package into our new React shell app. Relabelling is in the legacy ASP.NET MVC portal.
+X: All of these are controlled actions, limited to authorised supply roles, with reasons and full audit history, and they respect blinding, because blocking a lot must never reveal which arm it belongs to.
+@p16-16
+S: plat
+D: I
+T: What is manual drug assignment in IRT?
+K: manual drug assignment, override kit assignment, manual dispensing, kit override, drug assignment
+X: Normally, our IRT assigns kits automatically at each dispensing visit: it picks kit numbers that match the subject's treatment arm, that are available at the site, and that won't expire before the next visit. Our IRT runs randomisation and drug supply for clinical trials, where each trial is set up as a study.
+X: Manual drug assignment is the controlled exception, where an authorised user overrides the automatic choice. Typical reasons are a kit that's physically damaged when the pharmacist opens it, a system or connectivity problem during a visit, or a situation the protocol allows, where a specific kit must be given.
+X: Because it touches treatment, it's heavily controlled. Only specific roles can use it. The system still enforces the important rules: the kit must belong to the subject's arm, be available at that site, and not be expired or blocked, so the override can never give the wrong treatment. A reason is mandatory, blinding is protected, so the user selects from valid kit numbers without seeing the arm, and every manual assignment is fully audited and can be reported to the sponsor.
+X: Technically, it's one of our newer modules: a dedicated .NET API and a React user interface, built as an npm package and embedded into our new React shell app.
+X: It shows a pattern I like in regulated systems: allow flexibility for real-world problems, but keep the safety rules in the backend, so the flexibility can't be misused.
+@p16-17
+S: plat
+D: I
+T: How does supply forecasting work in your IRT?
+K: supply forecasting, material forecasting, forecasting dashboard, demand forecast, ssis, supply planning, mfd
+X: Running out of drug at a site is one of the worst things that can happen in a clinical trial, but overstocking wastes very expensive drug. Our IRT, which runs drug supply for clinical trials, where each trial is set up as a study, helps with both through resupply and forecasting.
+X: Day to day, resupply is driven by each study's strategy: min and max levels per site, or predictive resupply, which looks at upcoming visits for enrolled subjects and the kits they'll need. When projected stock drops below the trigger, a shipment is generated from the right depot.
+X: Forecasting looks further ahead. Our material forecasting dashboard projects demand per study, country and depot over the coming weeks and months, from current inventory, enrolment rates, visit schedules and expiry dates. That helps supply managers decide when to manufacture, label and move drug between depots, and spot lots that will expire before they're used.
+X: Technically, the data is loaded by scheduled SSIS packages into a reporting structure, the dashboards are an Angular sub-application in the legacy portal, and [a newer version of the forecasting backend is being built as a .NET API].
+X: The design challenge is accuracy versus simplicity: forecasts use clear, explainable rules, so supply managers trust them, and every assumption, like the enrolment rate, is visible and adjustable.
+@p16-18
+S: plat
+D: A
+T: How do you promote study configuration between environments safely?
+K: study promotion, study transfer, transfer tool, diff review, build uat production, configuration promotion, study-transfer guard
+X: In our IRT, a study is one clinical trial set up in the system, and its configuration is built by our study build team in our Admin console tooling, in a build environment. It must reach UAT and production exactly as reviewed, because it's GxP.
+X: We promote it with a transfer tool, backed by a data transfer service. It compares the study's configuration in the source environment with the target, and shows a diff viewer of every change: added visits, changed supply settings, new sites, role changes. Reviewers approve that diff, and only then is it applied, so nobody changes production configuration by hand. The same path is used for the first go-live, from build to UAT to production, and for every protocol amendment later.
+X: Safety was the focus of my work here. I built the study-transfer safety guard, which blocks unsafe transfers. For example, it checks the target study's status, so a live study's data can't be overwritten by a configuration meant for a new study, checks that the user has the right role for that environment, and checks that the source and target really are the same study. If a check fails, the transfer stops with a clear reason.
+X: Every transfer is audited with who, when, what changed and the approval, which is exactly the evidence auditors ask for.
+X: The principle: configuration is treated like code, reviewed as a diff, promoted through environments, and guarded against the mistakes that matter most.
+@p16-19
+S: plat
+D: I
+T: How do you publish React feature modules as npm packages into a shell app?
+K: npm packages, micro frontends react, shell app, module federation alternative, private npm feed, azure artifacts npm, versioned modules
+X: In our IRT, the new React and TypeScript front end is a shell app, built with Vite, plus feature modules, like drug accountability, manual drug assignment, material block, dose management, cohort management and the audit trail viewer. Each module lives in its own repository and is published as a versioned npm package.
+X: Each module exports its routes, pages and components, and declares React, MUI, IQVIA's React design system and Redux Toolkit as peer dependencies, so the shell provides one copy of each. It's built as a library, with TypeScript type definitions, and published by its own pipeline to our private npm feed in Azure DevOps, with a semantic version.
+X: The shell installs the modules it needs at specific versions, registers their routes and Redux slices, and provides shared services: the Keycloak sign-in, the axios instances with interceptors, environment configuration from Vite variables, and the idle timer for session timeout. So each module focuses on its feature.
+X: The benefits are independent development and testing per team, clear ownership, and controlled upgrades, because the shell decides when to take a new module version, which fits validated releases. The trade-offs are version alignment of shared dependencies, and integration testing in the shell, which we handle with a shared dependency policy and end-to-end tests.
+X: Compared with runtime module federation, build-time packages are simpler and fully reproducible, which matters more to us than independent runtime deployment.
+@p16-20
+S: plat
+D: A
+T: How do you implement electronic signatures and session timeout for 21 CFR Part 11?
+K: electronic signature, e-signature, re-authentication, session timeout, idle logout, 21 cfr part 11 implementation, part 11 controls
+X: 21 CFR Part 11 is the FDA regulation for electronic records and signatures, and our IRT, which runs randomisation and drug supply for clinical trials, must comply because its records are part of the trial evidence.
+X: For electronic signatures, critical actions, like emergency unblinding, approving a temperature excursion or approving drug destruction, require re-authentication at the moment of the action. The user enters their credentials again, verified against Keycloak through a dedicated e-signature verification endpoint, and the signature is recorded with the action: who signed, when, and the meaning of the signature, like "approved". The signature is linked to that record and can't be copied or reused, and the whole flow is audited. Studies can configure which actions need it.
+X: For sessions, idle timeout logs users out after inactivity. In the React app, an idle timer warns the user before logout, then ends the session and redirects to sign-in, and the legacy portal does the same. That prevents someone using an unattended, logged-in screen.
+X: Around those, there are unique user accounts, a password policy with lockout after failed attempts, role-based access with blinded and unblinded separation, and an immutable audit trail with reasons for change on critical edits.
+X: The validation side matters as much as the code: each control is tested in our automated test suites, and the evidence is part of every release.
+@p16-21
+S: plat
+D: I
+T: How are production data corrections handled in a GxP system like yours?
+K: data correction, production data fix, gxp data change, support tools, sql script production, housekeeping, data fix process
+X: In a GxP system like our IRT, which runs randomisation and drug supply for clinical trials, production data can't just be edited, because every record is part of the trial evidence. But real situations need corrections, like a site entering the wrong visit date.
+X: First choice is always the application: if the system offers a correction transaction, like editing subject data with a reason for change, that's used, because it applies the business rules and writes the audit trail automatically.
+X: When that's not possible, there's a controlled data correction process. A support ticket documents the request, the reason and the sponsor's approval. A developer writes a script, which is peer reviewed and tested on a copy in a lower environment. Then it's run in production by an authorised person through our support tooling, which records exactly what ran, when and by whom, and the change is captured in the history and audit tables, with before and after values. The ticket is closed with that evidence.
+X: There are also routine support tools: housekeeping jobs for study databases, an account clean-up tool that deactivates unused accounts, and an integration with the ticketing system, so issues are tracked end to end.
+X: My rule as a developer: never touch production data without a ticket, a review and an audit trail, even when it seems small, because in a regulated product, an undocumented change is itself a finding.
+@p16-22
+S: plat
+D: I
+T: How does automated testing support validation in your IRT?
+K: test automation irt, selenium, api tests, validation testing, gxp testing, regression suite, playwright cucumber
+X: In our IRT, which runs randomisation and drug supply for clinical trials, testing isn't just about quality; it's evidence for validation, which regulators can inspect.
+X: We test at several levels. Unit tests with xUnit or NUnit and Moq cover business rules in the new .NET services, like randomisation edge cases, kit expiry rules and validation, and run on every build with SonarQube quality gates. API tests check the services end to end with real databases. UI automation, in our test automation suite with Selenium, and Playwright with Cucumber in newer areas, covers critical site journeys, like screening, randomising, dispensing, unblinding and drug accountability. Frontend unit tests use Jest.
+X: Automation matters especially because our IRT is configurable: each study behaves differently, so regression suites run against representative study configurations, and the simulator in our study-build tooling lets teams test a study's behaviour before go-live.
+X: For validation, tests are linked to requirements, results are recorded as evidence for each release, and releases move through FV, TechOps, UAT and production only with that evidence attached and approved.
+X: My part: I write unit and integration tests for my services, add Playwright scenarios for features I build, and as release integrator, I check the test evidence before a release moves on. The principle is that a requirement isn't done until there's a test proving it.

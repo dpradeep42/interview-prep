@@ -1,5 +1,5 @@
 +@p2-1
-Y: I use ECS with Fargate for long-running services like our APIs, because containers run all the time with no servers to manage. I use Lambda for short, event-driven tasks, like reacting to a file landing in S3, where I pay only when it runs. I use EC2 when I need full control of the machine, special software, or very steady heavy load. Our IRT services run on ECS.
+Y: I use ECS with Fargate for long-running services like our APIs, because containers run all the time with no servers to manage. I use Lambda for short, event-driven tasks, like reacting to a file landing in S3, where I pay only when it runs. I use EC2 when I need full control of the machine, special software, or very steady heavy load. [Those services run on ECS.]
 K: ecs, lambda, ec2, fargate, compute choice, aws
 +@p2-2
 Y: In ECS, a cluster is the logical group where things run. A task definition is like a blueprint: the image, CPU, memory, environment variables, secrets and IAM role. A task is one running copy of it, and a service keeps the desired number of tasks running, replaces failed ones and connects them to the load balancer. With Fargate, AWS runs the servers for us.
