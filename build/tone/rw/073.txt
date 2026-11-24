@@ -1,0 +1,173 @@
+@p17-864 | List comprehensions vs generator expressions vs loops: which do you use?
+So a list comprehension builds a list in one expression. Like squares equals x times x for x in numbers if x is positive, all inside square brackets. It's concise, readable for simple transformations, and usually faster than a loop with append, because the looping happens in optimised C code. Python also has dict comprehensions, like mapping each site's id to the site, and set comprehensions.
+
+A generator expression looks the same but with round brackets, like total equals sum of x times x for x in numbers. It doesn't build a list, it produces items one at a time, lazily. That uses almost no memory, which matters for big data, like processing millions of lines from a file, and it can stop early, for example with any or next.
+
+How I choose. If I need the result as a collection to reuse, index or loop over more than once, a list or dict comprehension.
+
+If I'm feeding the values into something that consumes them once, sum, max, any, join, or writing to a file, a generator expression.
+
+If the logic has several steps, side effects, nested conditions or error handling, just a normal for loop. Comprehensions with nested loops and conditions get hard to read really fast, and readability matters more than saving lines.
+
+Watch out, a generator can only be consumed once. Iterate it again and you get nothing, which surprises a lot of people. And don't use comprehensions just for side effects, like calling print, because you build a useless list.
+
+Coming from C#, list comprehensions are like LINQ with ToList, and generator expressions are like deferred LINQ queries.
+
+@p17-865 | What are dunder methods in Python, and what is __init__ vs __new__?
+Dunder, double-underscore, methods are special methods Python calls to implement built-in behaviour. Define them and your classes work naturally with the language.
+
+The common ones. Dunder init initialises a new object. Dunder repr gives an unambiguous developer representation for debugging and logs, while dunder str gives a friendly string for print. Dunder eq and dunder hash define equality and hashing, and they have to be consistent, just like Equals and GetHashCode in C#. Dunder lt and friends define ordering. Dunder len, getitem and iter make objects behave like collections. Dunder enter and exit make context managers. Dunder call makes an instance callable like a function. And arithmetic ones like dunder add give you operator overloading.
+
+New versus init. Dunder new actually creates and returns the new instance, and then dunder init initialises it, setting attributes. You rarely override new. You need it for immutable types, like subclassing tuple or str, where values have to be set at creation, or for patterns like singletons or caching instances.
+
+Practical advice, always define repr for domain classes, because good logs save a lot of time. And here's one that catches people out. If you define eq, Python sets hash to None unless you define it too, so your objects suddenly become unhashable.
+
+Honestly, dataclasses generate init, repr and eq for you, and with order or frozen set to true, comparison and hashing too. So I usually use dataclasses or Pydantic models for data-holding classes instead of writing dunder methods by hand.
+
+@p17-866 | @property vs @classmethod vs @staticmethod in Python: what is the difference?
+Okay, these decorators change how methods on a class behave.
+
+At-property turns a method into an attribute-like accessor. Order dot total looks like an attribute, but it runs a method that computes it. You can add a setter with the total dot setter decorator, for validation on assignment. That lets you start with a plain attribute and add logic later without changing callers, which is why Python doesn't need Java-style getters and setters. For expensive computed values that don't change, cached_property from functools computes once and caches it.
+
+At-classmethod gets the class itself, cls, as its first argument instead of an instance. The main use is alternative constructors, like a Shipment from-dict method or a Config from-env method, which return cls called with the values, so they work properly for subclasses too. They can also reach class-level state.
+
+At-staticmethod gets neither the instance nor the class. It's a plain function placed inside the class for organisation, like a helper to validate a kit code format. It can't touch instance or class data.
+
+Regular methods get the instance as self, for behaviour that depends on an object's state.
+
+How I decide, if it needs instance data, a regular method or property. If it creates instances or needs the class, a classmethod. If it needs neither, I ask whether it should just be a module-level function, which is often more Pythonic than a staticmethod anyway.
+
+From a C# angle, properties are C# properties, classmethods used as factories are static factory methods, and staticmethods are static helpers.
+
+@p17-867 | What are abstract base classes in Python, and how do you use them?
+Python's abc module lets you define abstract base classes. A class inherits from ABC and marks methods with the abstractmethod decorator. Then you can't create an instance of the base class, or of any subclass that hasn't implemented all the abstract methods. Python raises a TypeError at instantiation.
+
+For example, a Notifier base class with an abstract send method, and EmailNotifier and SmsNotifier subclasses implementing it. Code depends on Notifier, and the implementation's picked through config or dependency injection, like FastAPI's Depends.
+
+Why use them? They document and enforce a contract, so forgetting a method is caught early, when objects are created, not later when someone calls it. They can also hold shared implementation in non-abstract methods, like a template method pattern.
+
+There are alternatives. Protocols, from typing, define interfaces structurally. Any class with matching methods satisfies the protocol without inheriting from it. Type checkers like mypy check them, but not at runtime unless you mark them runtime_checkable. Good for decoupling, especially from third-party classes you can't change.
+
+And duck typing, Python's traditional approach. Just call the method and trust the object has it.
+
+My approach is ABCs when I own the hierarchy and want runtime enforcement plus shared code, Protocols when I want lightweight interfaces for type checking and testing, which fits a dependency-injection style, and duck typing for small scripts.
+
+Coming from C#, ABCs feel like abstract classes, and Protocols are the closest thing to interfaces, except implementing them is implicit.
+
+@p17-868 | How does memory management and garbage collection work in Python?
+Right, so CPython, the standard implementation, manages memory mainly with reference counting. Every object keeps a count of references to it. When a variable's reassigned, goes out of scope, or a container drops the object, the count goes down, and when it hits zero the object is freed immediately. So memory release is predictable, unlike .NET's generational GC where objects get collected later.
+
+Reference counting can't handle cycles though, two objects pointing at each other, or an object pointing at itself. So Python also has a cyclic garbage collector, in the gc module, which periodically looks for groups of objects only reachable from each other and frees them. It uses generations too, like .NET, checking young objects more often.
+
+Allocation, small objects use pymalloc, a specialised allocator with pools, so freed memory is often reused by Python instead of going back to the OS. That's why a Python process's memory might not shrink after a big job, even though the objects are freed. People think it's a leak, but it's not always.
+
+Real memory problems I've seen, holding references too long, like global caches, lists that keep growing, closures capturing big objects. Loading whole files or query results into memory instead of streaming. And C extensions that leak.
+
+Tools, tracemalloc to see where memory's allocated and compare snapshots, memory profilers like memray, and objgraph to find what's keeping objects alive.
+
+For long-running workers with memory growth, I fix the cause where I can, and as a safety net use worker recycling, like Gunicorn's max requests or Celery's max tasks per child.
+
+@p17-869 | How do you add middleware and global exception handlers in FastAPI?
+FastAPI is built on Starlette, so it has middleware and exception handlers pretty similar to ASP.NET Core.
+
+Middleware wraps every request. The simple way is a function decorated with app dot middleware for http, which gets the request and a call-next function. Code before call-next runs on the way in, code after runs on the way out. Typical uses, a correlation id read from a header or generated, stored in a context variable for logging and added to the response, request timing, and security headers. For performance and access to the raw ASGI flow, you can write pure ASGI middleware classes. Built-in ones include CORS, GZip and TrustedHost middleware. And order matters, middleware added later wraps the earlier ones.
+
+Exception handlers turn exceptions into HTTP responses. You register them with the app's exception handler decorator for some error type. So you'd map a custom NotFoundError to a 404 JSON response, a business rule error to 409 or 422, and a catch-all for unexpected exceptions to a 500 with a generic message and the correlation id, while logging the full details on the server. You can also override the handler for RequestValidationError to change the shape of validation errors, and HTTPException for consistency.
+
+What I aim for is one error format across services, like ProblemDetails with type, title, status, detail and an error code, so front ends and other services handle errors the same way whether they come from .NET or Python.
+
+Dependencies with yield are another spot for per-request setup and cleanup, like database sessions and transactions.
+
+@p17-870 | How do response models and status codes work in FastAPI?
+In FastAPI, the request side is defined by function parameters, and the response side by response models.
+
+Response models, you declare the return type annotation, like returning a ShipmentOut, or set response_model in the decorator. FastAPI then validates and serialises the returned data through that Pydantic model, and filters out anything not in it. That's actually important for security. If you return an ORM object with internal fields, a password hash or internal notes, only the fields declared in ShipmentOut get sent. It also documents the response in the OpenAPI schema automatically.
+
+Separate models for input and output. ShipmentCreate for requests, without the id and server-set fields, ShipmentOut for responses, and maybe a ShipmentUpdate with optional fields for patches. Same idea as DTOs in .NET.
+
+Status codes, set the default with status_code 201 for creation endpoints, raise HTTPException with a 404 and a detail for errors, or return a Response object to fully control headers and status. Document other responses with the responses parameter so OpenAPI shows them.
+
+Validation errors, when request data doesn't match the parameter types or models, FastAPI returns 422 Unprocessable Entity automatically, with details for each failing field. Lots of teams keep that, though some override the handler to return 400 and their own format.
+
+Options like response_model_exclude_none drop null fields from the output.
+
+And because the OpenAPI document's generated from these models, front ends can generate typed TypeScript clients, just like with our .NET APIs. That's what I like most about it, to be honest.
+
+@p17-871 | How do you test FastAPI endpoints?
+FastAPI makes API testing pretty straightforward with pytest.
+
+TestClient, from fastapi testclient, wraps the app so tests can post to slash shipments with a JSON payload and get a response, without starting a server. It runs the full stack, routing, validation, dependencies, middleware and exception handlers. For async tests, httpx's AsyncClient with an ASGI transport does the same, which is handy when tests need to await other async things, like database setup.
+
+Dependency overrides are the most useful feature. Set the app's dependency overrides so get-current-user returns a fake admin user, and tests can act as anyone without real tokens. Override get-db to point at a test database session, and swap external API clients for fakes. Clear the overrides after each test, usually in a fixture.
+
+Database, for meaningful tests use a real one, like Postgres in a container with Testcontainers, apply Alembic migrations once per session, and wrap each test in a transaction that gets rolled back. Tests stay isolated and fast.
+
+External HTTP calls, mock them with respx for httpx, or responses for requests, so the real client code runs against fake responses.
+
+Fixtures, pytest fixtures for the app, client, database session and test data builders keep tests short, and factories like factory_boy or polyfactory create valid objects.
+
+What I cover, happy paths, validation failures with 422, authorisation with 401 and 403, not-found cases, business rule errors, and the response shape against the response model.
+
+In CI they run on every pull request with coverage reports, like any other service in our pipeline.
+
+@p17-872 | How do field validators and model validators work in Pydantic v2?
+Yeah, Pydantic validates data based on type hints, and custom validators add business rules on top.
+
+I'd start with the built-in constraints. Field with things like greater than zero, a max length, or a pattern, constrained types, Literal for allowed values, EmailStr, and Annotated types let you express a lot of rules declaratively, no custom code.
+
+field_validator is a classmethod decorated with field_validator for, say, kit code. It gets the value and returns it, maybe transformed, or raises a ValueError with a message. Before mode runs before type conversion, useful for cleaning input like stripping spaces or parsing odd formats. The default after mode runs on the already-typed value.
+
+model_validator validates the whole model, for rules across fields, like end date must be after start date, or either email or phone has to be provided. After mode gets the constructed model instance, before mode gets the raw input data.
+
+Errors, all failures get collected into a ValidationError with the location and message of each, and FastAPI turns that into a 422 automatically.
+
+Other v2 features, computed_field for derived values in output, field_serializer for custom output formats, model_config with settings like extra forbid to reject unknown fields and frozen for immutability, and much better performance, since the core's written in Rust.
+
+Migrating from v1, validator becomes field_validator, root_validator becomes model_validator, Config becomes model_config, and dict becomes model_dump.
+
+My rule is validators stay focused on data shape and simple rules. Checks that need the database, like uniqueness, belong in the service layer.
+
+@p17-873 | How do you lint and format Python code with Ruff?
+Consistent formatting and linting make Python codebases a lot easier to review and maintain, especially with several developers.
+
+Ruff's pretty much become the standard tool for both. It's written in Rust, very fast, and replaces a bunch of older tools. It implements rules from flake8, isort, pyupgrade, pydocstyle, flake8-bugbear, bandit's security rules and more, plus a formatter compatible with Black. One tool, one config in pyproject dot toml.
+
+How I set it up. Pick rule sets under the lint select setting, like E and F for errors, I for import sorting, B for bugbear's common bug patterns, UP for modernising syntax, S for security checks, and add others gradually. Run ruff check with fix to apply safe fixes automatically, and ruff format to format the code.
+
+Type checking's separate. mypy or Pyright checks type hints, and that catches a different class of bugs.
+
+The workflow. Editor integration, so issues show while you type and formatting happens on save. Pre-commit hooks running Ruff, so badly formatted code never gets committed. And CI checks that fail the build on lint errors or unformatted code, so main stays clean.
+
+For an existing codebase with loads of issues, format everything in one commit, then turn on rule sets gradually, with per-file ignores or a baseline for legacy areas, so the team doesn't get overwhelmed.
+
+It's the Python version of what we do in .NET with analyzers, editorconfig and dotnet format, and on the front end with ESLint and Prettier. Automate style, so code reviews can focus on logic and design.
+
+@p17-874 | How do you avoid blocking the event loop in async Python?
+In async Python, like FastAPI with async def endpoints, all requests on a worker share one event loop thread. If anything blocks that thread, every other request on that worker waits. Same problem as blocking the event loop in Node, basically.
+
+Common blocking calls, requests dot get instead of an async HTTP client, synchronous database drivers like psycopg2 or pyodbc inside async endpoints, time dot sleep instead of asyncio sleep, reading big files synchronously, and CPU-heavy work like parsing large files, image processing or heavy calculations.
+
+Fixes. Use async libraries, httpx AsyncClient or aiohttp for HTTP, asyncpg or SQLAlchemy's async engine for databases, aiofiles for files, and asyncio sleep.
+
+If a library's only synchronous, run it in a thread, await asyncio to_thread with the function and its arguments, or loop run_in_executor. In FastAPI, just declaring the endpoint with plain def instead of async def makes FastAPI run it in a thread pool automatically. That's the easiest fix for sync code, and a lot of people don't realise it.
+
+For CPU-heavy work, threads don't help much because of the GIL, so use a ProcessPoolExecutor, or better, a background task queue like Celery, so the API stays responsive.
+
+Detecting it, turn on asyncio debug mode, which logs callbacks that take longer than a threshold, watch for latency rising across all endpoints whenever one slow operation runs, and profile with py-spy.
+
+The rule I follow, async def endpoints only call async I/O, and anything sync goes through to_thread or a sync endpoint. Mixing them carelessly is the most common cause of mysterious slowness in FastAPI services.
+
+@p17-875 | asyncio.gather vs TaskGroup: how do you run async tasks concurrently in Python?
+To run several async operations at once, like calling three APIs in parallel, Python gives you a few tools.
+
+asyncio gather, with a, b and c, runs the coroutines concurrently and returns their results in order. By default, if one raises, gather raises it, but the other tasks keep running in the background, which can leave work orphaned. With return_exceptions set to true, exceptions come back as results instead, so you can check each one.
+
+TaskGroup, from Python 3.11, is structured concurrency. You write async with asyncio TaskGroup as tg, and inside it create tasks with tg create_task for a and for b. When the block exits, all the tasks are finished. If any task fails, the others get cancelled and the errors are raised together as an ExceptionGroup, which you handle with except-star. No orphaned tasks, so that's my default for new code. It's a lot like Task WhenAll in C#, but with automatic cancellation.
+
+Timeouts, asyncio timeout of five seconds as an async context manager since 3.11, or wait_for for a single awaitable. Every external call should have one.
+
+Limiting concurrency, when you're processing hundreds of items, don't start them all at once. Use an asyncio Semaphore inside each task, or process in batches, to protect downstream services and connection pools.
+
+as_completed processes results as they finish, which is useful for showing progress.
+
+Common mistakes I've seen, calling a coroutine without awaiting it, which means it never runs, creating tasks with create_task and not keeping a reference, so they can get garbage collected, and mixing blocking calls into async code, which serialises everything.
