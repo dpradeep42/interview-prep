@@ -1,0 +1,107 @@
+@p2-40
+Okay, so the situation was this. In [mid-2024], our RabbitMQ broker hit its memory high watermark during a busy period. When that happens, RabbitMQ blocks publishing connections, and some connections got dropped. The problem was that our services published shipment status updates without publisher confirms, which is basically fire-and-forget. So for [about 40 minutes], [about 1,200] status updates just vanished, with no errors in our logs. We only found out when study teams reported shipments stuck in the wrong status.
+
+I was on support duty, so my job was to restore the missing data, and then make sure messages could never be lost silently again.
+
+What I did for recovery was replay the vendor status files for that window. That was safe because our consumers upsert, so reprocessing was idempotent. For the permanent fix, I enabled publisher confirms. The channel goes into confirm mode, and the broker acknowledges each message once it's safely stored, or sends a negative acknowledgement. In RabbitMQ.Client 7, BasicPublishAsync then waits for the confirm and throws on failure, so we can retry. Messages are persistent, queues are durable, and consumers use manual acks with dead-letter queues. We also tuned memory, and added alerts on memory, blocked connections, and the incoming update rate dropping to zero during business hours.
+
+In the end, the throughput cost was about [5 percent], and since then we haven't lost a message. I can show the code.
+
+@p2-41
+These are the three delivery guarantees a messaging system can give you, and each one is a balance between losing messages and duplicating them.
+
+At-most-once means a message is delivered once or not at all. There are no retries, so if something fails along the way, the message is gone. It's only okay for data where loss doesn't matter, like some metrics. At-least-once means the system keeps retrying until the message is acknowledged, so nothing is lost. But if a consumer processes a message and crashes before acknowledging, it'll get it again, so duplicates are possible. That's why consumers have to be idempotent. Exactly-once means no loss and no duplicates. It's only truly available within limits, like Kafka transactions for read-process-write inside Kafka. Across different systems, like a broker and a database, you get it "effectively" through at-least-once delivery plus idempotent processing.
+
+In practice, I'd say at-least-once with idempotent consumers is the standard choice for business data.
+
+That's how our platform works. Publishing uses confirms, so the broker definitely has the message, consumers acknowledge only after successful processing, and every message has an id, which consumers use to skip duplicates. I can explain how to make a consumer idempotent.
+
+@p2-42
+An idempotent consumer gives the same result whether it processes a message once or several times. With at-least-once delivery, duplicates will happen, so you really need this.
+
+There are a handful of techniques, and I often combine them. Every message carries a unique message id. The consumer keeps an inbox table of processed ids, and skips any message it's already seen. The key detail is that the insert into the inbox table and the business update happen in the same database transaction, so either both get saved or neither does. Then there's natural idempotency, designing operations so repeating them is harmless. "Set shipment status to Delivered" is idempotent, while "increment delivered count" isn't. Upserts instead of inserts, and unique constraints, help too. And for ordering problems, a version or timestamp check, so an older event can't overwrite newer data.
+
+Then the failure path. Retry transient errors with backoff, and after a few attempts move the message to a dead-letter queue, instead of retrying forever.
+
+Honestly, this property saved us in our RabbitMQ incident in [mid-2024]. Because consumers upsert, I could safely replay a whole window of vendor files without creating duplicates. I can explain that recovery.
+
+@p2-43
+A dead-letter queue, or DLQ, is a separate queue where messages go when they can't be processed successfully, so they don't block the main queue or get lost.
+
+Messages usually end up there because processing keeps failing after a set number of retries, say because of bad data or a bug, or the message is explicitly rejected, or it expires. Without a DLQ, a "poison message" that always fails can get retried forever, blocking other messages or burning resources. With a DLQ, it's moved aside, and normal processing carries on.
+
+In RabbitMQ, you configure a dead-letter exchange on the queue, and rejected or expired messages get routed there. With quorum queues, you can also set a delivery limit. In Kafka, there's no built-in DLQ, so the consumer publishes failed messages to a retry topic or a dead-letter topic itself. In AWS SQS, you configure a redrive policy with a maximum receive count.
+
+My rule is that a DLQ should never be silent. We alert on any message in a DLQ, someone inspects it, fixes the cause, and then replays the messages back to the main queue. Our consumers are idempotent, so replaying is safe. I can explain our replay process.
+
+@p2-44
+So the transactional outbox pattern solves a really common reliability problem in microservices, updating your database and publishing an event as one reliable step.
+
+The problem is that the database and the message broker can't share one transaction. If you save the change and then publish, the publish might fail after the commit, and other services never hear about it. If you publish first and then the save fails, other services react to something that never happened. Either way, systems disagree.
+
+The outbox pattern fixes this. In the same database transaction as the business change, you also insert a row into an outbox table, containing the event. Because it's one local transaction, either both get saved or neither does. Then a separate background relay reads unpublished rows from the outbox, publishes them to RabbitMQ or Kafka, and marks them as published. If publishing fails, it just retries later. That gives you at-least-once publishing, so consumers have to be idempotent. The relay can poll the table, or use change data capture with a tool like Debezium.
+
+In our shipment flow, the shipment update and its outbox event are saved together, and a background service publishes them with publisher confirms. If the broker's down, events just wait. I can show the table design.
+
+@p2-45
+Authentication and authorization are two separate questions, and they always happen in that order.
+
+Authentication answers "who are you?" It's proving identity, like logging in with single sign-on, or an API validating a token's signature, issuer, audience and expiry, and then knowing the user's identity and claims. Authorization answers "what are you allowed to do?" It's checking permissions, through roles, claims, policies, and resource-level checks, like "can this user see this specific study?"
+
+In ASP.NET Core, they're two middleware. UseAuthentication runs first and sets HttpContext.User, then UseAuthorization evaluates the Authorize attributes and policies on the endpoint. The status codes show the difference too, and people mix these up. 401 Unauthorized actually means not authenticated, no valid token. 403 Forbidden means authenticated, but not allowed.
+
+In our clinical system, authorization is the harder and more important part. A user with a valid login and the right role still mustn't see data from a study they're not assigned to. So beyond roles, we have resource-based checks on every request that touches study data. Missing that kind of check is the number one API risk in the OWASP list. I can show how our study access policy works.
+
+@p2-46
+A JWT, or JSON Web Token, is a compact, signed token that carries claims about a user. It's got three parts, separated by dots, each base64url-encoded.
+
+The header says which algorithm was used to sign it, like RS256, and which key. The payload has the claims, sub for the user id, roles or scopes, iss for who issued it, aud for which API it's meant for, exp for when it expires, and so on. The signature is created by the identity provider with its private key, over the header and payload.
+
+To validate it, the API checks the signature using the issuer's public key, usually downloaded from its JWKS endpoint, which proves the token wasn't tampered with and came from the trusted issuer. Then it checks the issuer and audience match what's expected, and that the token isn't expired or used before its not-before time, allowing a small clock skew. Only then are the claims trusted.
+
+Two things people forget. A JWT is signed, not encrypted, so anyone can read the payload, never put secrets or personal data in it. And because it's validated without a server call, it can't be revoked easily. That's why we keep access tokens short, [15 minutes], and added a denylist for logout. I can explain that fix.
+
+@p2-47
+The authorization code flow with PKCE is the recommended way for apps to log users in with OpenID Connect and get tokens to call APIs.
+
+The app starts by creating a random secret called the code verifier, and sends a hashed version of it, the code challenge, when it redirects the user to the identity provider's login page. The user logs in there, through single sign-on, and the app never sees their password. The identity provider then redirects back to the app with a short-lived, one-time authorization code. The app exchanges that code at the token endpoint, sending the original code verifier. The provider checks that the verifier matches the challenge, which proves the same app that started the login is finishing it, so a stolen code is useless. It then returns tokens, an access token, which is the OAuth part, for calling APIs, an ID token, which is the OpenID Connect part, saying who the user is, and often a refresh token.
+
+PKCE was originally for mobile and single-page apps that can't keep a client secret, but honestly it's now recommended for all clients, and it replaces the old implicit flow.
+
+Our web apps use this flow with Keycloak, our single sign-on identity provider, and our APIs validate the access tokens. I can explain how refresh tokens fit in.
+
+@p2-48
+Right, so the situation was, in [2024], a security review found that in one of our IRT modules, a user's token still worked for up to [60 minutes] after they clicked logout. That's because JWTs are validated statelessly. The API checks the signature and expiry, but never asks a server whether the user has logged out. In a clinical system, a stolen or shared token staying valid after logout just wasn't acceptable.
+
+I was asked to make logout effective immediately, without turning every API call into a heavy round trip to the identity provider.
+
+What I did was work in layers. I cut the access token lifetime to [15 minutes], so any leaked token has a small window. On logout, we revoke the refresh token on the server, clear the cookies, and end the identity provider session. And for the remaining minutes, I added a denylist. When a user logs out, the token's unique id, the jti claim, goes into ElastiCache Redis, with a time-to-live equal to the token's remaining lifetime, so the list stays tiny. In the JWT bearer OnTokenValidated event, every API checks that list. If Redis is unavailable, we fail closed. We also revoke on password change or role removal. I added a Playwright test that replays an old token after logout and expects a 401.
+
+In the end, old tokens are rejected immediately, the check adds only about [1 ms] per request, and the APIs stay pretty much stateless. I can show the event handler.
+
+@p2-49
+Okay, so the situation was, some users of our IRT system started getting a 400 error, "request header too long", and couldn't use the application at all. We had [about 30] support tickets, and the pattern was clear, it only hit users assigned to many studies.
+
+I picked up the investigation, and I wanted to fix it properly, not just for the current users.
+
+What I did was reproduce it with a test user in many groups. Browsers send all cookies for a domain on every request, and servers cap the total header size, about [16 KB] in our setup. Our SSO authentication cookie stored every role and group claim, so for these users it got split into several chunked cookies totalling [about 13 KB], and with other cookies on the domain, it went over the limit. Raising the server limit would only postpone the problem, and every request would still carry kilobytes of cookie. So I moved the authentication ticket to the server side with ITicketStore, backed by [Redis], so the cookie only holds a small session key. Study permissions are now loaded per request through a cached claims transformation. I also narrowed the cookie domain and path. It went through our regulated release process.
+
+In the end, the cookie dropped from [about 13 KB to under 1 KB], the tickets stopped, and users noticed nothing except that it worked. I can explain ITicketStore in more detail.
+
+@p2-50
+Reverse tabnabbing is a phishing attack that abuses links opening in a new tab.
+
+When a page opens a link with target equals blank, historically the new page got a reference back to the original page through window.opener. A malicious or compromised external site could then use window.opener.location to quietly redirect the original tab, say to a fake login page that looks exactly like ours. The user finishes reading the new tab, goes back to what they think is our app, sees "your session expired, please log in", and types their credentials into the attacker's page.
+
+The fix is to add rel equals noopener noreferrer to links with target blank. noopener removes the window.opener reference, and noreferrer also stops the referrer header from leaking our URL. For links opened in JavaScript, use window.open with the noopener feature. Modern browsers now treat target blank as noopener by default, but I think being explicit is still best practice, and security scanners flag it anyway. A Cross-Origin-Opener-Policy header adds another layer.
+
+I actually fixed this in IRT. A security scan flagged it, and I updated [about 40] external links, created a shared link component that sets rel by default, and added a lint rule so it can't come back. I can show the lint rule.
+
+@p2-51
+For APIs, the OWASP API Security Top 10 is the most relevant list, and honestly a handful of risks matter most in practice.
+
+Broken access control is the number one risk, especially broken object-level authorization, where a user changes an id in the URL and gets someone else's data. You prevent it by checking authorization for every specific resource, not just at the endpoint level. In our clinical system, that means checking study assignment on every request. Then broken authentication, weak token validation, long-lived tokens, or no logout. We validate tokens fully, keep them short, and have a denylist. Injection, which we prevent with parameterised queries through EF Core, and input validation. Excessive data exposure and mass assignment, handled with DTOs for input and output. Lack of rate limiting, handled with rate limiting middleware and gateway throttling. Security misconfiguration, like verbose errors, open CORS, default settings, handled with secure defaults and reviews. And vulnerable components, so dependency scanning and SonarQube in the pipeline.
+
+Plus logging and monitoring, so attacks actually get noticed, without logging sensitive data.
+
+These are part of our code review checklist for every new endpoint, which catches most problems before they ship. I can go deeper into access control.
