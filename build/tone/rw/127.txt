@@ -1,0 +1,125 @@
+@p6-64
+A good unit test is fast, independent, repeatable, and tests one behaviour, so that when it fails, you know straight away what broke.
+
+I structure every test with Arrange, Act, Assert. Arrange sets up the situation, create the object under test, its test doubles, and the input data. Act performs the one action being tested, usually a single method call. Assert checks the outcome, the return value, the changed state, or an important interaction, like a message being published. Keeping these three parts clearly separated makes tests easy to read.
+
+Some habits I follow. Name tests by behaviour, like CalculateDeliveryDate_WhenSiteIsClosedOnWeekend_ReturnsNextMonday, so the name explains what broke. Test one behaviour per test. Test behaviour, not implementation, so refactoring doesn't break tests for no reason. Don't share state between tests, so they can run in any order. Avoid logic like loops and if statements inside tests. Use realistic, meaningful test data. Cover the edge cases and error paths, not only the happy path. And make tests deterministic, control time with TimeProvider and avoid real network calls.
+
+For similar cases with different inputs, I use parameterised tests, like xUnit's Theory with InlineData, instead of copying the same test.
+
+In my team, honestly, I review test quality as carefully as production code, because tests are what let us change code with confidence.
+
+@p6-65
+For asynchronous code, the main rule is to make the test itself async and await the code under test. In xUnit or NUnit, the test method returns Task, and I await the call. I never use .Result or .Wait, because they can deadlock and hide the real exception inside an AggregateException. To set up async dependencies with Moq, I use ReturnsAsync, or ThrowsAsync to simulate failures.
+
+For exceptions, I check both that the right exception is thrown and that it has the right details. In xUnit, that's await Assert.ThrowsAsync of the exception type, passing the call, and then I check the message or properties. With FluentAssertions, it's await act dot Should dot ThrowAsync, with the type and message. I also test what happens around the exception, like that a failed save doesn't publish a message, or that a retry policy tries the right number of times before giving up.
+
+Some async-specific cases are worth testing. Cancellation, so pass a cancelled CancellationToken and check that the method stops with OperationCanceledException. Timeouts and delays, use the injected TimeProvider, with FakeTimeProvider in tests, so I can move time forward instantly instead of waiting. And background work, instead of sleeping, wait for a condition with a timeout.
+
+That basically keeps async tests fast, reliable and free of flakiness.
+
+@p6-66
+I test Kafka and RabbitMQ integrations at three levels, because each one catches different problems.
+
+Unit tests of the message handling logic come first. I keep the business logic separate from the messaging library, so a handler receives a deserialised message and does its work. I can test it with test doubles, including edge cases like duplicate messages, which should be idempotent, and invalid messages, which should go to the dead-letter path. I also test serialisation, so the message format matches the contract.
+
+Then integration tests with a real broker. With Testcontainers, the tests start real RabbitMQ or Kafka containers. Then I publish a message, and check that the consumer processes it and that the expected result happens, like a row in the database or a message published to the next queue. For waiting, I poll for the result with a timeout, never a fixed sleep. These tests catch real problems, wrong exchange or queue names, bindings, acknowledgements, retries, dead-lettering, and serialisation settings.
+
+And contract tests between producers and consumers, using a schema registry or a tool like Pact, so a producer can't change a message in a way that breaks consumers.
+
+After the kit-assignment notification problem caused by autoAck, I actually added an integration test that makes processing fail once, and checks that the message is retried, not lost.
+
+@p7-1
+React is a JavaScript library, created by Meta, for building user interfaces out of components. It focuses only on the view layer, and leaves things like routing and data fetching to other libraries you pick.
+
+A few core ideas. Components, so the UI is split into small, reusable pieces, like a button, a form or a shipment table, and each component is a function that returns what should be shown, written in JSX, which looks like HTML inside JavaScript. It's declarative. I describe what the UI should look like for the current data, and React takes care of updating the page when that data changes. I don't touch the DOM by hand. Then state and props. Props are inputs passed from a parent, and state is data a component owns and can change. When state changes, React re-renders the component. And efficient updates. React compares the new output with the previous one, a process called reconciliation, and only changes the parts of the real DOM that actually changed. Data flows one way, from parent to child, which makes behaviour easier to follow.
+
+Hooks, like useState and useEffect, let function components manage state and side effects.
+
+In our applications, we use React with TypeScript for newer screens, like the CSV import screen I built, where users upload a file and see a clear row-by-row error report.
+
+@p7-2
+Okay, so a component and an element are related, but they're different things.
+
+A component is a function, or in older code a class, that describes a piece of UI. It accepts inputs, called props, and returns what should be displayed. Like a ShipmentRow component that takes a shipment and returns a table row. It's like a blueprint, or a template, that can be reused many times.
+
+An element is the result of using a component. It's a plain, lightweight JavaScript object that describes what should appear on the screen, its type, like a div, or the ShipmentRow component, and its props. When I write JSX, like angle bracket ShipmentRow with a shipment, that creates an element. Elements are immutable, once created, you don't change them. When data changes, React creates new elements, compares them with the previous ones, and updates the real DOM only where something changed.
+
+So a simple way to say it, a component is the recipe, and an element is a description of one dish made from that recipe, at one moment in time. Elements aren't the actual DOM nodes either, they're descriptions that React uses to create and update the DOM.
+
+This also explains why we never call components directly as functions in JSX code. We create elements, and React decides when to call the component.
+
+@p7-3
+In React, components can be written as classes or as functions, and today functional components with hooks are pretty much the standard.
+
+Class components extend React.Component. They have a render method that returns the UI, state stored in this.state and updated with this.setState, and lifecycle methods for side effects, like componentDidMount when the component first appears, componentDidUpdate after updates, and componentWillUnmount for cleanup. The downsides were more boilerplate, confusion around the this keyword and binding, and related logic being split across different lifecycle methods.
+
+Functional components are plain functions that take props and return JSX. Since hooks came in with React 16.8, they can do everything classes can. useState manages state, useEffect handles side effects, with the cleanup function replacing componentWillUnmount, and other hooks like useContext, useMemo and useRef cover the rest. They're shorter and easier to read and test. Most importantly, custom hooks let you reuse stateful logic between components, like a useShipments hook that fetches data with loading and error states, which was hard to do with classes.
+
+The only thing that still needs a class is an error boundary, though libraries provide function-friendly wrappers.
+
+In our code, all new components are functional with hooks, and we convert older class components when we work on them.
+
+@p7-4
+Props and state are the two kinds of data that control what a React component shows.
+
+Props, short for properties, are inputs passed into a component from its parent, like arguments to a function. Say a ShipmentRow receives a shipment object as a prop. Props are read-only inside the component, the component must never change them. If the parent passes new props, the component re-renders with them.
+
+State is data that a component owns and manages itself, and which can change over time, usually because of user actions or data loading. Like whether a dropdown is open, the text in a search box, or the list of shipments after an API call. In a functional component, I create state with useState, which gives me the current value and a setter function. Calling the setter tells React the state changed, and React re-renders the component.
+
+So basically, props come from outside and are read-only, state lives inside and is changed by the component itself. Props flow down from parent to child. When a child needs to change something, the parent passes down a callback function as a prop, and the child calls it. That's how data flows one way, which keeps behaviour predictable.
+
+A practical rule is to keep state in the closest common parent of the components that need it, which is called lifting state up.
+
+@p7-5
+The dependency array is the second argument to hooks like useEffect, useMemo and useCallback. It tells React when to rerun the effect, or recalculate the value, so only when one of the listed values has changed since the last render.
+
+For useEffect, you've got three cases. With no array at all, the effect runs after every render, which is rarely what you want. With an array of values, like userId, the effect runs after the first render and then again whenever userId changes. That's the normal case, like fetching a user's data whenever the selected user changes. With an empty array, the effect runs only once, after the component first mounts, because there's nothing that can change. That's used for one-time setup, like subscribing to an event. If the effect returns a cleanup function, React runs it before the effect runs again, and when the component unmounts. That's where you unsubscribe, or cancel a request.
+
+The important rule is that the array has to include every value from the component that the effect uses, like props, state, and functions. If you leave one out, the effect keeps using an old value, which is called a stale closure, and causes subtle bugs. People miss this a lot. The ESLint rule for exhaustive dependencies catches it, and we keep it switched on.
+
+Also, in development with Strict Mode, React runs effects twice on purpose, to help find missing cleanups.
+
+@p7-6
+useMemo and useCallback are both React hooks for avoiding unnecessary work between renders, by remembering something until its dependencies change.
+
+useMemo remembers the result of a calculation. You give it a function and a dependency array, and it only recalculates when a dependency changes. Like filtering and sorting a large list of shipments, useMemo means that work only happens when the list or the filter changes, not on every render.
+
+useCallback remembers a function itself. Normally, every render creates a new function object, even if the code is the same. That matters when the function is passed as a prop to a child component wrapped in React.memo, or used in another hook's dependency array, because a new function each time would make the child re-render, or the effect rerun, every time. useCallback returns the same function instance until its dependencies change.
+
+So the difference is, useMemo caches a value, useCallback caches a function. In fact, useCallback of a function is the same as useMemo returning that function.
+
+Honestly, I don't use them everywhere, because they have their own cost and make code harder to read. I use them when there's a real reason, an expensive calculation, a memoised child component, or a value used as a dependency. And the new React Compiler can apply this memoisation automatically, which reduces the need to write them by hand.
+
+@p7-7
+useRef is a React hook that gives you a mutable object with a current property, which stays the same for the whole life of the component. The big difference from state is that changing ref.current doesn't cause a re-render.
+
+It has two main uses. Accessing a DOM element directly is the common one. You create a ref, attach it to an element with the ref attribute, and then ref.current points to that DOM node. That's useful for things React doesn't handle declaratively, like focusing an input when a dialog opens, scrolling to an element, measuring its size, or plugging in a non-React library, like a chart.
+
+The other is keeping a value between renders without displaying it. Like storing a timer id so you can clear it later, an AbortController for cancelling a request, the previous value of a prop for comparison, or a flag saying whether a request is still current. If that value were in state, every change would re-render the component for nothing.
+
+So my rule is, if changing a value should update what's on screen, use state, and if it's just something the component needs to remember behind the scenes, use a ref.
+
+One caution, you shouldn't read or write ref.current during rendering, only in effects and event handlers, because rendering should stay predictable.
+
+@p7-8
+The Context API is React's built-in way to share data with many components without passing props down through every level, which is called prop drilling.
+
+You create a context, wrap part of the component tree in its Provider with a value, and any component inside can read that value with the useContext hook. It's ideal for data that lots of components need and that changes rarely, the current user, the theme, the language, or feature flags. One thing people forget is that when the provider's value changes, every component that uses that context re-renders, so it's not great for data that changes very often.
+
+Redux is a separate library for managing global application state. All the shared state lives in one store, and it's changed only by dispatching actions, which reducers handle in a predictable way. Modern Redux Toolkit removes most of the old boilerplate, and RTK Query handles API data and caching. Redux gives you very good dev tools, like seeing every action and the state at each step, middleware for side effects, and fine-grained subscriptions, so components only re-render when the part they use changes.
+
+So I'd use Context for simple, low-frequency shared values, and Redux, or a lighter library like Zustand, for complex, frequently changing shared state. And for server data, like API results, I prefer a dedicated tool like React Query or RTK Query rather than putting it in global state myself.
+
+@p7-9
+For API calls in React, I want three things handled consistently, loading, errors, and avoiding race conditions or outdated data.
+
+What I'd go for is a server-state library like TanStack Query, also called React Query, or RTK Query. You give it a key and a fetch function, and it returns the data along with isLoading and error states. It also handles caching, so the same data isn't fetched twice, retries, refreshing stale data, and cancelling outdated requests. For changes, it has mutations, which can refresh related data afterwards.
+
+Without a library, I'd write a custom hook, like useShipments, using useEffect and useState for data, loading and error. It's important to cancel the request with an AbortController in the effect's cleanup, so if the user changes the filter quickly, an old response doesn't overwrite a newer one.
+
+The API calls themselves go through one shared API client, using fetch or axios, which adds the auth token, handles common errors like 401 by redirecting to login, and reads our problem details responses.
+
+On screen, I show a loading skeleton or spinner, a clear error message with a retry button, and an empty state when there's no data. An error boundary catches unexpected rendering errors.
+
+In our CSV import screen, that meant clear progress while the file was being validated, and a helpful row-by-row error report when it failed.
