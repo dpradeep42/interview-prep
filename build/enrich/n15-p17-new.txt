@@ -10124,164 +10124,156 @@ S: dkx
 D: A
 T: EKS vs AKS: what are the main differences?
 K: eks vs aks, aws eks vs azure aks, managed kubernetes comparison, eks aks differences, kubernetes on aws vs azure
-X: Both are managed Kubernetes services, so the Kubernetes API and workloads are the same. The differences are in integration and operations.
-X: Control plane cost: AKS offers a free tier for the control plane, with a paid Standard tier for an uptime SLA; EKS charges per cluster per hour, and more for versions in extended support.
-X: Identity: AKS integrates with Entra ID for user authentication and uses workload identity for pods to access Azure resources; EKS uses IAM, with access entries for users and Pod Identity or IRSA for pods.
-X: Networking: AKS offers Azure CNI options, including overlay mode, and kubenet is being retired; EKS uses the VPC CNI, where pods get VPC IP addresses by default, which needs IP planning, with prefix delegation or custom networking to conserve addresses.
-X: Node management: AKS has node pools with automatic upgrades and node auto-provisioning based on Karpenter; EKS has managed node groups, Fargate profiles for serverless pods, Karpenter, and EKS Auto Mode, which manages nodes, networking and storage components for you.
-X: Upgrades: both support in-place control plane upgrades and node pool upgrades; AKS has auto-upgrade channels, and EKS has extended support for older versions at extra cost.
-X: Ecosystem: AKS integrates with Azure Monitor, Azure Policy, Key Vault and Defender; EKS with CloudWatch, IAM, Secrets Manager and GuardDuty.
-X: My view: choose the one matching the cloud where the rest of your platform lives. Keep workloads portable with standard Kubernetes resources, Helm and GitOps, and isolate cloud-specific parts, like identity and storage classes, in configuration.
+X: So both are managed Kubernetes, which means the Kubernetes API and the workloads are the same. The differences are really in integration and operations.
+X: Control plane cost, AKS has a free tier for the control plane, with a paid Standard tier for an uptime SLA. EKS charges per cluster per hour, and more for versions in extended support.
+X: Identity, AKS plugs into Entra ID for user authentication and uses workload identity for pods to reach Azure resources. EKS uses IAM, with access entries for users and Pod Identity or IRSA for pods.
+X: Networking, AKS has Azure CNI options, including overlay mode, and kubenet is being retired. EKS uses the VPC CNI, where pods get VPC IP addresses by default, which needs IP planning, with prefix delegation or custom networking to save addresses. That IP thing can catch people out on EKS.
+X: Node management, AKS has node pools with automatic upgrades and node auto-provisioning based on Karpenter. EKS has managed node groups, Fargate profiles for serverless pods, Karpenter, and EKS Auto Mode, which manages nodes, networking and storage components for you.
+X: Upgrades, both do in-place control plane and node pool upgrades. AKS has auto-upgrade channels, and EKS has extended support for older versions at extra cost.
+X: Ecosystem, AKS integrates with Azure Monitor, Azure Policy, Key Vault and Defender, EKS with CloudWatch, IAM, Secrets Manager and GuardDuty.
+X: My view, pick the one matching the cloud where the rest of your platform lives. Keep workloads portable with standard Kubernetes resources, Helm and GitOps, and isolate the cloud-specific parts, identity and storage classes, in configuration.
 @p17-925
 S: dkx
 D: A
 T: How do you reduce Kubernetes costs?
 K: kubernetes cost optimization, reduce k8s cost, rightsizing pods, spot nodes kubernetes, kubecost
-X: Kubernetes makes it easy to waste money, because teams request resources generously and clusters scale nodes to fit requests, not actual usage.
-X: What I look at.
-X: Rightsizing requests: compare requested CPU and memory with actual usage, from metrics or the Vertical Pod Autoscaler in recommendation mode, and lower requests that are far above real use. Requests drive node count, so this is usually the biggest saving.
-X: Autoscaling: Horizontal Pod Autoscaler or KEDA scales pods with demand, including down to zero for queue workers; a node autoscaler, like Karpenter or Cluster Autoscaler, removes empty or underused nodes and consolidates workloads.
-X: Spot or preemptible nodes for fault-tolerant workloads, like stateless services with several replicas, batch jobs and CI runners, often 60 to 90 percent cheaper, with pod disruption budgets and spread across instance types.
-X: Right node types: ARM-based instances for better price-performance, and fewer, larger nodes to reduce per-node overhead, balanced against blast radius.
-X: Non-production: scale down dev and test environments outside working hours, and delete ephemeral preview environments automatically.
-X: Storage and networking: delete unused persistent volumes and snapshots, use cheaper storage classes where possible, and watch cross-zone and NAT data transfer costs, which can be surprisingly large.
-X: Visibility: tools like Kubecost or OpenCost, or cloud cost tools, show cost per namespace, team and service, so teams see what they spend. Labels for team and application make this possible.
-X: Commitments: savings plans or reserved capacity for the steady baseline.
-X: I make cost a regular review item, rather than a one-time clean-up.
+X: Kubernetes makes it really easy to waste money, because teams request resources generously and clusters scale nodes to fit requests, not actual usage.
+X: What I look at. Rightsizing requests first. Compare requested CPU and memory with actual usage, from metrics or the Vertical Pod Autoscaler in recommendation mode, and lower requests that are way above real use. Requests drive node count, so this is usually the biggest saving.
+X: Autoscaling, the Horizontal Pod Autoscaler or KEDA scales pods with demand, even down to zero for queue workers, and a node autoscaler like Karpenter or Cluster Autoscaler removes empty or underused nodes and consolidates workloads.
+X: Spot or preemptible nodes for fault-tolerant workloads, stateless services with several replicas, batch jobs, CI runners. Often 60 to 90 percent cheaper, with pod disruption budgets and spread across instance types.
+X: Right node types, ARM-based instances for better price-performance, and fewer, larger nodes to cut per-node overhead, balanced against blast radius.
+X: Non-production, scale down dev and test outside working hours, and delete ephemeral preview environments automatically.
+X: Storage and networking, delete unused persistent volumes and snapshots, use cheaper storage classes where you can, and watch cross-zone and NAT data transfer costs, which can be surprisingly big. Honestly that one surprises everyone the first time they see the bill.
+X: Visibility, tools like Kubecost or OpenCost, or the cloud cost tools, show cost per namespace, team and service, so teams see what they spend. Labels for team and application make that possible.
+X: Commitments, savings plans or reserved capacity for the steady baseline.
+X: And I make cost a regular review item, not a one-time clean-up.
 @p17-926
 S: dkx
 D: A
 T: How does pod termination work, and how do you make shutdown graceful in Kubernetes?
 K: pod termination kubernetes, prestop hook, terminationgraceperiodseconds, graceful shutdown kubernetes, sigterm kubernetes
-X: When Kubernetes stops a pod, during a deployment, scale-down or node drain, a sequence happens, and understanding it avoids errors during releases.
-X: The pod is marked Terminating. In parallel, two things start: the pod is removed from Service endpoints, so load balancers and kube-proxy stop sending new traffic, and the kubelet runs any preStop hook, then sends SIGTERM to the container's main process. If the process hasn't exited after terminationGracePeriodSeconds, 30 seconds by default, it gets SIGKILL.
-X: The problem: removing the pod from endpoints takes a moment to propagate to every node, ingress controller and cloud load balancer. If the app exits immediately on SIGTERM, some requests still arrive and fail, causing 502 errors during every deployment.
-X: The fixes.
-X: A short preStop delay, like sleeping 5 to 10 seconds, so the pod keeps serving while endpoint removal propagates. Newer Kubernetes versions support a native sleep action for preStop, which works even in images without a shell.
-X: Handle SIGTERM in the app: stop accepting new work, finish in-flight requests and messages, close connections and flush logs and telemetry. ASP.NET Core does this with its host shutdown timeout, which should be configured to fit within the grace period; Node and Python apps need signal handlers.
-X: Make sure the app is PID 1 or uses an init process, so it actually receives the signal.
-X: Set terminationGracePeriodSeconds longer than preStop plus the time needed to drain, especially for message consumers processing long tasks.
-X: For load balancers outside the cluster, align deregistration delay with these timings.
-X: With this in place, rolling deployments become truly zero-downtime.
+X: When Kubernetes stops a pod, during a deployment, a scale-down or a node drain, a sequence kicks off, and understanding it avoids errors during releases.
+X: The pod's marked Terminating. In parallel two things start. The pod's removed from Service endpoints, so load balancers and kube-proxy stop sending new traffic. And the kubelet runs any preStop hook, then sends SIGTERM to the container's main process. If the process hasn't exited after the termination grace period, 30 seconds by default, it gets SIGKILL.
+X: The problem is removing the pod from endpoints takes a moment to reach every node, ingress controller and cloud load balancer. If the app exits immediately on SIGTERM, some requests still arrive and fail, and you get 502s during every deployment. I've seen teams live with that for ages thinking it's normal.
+X: The fixes. A short preStop delay, like sleeping 5 to 10 seconds, so the pod keeps serving while endpoint removal propagates. Newer Kubernetes versions have a native sleep action for preStop, which works even in images without a shell.
+X: Handle SIGTERM in the app. Stop accepting new work, finish in-flight requests and messages, close connections, flush logs and telemetry. ASP.NET Core does this with its host shutdown timeout, which should fit inside the grace period. Node and Python apps need signal handlers.
+X: Make sure the app is PID 1 or uses an init process, so it actually gets the signal.
+X: Set the termination grace period longer than preStop plus the drain time, especially for message consumers with long tasks.
+X: For load balancers outside the cluster, line up the deregistration delay with these timings.
+X: With all that in place, rolling deployments become genuinely zero-downtime.
 @p17-927
 S: dkx
 D: A
 T: How do you back up and restore a Kubernetes cluster with Velero?
 K: velero, kubernetes backup, backup kubernetes resources, persistent volume backup, cluster disaster recovery kubernetes
-X: Kubernetes clusters hold two kinds of state worth protecting: the resource definitions, like Deployments, Services, ConfigMaps, Secrets and custom resources, and the data in persistent volumes.
-X: If everything is deployed through GitOps, the resource definitions are already in Git, and a new cluster can be recreated from it, which is the best foundation for recovery. But Git doesn't contain persistent volume data, resources created by operators at runtime, or things applied manually.
+X: Kubernetes clusters hold two kinds of state worth protecting. The resource definitions, Deployments, Services, ConfigMaps, Secrets and custom resources, and the data in persistent volumes.
+X: If everything's deployed through GitOps, the resource definitions are already in Git, and you can recreate a cluster from it, which is the best foundation for recovery. But Git doesn't have persistent volume data, resources created by operators at runtime, or things someone applied by hand.
 X: Velero is the common open-source tool for cluster backups. It backs up Kubernetes resources from the API server into object storage, like S3 or Azure Blob, and backs up persistent volumes using cloud snapshots through CSI, or file-level copies with its built-in data mover. You can back up the whole cluster or selected namespaces and labels, on schedules with retention periods.
-X: Restores can recreate resources into the same or a different cluster, which also makes Velero useful for migrating workloads between clusters or cloud regions.
-X: Things to be careful about.
-X: Databases: volume snapshots of a running database may not be consistent; use database-native backups, or Velero hooks to freeze or flush before snapshots. For managed databases outside the cluster, like RDS or Azure SQL, use their own backup features.
-X: Secrets in backups: backup storage must be encrypted and access-controlled.
-X: Testing: regularly restore into a test cluster to prove backups work, measuring how long it takes.
-X: Cloud-native alternatives, like AWS Backup for EKS or Azure Backup for AKS, offer similar capabilities with managed integration.
+X: Restores can recreate resources into the same cluster or a different one, which also makes Velero useful for moving workloads between clusters or cloud regions.
+X: Things I'd be careful about. Databases, volume snapshots of a running database might not be consistent. Use database-native backups, or Velero hooks to freeze or flush before snapshots. For managed databases outside the cluster, RDS or Azure SQL, use their own backup features.
+X: Secrets in backups, the backup storage has to be encrypted and access-controlled.
+X: Testing, regularly restore into a test cluster to prove backups actually work, and measure how long it takes. A backup you've never restored is just a hope, I always say.
+X: Cloud-native alternatives, like AWS Backup for EKS or Azure Backup for AKS, offer similar things with managed integration.
 @p17-928
 S: dkx
 D: A
 T: Podman vs Docker: what is the difference?
 K: podman vs docker, rootless containers, daemonless containers, podman, docker desktop alternative
-X: Podman is a container engine compatible with Docker's command line and image format. Most docker commands work by replacing docker with podman, and images built by either run on both, because they follow the OCI standards.
-X: Key differences.
-X: Daemonless: Docker uses a long-running background daemon, dockerd, that the CLI talks to, and containers are children of the daemon. Podman has no central daemon; each container runs as a child of the command or of systemd. That removes a privileged single point of failure.
-X: Rootless by default: Podman is designed to run containers as a normal user, using user namespaces, so a container breakout gives an attacker only that user's permissions, not root. Docker supports rootless mode too, but it's not the default.
-X: Pods: Podman can group containers into pods, like Kubernetes, and generate Kubernetes YAML from them, or run Kubernetes YAML locally.
-X: systemd integration: Podman generates systemd units, or uses Quadlet files, to run containers as services on Linux servers, which fits Red Hat-based environments well.
-X: Tooling: Docker has Docker Desktop, Compose and a large ecosystem. Podman has Podman Desktop and supports Compose files through podman compose or the Docker-compatible API.
-X: Licensing: Docker Desktop requires a paid subscription for larger companies, which led some organisations to adopt Podman Desktop or other alternatives for developer machines.
-X: In practice, the choice matters little for production on Kubernetes, which uses containerd or CRI-O anyway. It matters for developer machines, security-sensitive Linux servers, and CI builds that shouldn't need a privileged daemon.
+X: Okay, Podman is a container engine that's compatible with Docker's command line and image format. Most docker commands work by just swapping docker for podman, and images built by either run on both, because they follow the OCI standards.
+X: The key differences. Daemonless. Docker uses a long-running background daemon, dockerd, that the CLI talks to, and containers are children of that daemon. Podman has no central daemon, each container runs as a child of the command or of systemd. That removes a privileged single point of failure.
+X: Rootless by default. Podman's designed to run containers as a normal user, using user namespaces, so a container breakout only gets that user's permissions, not root. Docker supports rootless mode too, but it's not the default.
+X: Pods. Podman can group containers into pods, like Kubernetes, and generate Kubernetes YAML from them, or run Kubernetes YAML locally.
+X: systemd integration. Podman generates systemd units, or uses Quadlet files, to run containers as services on Linux servers, which suits Red Hat-based environments.
+X: Tooling. Docker has Docker Desktop, Compose and a big ecosystem. Podman has Podman Desktop and supports Compose files through podman compose or the Docker-compatible API.
+X: Licensing. Docker Desktop needs a paid subscription for larger companies, which pushed some organisations to Podman Desktop or other alternatives for developer machines.
+X: In practice, I'd say the choice matters very little for production on Kubernetes, which uses containerd or CRI-O anyway. It matters for developer machines, security-sensitive Linux servers, and CI builds that shouldn't need a privileged daemon.
 @p17-929
 S: dkx
 D: A
 T: How do you manage access to multiple Kubernetes clusters with kubeconfig safely?
 K: kubeconfig, kubectl contexts, multiple clusters access, kubectl config use-context, cluster credentials security
-X: kubectl reads cluster connection details from a kubeconfig file: clusters with API server addresses and CA certificates, users with credentials, and contexts that combine a cluster, a user and a default namespace. With several clusters, like dev, test and production, you switch contexts with kubectl config use-context, or tools like kubectx and kubens.
-X: The risk is obvious: running a command against production when you meant dev. Habits I use.
-X: Make the current context visible: show it in the shell prompt, and use distinct colours or names for production.
-X: Default to non-production: keep production credentials separate, or require explicitly selecting them, and use a read-only role for day-to-day viewing of production.
-X: Use the --context flag explicitly in scripts, rather than relying on the current context.
-X: Credentials: avoid long-lived static tokens or client certificates in kubeconfig files. Use exec-based authentication plugins, like kubelogin for AKS with Entra ID or the AWS CLI for EKS, which fetch short-lived tokens tied to your corporate identity, with MFA and conditional access. Then access can be revoked centrally, and every action is audited with your identity.
-X: Least privilege: Kubernetes RBAC roles per team and namespace, with cluster-admin only for a few people through just-in-time elevation.
-X: Protect the file: kubeconfig files with embedded credentials are secrets; never commit them or share them in chat.
-X: Prefer GitOps for changes: in production, most changes should go through Git and Argo CD or Flux, so direct kubectl write access is rarely needed at all.
+X: kubectl reads connection details from a kubeconfig file. Clusters with API server addresses and CA certificates, users with credentials, and contexts that combine a cluster, a user and a default namespace. With several clusters, dev, test, production, you switch contexts with kubectl config use-context, or tools like kubectx and kubens.
+X: The risk is pretty obvious, running a command against production when you meant dev. Habits I use. Make the current context visible, show it in the shell prompt, and use distinct colours or names for production.
+X: Default to non-production. Keep production credentials separate, or require explicitly selecting them, and use a read-only role for day-to-day viewing of production.
+X: In scripts, always pass the context flag explicitly instead of relying on whatever the current context is.
+X: Credentials, avoid long-lived static tokens or client certificates in kubeconfig files. Use exec-based authentication plugins, like kubelogin for AKS with Entra ID, or the AWS CLI for EKS, which fetch short-lived tokens tied to your corporate identity, with MFA and conditional access. Then access can be revoked centrally, and every action's audited with your identity.
+X: Least privilege, Kubernetes RBAC roles per team and namespace, with cluster-admin only for a few people through just-in-time elevation.
+X: Protect the file. Kubeconfig files with embedded credentials are secrets, so never commit them or paste them in chat. I've seen people do this more than you'd think.
+X: And prefer GitOps for changes. In production, most changes should go through Git and Argo CD or Flux, so direct kubectl write access is rarely needed at all.
 @p17-930
 S: dkx
 D: A
 T: How do you use secrets safely during Docker builds?
 K: docker build secrets, buildkit secret mount, private nuget feed docker, npm token docker build, secrets in dockerfile
-X: Builds often need credentials, like a token for a private NuGet feed, an npm registry or a private Git repository. The dangerous approaches are passing them as build arguments or copying a config file into the image, because build arguments and files end up in image layers and history, where anyone who pulls the image can extract them, even if a later step deletes the file.
-X: The right approach is BuildKit secret mounts. In the Dockerfile, a RUN step uses a secret mount, for example mounting a secret with id nugetconfig at the path where dotnet restore expects a NuGet.Config, or exposing an npm token as an environment variable only for that step. The secret is available only while that RUN command executes, and it's never written to any layer.
-X: At build time: docker build passes the secret with the --secret flag, reading from a file or environment variable on the build machine. In CI, the pipeline gets the token from its secret store, like an Azure Pipelines secret variable, GitHub secret or cloud secret manager, and passes it to the build.
-X: For SSH access to private Git repositories, BuildKit has a similar SSH mount that forwards the SSH agent.
-X: Additional good practices: use multi-stage builds so restore and build tools stay in the build stage and only published output reaches the final image; use short-lived, read-only tokens for package feeds; scan images for leaked secrets with tools like Trivy or gitleaks; and if a secret was ever baked into a published image, rotate it, because removing the image doesn't remove copies already pulled.
+X: Builds often need credentials, like a token for a private NuGet feed, an npm registry or a private Git repo. The dangerous ways are passing them as build arguments or copying a config file into the image, because build arguments and files end up in image layers and history. Anyone who pulls the image can dig them out, even if a later step deletes the file. That one can catch people out.
+X: The right way is BuildKit secret mounts. In the Dockerfile, a RUN step uses a secret mount, for example mounting a secret with the id nugetconfig at the path where dotnet restore expects a NuGet config, or exposing an npm token as an environment variable only for that step. The secret's only there while that RUN command runs, and it's never written to any layer.
+X: At build time, docker build passes the secret with the secret flag, reading from a file or an environment variable on the build machine. In CI, the pipeline gets the token from its secret store, an Azure Pipelines secret variable, a GitHub secret or a cloud secret manager, and passes it to the build.
+X: For SSH access to private Git repos, BuildKit has a similar SSH mount that forwards the SSH agent.
+X: Other good practices. Multi-stage builds, so restore and build tools stay in the build stage and only the published output reaches the final image. Short-lived, read-only tokens for package feeds. Scan images for leaked secrets with tools like Trivy or gitleaks. And if a secret was ever baked into a published image, rotate it, because deleting the image doesn't remove copies people have already pulled.
 @p17-931
 S: dkx
 D: A
 T: How do maxSurge and maxUnavailable control a Kubernetes rolling update?
 K: maxsurge maxunavailable, kubernetes rolling update strategy, kubectl rollout undo, rollout status, deployment strategy kubernetes
-X: A Deployment's default strategy is RollingUpdate, which replaces old pods with new ones gradually. Two settings control the pace.
-X: maxSurge: how many extra pods above the desired replica count can be created during the update. With 4 replicas and maxSurge 1, Kubernetes can run 5 pods temporarily.
-X: maxUnavailable: how many pods below the desired count can be unavailable during the update. With maxUnavailable 0, Kubernetes never reduces capacity: it adds a new pod, waits until it's ready, then removes an old one.
-X: Both accept numbers or percentages, and the defaults are 25 percent each.
-X: Choosing values: for user-facing services where capacity matters, maxSurge 1 or 25 percent with maxUnavailable 0 keeps full capacity, at the cost of temporarily needing extra resources. For large deployments where speed matters, higher surge speeds up rollouts. If the cluster has no spare capacity, maxUnavailable 1 with maxSurge 0 avoids needing extra nodes, but reduces capacity briefly.
-X: What makes rolling updates safe: readiness probes that reflect real readiness, so traffic only goes to pods that can serve; minReadySeconds, so a pod must stay ready for a while before counting as available, catching quick crashes; and progressDeadlineSeconds, which marks the rollout as failed if it doesn't progress.
-X: Operations: kubectl rollout status watches progress, kubectl rollout history shows revisions, kubectl rollout undo returns to the previous revision, and kubectl rollout pause and resume control a rollout in steps.
-X: For canary or blue-green with automated analysis, tools like Argo Rollouts extend this further.
+X: A Deployment's default strategy is RollingUpdate, which swaps old pods for new ones gradually, and basically two settings control the pace.
+X: maxSurge is how many extra pods above the desired replica count can be created during the update. With 4 replicas and a max surge of 1, Kubernetes can run 5 pods for a while.
+X: maxUnavailable is how many pods below the desired count can be unavailable during the update. With it at zero, Kubernetes never drops capacity. It adds a new pod, waits until it's ready, then removes an old one.
+X: Both take numbers or percentages, and the defaults are 25 percent each.
+X: Choosing values. For user-facing services where capacity matters, a surge of 1 or 25 percent with zero unavailable keeps full capacity, at the cost of needing extra resources for a bit. For large deployments where speed matters, a higher surge speeds rollouts up. If the cluster has no spare capacity, 1 unavailable with zero surge avoids needing extra nodes, but capacity dips briefly.
+X: What makes rolling updates safe. Readiness probes that reflect real readiness, so traffic only goes to pods that can actually serve. minReadySeconds, so a pod has to stay ready for a while before it counts as available, which catches quick crashes. And progressDeadlineSeconds, which marks the rollout as failed if it stops progressing.
+X: Operations, kubectl rollout status watches progress, rollout history shows revisions, rollout undo goes back to the previous revision, and rollout pause and resume let you step through a rollout.
+X: For canary or blue-green with automated analysis, I'd go with something like Argo Rollouts on top.
 @p17-932
 S: dkx
 D: A
 T: What actually is a container: namespaces and cgroups explained
 K: how containers work, linux namespaces, cgroups, container vs virtual machine, container isolation
-X: A container isn't a small virtual machine. It's a normal Linux process, or group of processes, that the kernel isolates and limits using two main features.
-X: Namespaces control what a process can see. The PID namespace gives the container its own process tree, so its main process sees itself as PID 1. The network namespace gives it its own network interfaces, IP address and ports. The mount namespace gives it its own file system view, built from the image layers. There are also namespaces for hostnames, inter-process communication and user ids, so root inside a container can map to an unprivileged user outside.
-X: Control groups, cgroups, control what a process can use: CPU shares and quotas, memory limits, I/O and the number of processes. When a container exceeds its memory limit, the kernel's OOM killer stops it; when it exceeds its CPU quota, it's throttled.
-X: Image layers are stacked with a union file system, like overlayfs, with a thin writable layer on top, which is why containers start quickly and images share common layers.
-X: Compared to virtual machines: a VM runs a full guest operating system on a hypervisor with its own kernel, giving stronger isolation but more overhead and slower start. Containers share the host kernel, so they're lighter and faster, but a kernel vulnerability can affect all containers on a host. That's why sandboxed runtimes, like gVisor or Kata Containers, and Firecracker micro-VMs used by Lambda and Fargate, add stronger isolation where needed.
-X: Understanding this explains things like CPU throttling, OOM kills and why Windows containers need a Windows host.
+X: Right, a container isn't a small virtual machine. It's a normal Linux process, or a group of processes, that the kernel isolates and limits using two main features.
+X: Namespaces control what a process can see. The PID namespace gives the container its own process tree, so its main process sees itself as PID 1. The network namespace gives it its own network interfaces, IP address and ports. The mount namespace gives it its own file system view, built from the image layers. And there are namespaces for hostnames, inter-process communication and user ids, so root inside a container can map to an unprivileged user outside.
+X: Control groups, cgroups, control what a process can use. CPU shares and quotas, memory limits, I/O and the number of processes. When a container goes over its memory limit, the kernel's OOM killer stops it. When it goes over its CPU quota, it gets throttled.
+X: Image layers are stacked with a union file system like overlayfs, with a thin writable layer on top. That's why containers start quickly and images share common layers.
+X: Compared to virtual machines, a VM runs a full guest OS on a hypervisor with its own kernel, so stronger isolation but more overhead and slower starts. Containers share the host kernel, so they're lighter and faster, but a kernel vulnerability can affect every container on the host. That's why sandboxed runtimes like gVisor or Kata Containers, and Firecracker micro-VMs used by Lambda and Fargate, add stronger isolation where it's needed.
+X: Knowing this explains things like CPU throttling, OOM kills, and why Windows containers need a Windows host. I think it's one of those fundamentals that pays off every time you debug something.
 @p17-933
 S: dkx
 D: A
 T: How do you troubleshoot DNS problems inside Kubernetes?
 K: kubernetes dns troubleshooting, coredns, ndots kubernetes, service dns not resolving, cluster dns issues
-X: DNS issues in Kubernetes show up as intermittent connection failures, slow outbound calls, or services that can't find each other.
-X: How cluster DNS works: CoreDNS runs as pods in kube-system, and every pod's resolv.conf points to it. Services get names like orders.shipping.svc.cluster.local, and pods can use short names within the same namespace.
-X: Troubleshooting steps.
-X: Test from inside the cluster: start a temporary debug pod with tools like nslookup or dig, and resolve the service name, the full name, and an external name. kubectl debug can attach a debugging container to an existing pod to test from the same network namespace.
-X: Check the Service: does it exist in the expected namespace, and does it have endpoints? A name may resolve, but connections fail if no pods are ready.
-X: Check CoreDNS: are its pods running and not restarting? Look at its logs for errors, and its metrics for latency and errors. Under heavy load, CoreDNS may need more replicas or resources.
-X: The ndots setting: by default, names with fewer than five dots are first tried with each search domain, so a lookup for an external API name may generate several failed queries before the real one, adding latency and load. Using fully qualified names with a trailing dot, or lowering ndots in the pod's dnsConfig, fixes this.
-X: Node-level issues: conntrack races with UDP DNS packets historically caused five-second delays; NodeLocal DNSCache reduces this and lowers CoreDNS load.
+X: DNS issues in Kubernetes show up as intermittent connection failures, slow outbound calls, or services that can't find each other. And honestly, it's DNS more often than people expect.
+X: How cluster DNS works, CoreDNS runs as pods in kube-system, and every pod's resolv conf points to it. Services get names like orders dot shipping dot svc dot cluster dot local, and pods can use short names within the same namespace.
+X: Troubleshooting steps. Test from inside the cluster. Start a temporary debug pod with tools like nslookup or dig, and resolve the service name, the full name, and an external name. kubectl debug can attach a debugging container to an existing pod so you test from the same network namespace.
+X: Check the Service. Does it exist in the expected namespace, and does it have endpoints? A name might resolve but connections fail if no pods are ready.
+X: Check CoreDNS. Are its pods running and not restarting? Look at its logs for errors and its metrics for latency and errors. Under heavy load, CoreDNS might need more replicas or resources.
+X: The ndots setting. By default, names with fewer than five dots are tried with each search domain first, so a lookup for an external API name can generate several failed queries before the real one, adding latency and load. Using fully qualified names with a trailing dot, or lowering ndots in the pod's DNS config, fixes that.
+X: Node-level issues, conntrack races with UDP DNS packets historically caused five-second delays, and NodeLocal DNSCache reduces that and lowers CoreDNS load.
 X: Network policies that accidentally block traffic to CoreDNS on port 53.
-X: Application caching: some runtimes cache DNS too long or not at all, which matters when endpoints change.
+X: And application caching, some runtimes cache DNS too long or not at all, which matters when endpoints change.
 @p17-934
 S: dkx
 D: A
 T: How do you avoid Docker Hub rate limits and make image pulls reliable?
 K: docker hub rate limit, pull through cache, registry mirror, image pull reliability, toomanyrequests docker
-X: Docker Hub limits the number of image pulls for anonymous and free users per time window. Busy CI pipelines and clusters pulling public base images can hit these limits, causing builds to fail and pods to get stuck in ImagePullBackOff with "too many requests" errors, often at the worst moment, like during scaling or an incident.
-X: How I make pulls reliable.
-X: Pull-through cache: configure the private registry to cache public images. Amazon ECR pull-through cache rules, Azure Container Registry artifact cache, Harbor, Artifactory or Nexus fetch an image once and then serve it from the private registry. Builds and clusters pull from the private registry only.
-X: Mirror critical base images: import the specific base images we depend on into our own registry on a schedule, scan them, and reference them in Dockerfiles. This also protects against upstream images being changed or removed.
-X: Authenticate pulls: if Docker Hub must be used, authenticate with a paid account to get higher limits.
+X: Docker Hub limits the number of image pulls for anonymous and free users per time window. Busy CI pipelines and clusters pulling public base images can hit those limits, so builds fail and pods get stuck in ImagePullBackOff with "too many requests" errors, usually at the worst possible moment, like during scaling or an incident.
+X: How I make pulls reliable. A pull-through cache, configure the private registry to cache public images. Amazon ECR pull-through cache rules, Azure Container Registry artifact cache, Harbor, Artifactory or Nexus fetch an image once and then serve it from the private registry, and builds and clusters only pull from there.
+X: Mirror critical base images. Import the specific base images we depend on into our own registry on a schedule, scan them, and reference them in Dockerfiles. That also protects you if upstream images get changed or removed.
+X: Authenticate pulls. If Docker Hub has to be used, authenticate with a paid account to get higher limits.
 X: Pin by digest for important base images, so the exact image is used every time, and update deliberately through Renovate or Dependabot.
-X: Avoid unnecessary pulls: imagePullPolicy IfNotPresent with immutable tags, and caching in CI runners.
-X: Use official images from other registries where available, like Microsoft's .NET images from mcr.microsoft.com, which don't have Docker Hub's limits.
-X: This also improves security and compliance, because everything running in production comes from a registry we control and scan, which is often required in regulated environments.
+X: Avoid unnecessary pulls, image pull policy IfNotPresent with immutable tags, and caching in CI runners.
+X: Use official images from other registries where they exist, like Microsoft's .NET images from the Microsoft container registry, which don't have Docker Hub's limits.
+X: It also improves security and compliance, I'd say, because everything running in production comes from a registry we control and scan, which regulated environments often require anyway.
 @p17-935
 S: dkx
 D: A
 T: What are PriorityClasses and preemption in Kubernetes?
 K: priorityclass kubernetes, pod preemption, pod priority, system critical pods, scheduling priority kubernetes
-X: When a cluster runs out of capacity, Kubernetes has to decide which pods get scheduled. PriorityClasses tell it what matters most.
-X: A PriorityClass is a cluster-level object with a name and an integer value; higher means more important. Pods reference it with priorityClassName. Built-in classes, system-cluster-critical and system-node-critical, protect components like CoreDNS and networking agents.
-X: Effects.
-X: Scheduling order: pending pods with higher priority are scheduled before lower-priority ones.
-X: Preemption: if a high-priority pod can't be scheduled because there's no room, the scheduler can evict lower-priority pods from a node to make space. Evicted pods get a graceful termination and go back to pending, to be rescheduled when capacity frees up.
+X: When a cluster runs out of capacity, Kubernetes has to decide which pods get scheduled, and PriorityClasses tell it what matters most.
+X: A PriorityClass is a cluster-level object with a name and an integer value, where higher means more important. Pods reference it by name. The built-in classes, system cluster critical and system node critical, protect components like CoreDNS and networking agents.
+X: What it affects. Scheduling order, pending pods with higher priority get scheduled before lower ones.
+X: Preemption, if a high-priority pod can't be scheduled because there's no room, the scheduler can evict lower-priority pods from a node to make space. Evicted pods get a graceful termination and go back to pending, to be rescheduled when capacity frees up.
 X: Eviction under node pressure also considers priority, along with resource usage against requests.
-X: How I'd use it: a few clear tiers, like critical for core customer-facing services, default for normal services, and low for batch jobs, CI runners or experiments, so when capacity is short, batch work yields to production traffic. Low-priority classes can set preemptionPolicy Never, so those pods wait in the queue without preempting others.
-X: Placeholder pods: some teams run low-priority "balloon" pods to reserve headroom; real workloads preempt them instantly, and the autoscaler adds nodes for the evicted placeholders, giving faster scaling.
-X: Cautions: too many classes or giving everything high priority makes it meaningless; preemption can cause cascading disruption, so pair it with PodDisruptionBudgets, which preemption respects on a best-effort basis; and ResourceQuotas can limit who may use high-priority classes.
+X: How I'd use it, a few clear tiers, like critical for core customer-facing services, default for normal services, and low for batch jobs, CI runners or experiments, so when capacity's short, batch work yields to production traffic. Low-priority classes can set the preemption policy to Never, so those pods wait in the queue without preempting anyone.
+X: Placeholder pods are a neat trick, honestly. Some teams run low-priority "balloon" pods to reserve headroom. Real workloads preempt them instantly, and the autoscaler adds nodes for the evicted placeholders, so scaling's faster.
+X: Cautions, too many classes, or giving everything high priority, makes it meaningless. Preemption can cause cascading disruption, so pair it with PodDisruptionBudgets, which preemption respects on a best-effort basis. And ResourceQuotas can limit who's allowed to use the high-priority classes.
 @p17-936
 S: dkx
 D: A
