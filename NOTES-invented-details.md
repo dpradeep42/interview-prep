@@ -991,9 +991,6 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - I tuned a slow shipment report from 8 to 12 seconds down to under 300 milliseconds with a covering index and a rewritten query.
 - **p16-17** How does supply forecasting work in your IRT?
   - a newer version of the forecasting backend is being built as a .NET API
-- **p17-10** What is the difference between useState and useMemo?
-  - count, setCount
-  - items
 - **p17-11** How do you prevent unnecessary re-renders in a React application?
   - Moving the filter state down, memoising the row component and virtualising the grid made typing smooth again.
 - **p17-27** When you deploy to production through CI/CD, how do you implement automatic rollback if something goes wrong?
@@ -1026,11 +1023,11 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - I used a pipeline of a file read stream, a CSV parser and a batching transform to load large extract files without memory spikes.
 - **p17-456** Azure SQL Database vs Managed Instance vs SQL Server on a VM: how do you choose?
   - and some cross-database queries
-- **p17-511** ENTRYPOINT vs CMD, and why does PID 1 matter for graceful shutdown?
-  - "dotnet", "Shipments.Api.dll"
 - **p17-529** Can you run .NET Framework apps in containers?
   - option to evaluate
 - **p17-582** How would you test a randomisation algorithm in a clinical trial system?
   - like 100,000 simulated patients
-- **p17-600** What is Prometheus, and how do you write basic PromQL queries?
-  - 5m
+- **p17-680** The IRT system is down while a site needs to randomise a patient. What happens?
+  - For example, the protocol may allow a short delay of the randomisation visit, or a documented manual process.
+- **p17-799** What are the risks of cross-database queries and linked servers?
+  - and some cross-database queries
