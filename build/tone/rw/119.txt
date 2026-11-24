@@ -1,0 +1,109 @@
+@p5-54
+A cascading failure is when one slow or failing service makes its callers fail, and then their callers, until the whole system is down. So preventing it is really about containing failure.
+
+The main techniques work together. Timeouts on every call, so a slow dependency can't hold threads forever. Circuit breakers, so after repeated failures we stop calling and fail fast, giving the dependency time to recover. Bulkheads, so each dependency has its own limited resources and can't exhaust the whole service. Rate limiting and load shedding, so when overloaded, a service rejects some requests quickly rather than slowing down for everyone. Asynchronous queues, which absorb spikes and decouple services. Caching and graceful degradation, so non-essential features can be switched off while core features keep working. And careful retries with backoff and jitter, because aggressive retries are often what turns a slowdown into an outage.
+
+Architecturally, the biggest factor is avoiding long chains of synchronous calls, because each hop multiplies the risk.
+
+In our IRT platform, vendor integrations run asynchronously in separate workers. So when a vendor's system was slow, only vendor transfers were delayed. Randomisation and the main UI weren't affected at all. I can explain how we tested that.
+
+@p5-55
+Testing microservices needs a few layers, honestly, because a lot of the risk is in how services interact, not just inside each one.
+
+Unit tests cover the business logic of each service, quickly and in isolation. Integration tests check each service with its real dependencies, like a real SQL Server and RabbitMQ in containers with Testcontainers, so queries, serialisation and messaging configuration get tested. Contract tests check the agreements between services. With consumer-driven contracts, using a tool like Pact, each consumer defines what it expects from a provider, and the provider's pipeline verifies it still meets those expectations. That catches breaking changes before deployment, without needing every service running together. A small number of end-to-end tests then cover the critical business journeys across the whole system.
+
+For resilience, load tests and chaos tests, like killing an instance or adding latency, check that timeouts, retries and circuit breakers really work.
+
+In our IRT work, integration tests with WebApplicationFactory and real databases caught the most bugs per effort, and Playwright and Cucumber tests cover critical flows like randomisation for validation evidence. I can explain how contract tests fit into the pipeline.
+
+@p5-56
+Configuration across many services needs to be consistent, secure and traceable, without rebuilding images for each environment.
+
+The principle is "build once, configure per environment". The same container image runs everywhere, and only configuration changes. Non-secret settings come from environment variables and a central store, like AWS Systems Manager Parameter Store, organised by path, like slash irt slash production slash shipments. Secrets, like database passwords, API keys and certificates, live in AWS Secrets Manager, with encryption, access controlled by IAM, and automatic rotation. They're never in code, images or appsettings files committed to git. The values for each environment are managed through infrastructure as code, so changes are reviewed and versioned. Each service loads its configuration at startup, binds it to typed Options classes, and validates it with ValidateOnStart, so a missing or invalid setting fails the deployment straight away.
+
+For settings that must change without a redeploy, like feature flags, a dynamic source with IOptionsMonitor or a feature flag service works well.
+
+In our services, Secrets Manager and Parameter Store feed ASP.NET Core configuration, and per-vendor SFTP settings are named options. I can explain how we rotate secrets without downtime.
+
+@p5-57
+Centralised logging basically means all services send their logs to one place, in a consistent format, so you can search across the whole system instead of logging into individual servers or containers.
+
+Each service writes structured JSON logs, with message templates, not free text. Every log line carries common fields, service name, environment, version, and most importantly a correlation id, plus business identifiers like ShipmentId where relevant. Containers write logs to standard output, and the platform ships them to the central store, like CloudWatch Logs, OpenSearch, or Grafana Loki. Then one query can show everything that happened for one request, across every service. Log levels are controlled in configuration, so we can increase detail for a while without redeploying.
+
+Two rules really matter. Retention policies, so we keep logs as long as needed for support and compliance, but not forever. And never logging secrets or personal or clinical data, which in our domain is a regulatory issue.
+
+In our platform, logs go to Splunk, and since our correlation-id rollout in [2024], a saved Splunk search by correlation id shows a request's full journey across [4] services. That cut support triage from [about an hour to a few minutes]. I can show a sample query.
+
+@p5-58
+I'd design it in layers, with scalability and resilience built into each one.
+
+At the edge, an API gateway or load balancer handles routing, TLS, authentication and rate limiting. Behind it, stateless services, so any instance can handle any request, running in containers on ECS or Kubernetes with autoscaling on CPU, requests or queue depth. For data, each service owns its database, so they scale and change independently. A Redis cache takes repeated reads off the database, read replicas serve reporting, and very high-volume, simple access patterns can use DynamoDB.
+
+Between services, I prefer asynchronous events through Kafka or RabbitMQ for workflows. That absorbs traffic spikes and decouples services. The outbox pattern makes publishing reliable, and consumers are idempotent so retries are safe. Synchronous calls are kept for cases that need an immediate answer, with timeouts, retries and circuit breakers.
+
+Across everything, observability with metrics, logs and tracing, CI/CD per service with infrastructure as code, and security with service identities and secrets management.
+
+That's broadly how [the newer IQVIA services I've worked on] run on AWS, I mean ASP.NET Core services on ECS behind an ALB, SQL Server on RDS, ElastiCache, and RabbitMQ with an outbox. Our CIRT platform follows the same ideas on-premise, with IIS, SQL Server, Redis and RabbitMQ. I can draw it on a whiteboard.
+
+@p5-59
+So I chose REST where the caller needs an immediate, definite answer, as part of a request and response interaction.
+
+Typical cases are the UI and partner systems. When a site user opens a study, randomises a subject, or requests a shipment, they need to know the result right now, did it succeed, and what was assigned? That's a natural request-response interaction, and REST over HTTP is the simplest way to model it. It's also universally understood. Front-end developers, external partners and testers all know it, tools like Swagger and Postman make it easy to explore and test, and responses can be cached where it makes sense. Errors map cleanly to HTTP status codes and ProblemDetails, and it works through every proxy and firewall.
+
+I didn't choose REST for everything, honestly. For things that can happen in the background, like updating inventory after a shipment, notifying vendors or sending emails, we use messaging, because the caller shouldn't wait for or depend on those services.
+
+So the decision is really about coupling and timing. REST for "I need the answer now", events for "something happened, whoever cares can react". I can explain why we used Kafka in some cases.
+
+@p5-60
+I'd go for Kafka over REST when the communication is really "something happened" rather than "please give me an answer".
+
+With REST, the producer calls each consumer directly, waits for each one, and needs to know who they are. If a consumer is down, the producer has to handle it. With Kafka, the producer publishes an event to a topic once, and doesn't know or care who consumes it. Several consumers can read the same events independently, each at its own pace. Kafka also retains events for a configured period, so a consumer that was down catches up from where it left off, a new consumer can replay history, and you can reprocess events after fixing a bug. And it handles very high throughput.
+
+So Kafka fits when producers shouldn't wait for consumers, multiple services need the same events, replay and retention matter, or volume is high. REST stays the right choice when the caller needs an immediate answer.
+
+Like, shipment status events are needed by inventory, notifications, reporting and audit. Publishing them once to a topic, instead of the shipment service calling four other APIs, removed coupling and made adding a new consumer a non-event for the producer. I can compare Kafka with RabbitMQ too.
+
+@p5-61
+If Kafka is unavailable, the goal is basically that nothing is lost, and the system recovers on its own when Kafka comes back.
+
+On the producer side, the Kafka client already buffers messages in memory and retries, up to the delivery timeout. With the idempotent producer enabled, those retries don't create duplicates. But if the outage lasts longer, the produce calls eventually fail. That's why I don't rely on publishing directly in the business transaction. I use the outbox pattern, so the event is saved in an outbox table in the same database transaction as the business change, and a background publisher sends it to Kafka. If Kafka is down, events just wait in the outbox and get published when it recovers. On the consumer side, consumers can't fetch, so they pause, and when Kafka is back, they resume from their last committed offsets, so nothing is skipped.
+
+To avoid outages in the first place, Kafka runs as a multi-broker cluster with topic replication, a replication factor of 3, across availability zones, so losing one broker doesn't stop anything. Managed services like Amazon MSK help here.
+
+And we alert on broker health, consumer lag and outbox size. I care about this because of our RabbitMQ outage in [mid-2024], where publishing without confirms silently lost [about 1,200] updates. The lesson applies to any broker. The producer has to know whether the broker really accepted the message. I can explain that story.
+
+@p5-62
+Honestly, true end-to-end exactly-once processing across different systems is rarely achievable. What we build in practice is "effectively once", which is at-least-once delivery combined with idempotent processing.
+
+At-least-once means a message may be delivered more than once, say if a consumer processes it but crashes before acknowledging. So the consumer has to be idempotent, meaning processing the same message twice has the same effect as processing it once. Common techniques are storing processed message ids in a table, in the same transaction as the business change, and skipping ids already seen, using upserts instead of inserts, and natural unique constraints. On the producer side, the outbox pattern means an event is published if and only if the business transaction committed.
+
+Inside Kafka itself, there is exactly-once semantics. Idempotent producers prevent duplicates from retries, and Kafka transactions let a consumer read, process and write to another topic, and commit the offset, atomically. But that only applies within Kafka. As soon as you write to a database or call an external API, you need idempotency again.
+
+In our IRT consumers, every message carries an id, and an inbox table makes redelivered messages a no-op. I can show how that table works.
+
+@p5-63
+Okay, so our CIRT platform itself, the legacy core and the newer .NET APIs, still runs on-premise on IIS with SQL Server, a legacy from before IQVIA acquired Cenduit, while [the newer IQVIA services I've worked on run on AWS]. I'll walk through the AWS side from the request inwards.
+
+Requests from the UI and partners come in through Route 53 DNS to an Application Load Balancer, and API Gateway for some partner-facing APIs, with TLS terminated using ACM certificates and AWS WAF in front. Behind that, the .NET services run as Docker containers on ECS, in private subnets spread across two availability zones, with autoscaling. For data, the core relational data is in RDS SQL Server with Multi-AZ failover, DynamoDB handles some high-volume, simple-access data, and ElastiCache Redis is used for caching. Messaging between services uses RabbitMQ, with an outbox pattern. Lambda handles some event-driven pieces, and S3 stores files, like imports and vendor exchanges.
+
+For operations, logs and metrics go to CloudWatch, with dashboards in Grafana. Secrets are in Secrets Manager, configuration in Parameter Store, services use IAM task roles, and infrastructure is defined as code, deployed through our CI/CD pipelines.
+
+My part is mostly the .NET services, their integration with these components, and the release and monitoring side across [about 5] teams. I can draw it out or go deeper into any part.
+
+@p5-64
+AWS is IQVIA's standard cloud. Our product started as CIRT at Cenduit, with on-premise servers and an on-premise Azure DevOps Server, and after IQVIA acquired Cenduit, AWS became the standard for IQVIA's newer services, while CIRT itself is still on-premise. So honestly the decision was made at an organisational level, and it fits those services well for a few reasons.
+
+Managed services cut down operations work. ECS runs the containers, RDS handles SQL Server backups, patching and failover, and Lambda and DynamoDB need almost no infrastructure management. That lets a product team focus on features, not servers. Then compliance. Clinical trial systems are regulated, and AWS provides the certifications, encryption, audit logging with CloudTrail, and controls that help us meet GxP and data protection requirements. Global reach matters too. Trials run in many countries, and AWS regions let us host where the data needs to be. And mature tooling, infrastructure as code, monitoring with CloudWatch, and solid security services like IAM, KMS and Secrets Manager.
+
+That said, the design principles I use, containers, managed databases, messaging, infrastructure as code and observability, transfer directly to Azure or GCP. I've worked with Azure concepts too.
+
+In my day-to-day work, I use ECS, RDS, ElastiCache, S3, CloudWatch, Secrets Manager and Lambda, mainly around our .NET services. I can go deeper into any of these.
+
+@p5-65
+Both run containers on AWS, but they're pretty different in philosophy and complexity.
+
+ECS, Elastic Container Service, is AWS's own container orchestrator. It's simpler to learn and run, deeply integrated with AWS. IAM task roles, ALB target groups, CloudWatch and Cloud Map work out of the box, and there's no fee for the control plane. The catch is that it's AWS-specific. EKS, Elastic Kubernetes Service, is managed Kubernetes. It gives you the standard Kubernetes API and its huge ecosystem, like Helm, operators and service meshes, and your workloads are portable across clouds and on-premises. But Kubernetes is complex to operate well, needs more expertise, and EKS charges per cluster.
+
+Both can run on EC2 instances or on Fargate, without managing servers.
+
+So my rule is, if the organisation is all-in on AWS and wants simplicity, ECS. If it's standardising on Kubernetes across clouds, has the skills, or needs that ecosystem, EKS. For [the newer IQVIA services I worked on], ECS was the right choice. A product team can operate it without a dedicated platform team, and it fits cleanly with the rest of the AWS setup. I can compare it with how we'd model the same services in Kubernetes.
