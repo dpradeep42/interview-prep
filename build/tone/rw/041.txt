@@ -1,0 +1,135 @@
+@p17-480
+So Azure AI Search, which used to be Cognitive Search, is a managed search service, and it's become a core piece of retrieval-augmented generation on Azure.
+
+It stores documents in indexes, with fields that can be searchable, filterable, sortable and facetable. It does full-text search with language analysers, vector search, where embeddings are stored in vector fields and found by similarity using HNSW, and hybrid search, which combines keyword and vector results using Reciprocal Rank Fusion. On top of that, the semantic ranker re-ranks the top results using a language model, which improves relevance a lot.
+
+Data can be pushed through the API, or pulled by indexers from sources like Blob Storage, SQL, Cosmos DB and SharePoint. Skillsets enrich data during indexing. Cracking documents, OCR, chunking text, and calling embedding models with integrated vectorisation, so the service handles chunking and embedding for you. Agentic retrieval is a newer feature that plans multiple queries for complex questions.
+
+In a RAG flow, the user's question gets embedded, a hybrid query with filters, like the user's department or security trimming by group ids, pulls back the best chunks, those go to the language model along with the question, and the answer cites the sources.
+
+Our developer RAG assistant actually uses Python, FastAPI and pgvector instead of AI Search, but honestly the design is the same. Chunking, embeddings, hybrid retrieval, permissions filtering and citations. AI Search would add managed indexing and the semantic ranker on top.
+
+@p17-481
+Okay, both live in a storage account, but they're for different access patterns.
+
+Blob Storage is object storage, accessed over HTTPS APIs and SDKs. It's for unstructured data at scale. Uploads, documents, images, backups, logs and data lakes, with Data Lake Storage Gen2 adding a hierarchical namespace for analytics. It has access tiers, hot, cool, cold and archive, plus lifecycle management, versioning, immutability, and very large scale. In cloud-native designs, Blob should be the default for files.
+
+Azure Files gives you fully managed file shares over SMB, and NFS for Linux, plus a REST API. They can be mounted like a network drive by Windows, Linux and macOS machines, by containers and by App Service. It's built for cases where software expects a file system. Lifting and shifting legacy apps that read and write files on a share. Replacing on-premise file servers. Shared config or content between VMs. And keeping a share in sync with on-premise servers using Azure File Sync, which caches frequently used files locally. Identity-based access works with Active Directory and Entra ID Kerberos, with NTFS permissions.
+
+What you give up, Files costs more per GB, has lower scale limits, and apps that rely on file locking and paths are less cloud-native. Blob, on the other hand, needs code changes for file-based apps.
+
+So let me take an example. A legacy .NET Framework app writing generated reports to a network share, Azure Files lets it move with minimal change, while a new service would just write to Blob Storage.
+
+@p17-482
+See, Microsoft Defender for Cloud is Azure's cloud security platform. It combines two main capabilities, and it covers AWS and GCP accounts too.
+
+Cloud security posture management, CSPM, continuously checks resources against security best practices and benchmarks, like the Microsoft cloud security benchmark, and shows recommendations. Storage accounts allowing public access, VMs missing updates, SQL servers without auditing, overly permissive network rules, or identities without MFA. The secure score sums up posture as a percentage, so teams can track improvement. The paid Defender CSPM plan adds attack path analysis, which finds chains of weaknesses an attacker could use, like an internet-exposed VM with a vulnerability and access to a sensitive storage account. Plus a cloud security explorer to query the environment, agentless vulnerability scanning, and data security posture, which discovers sensitive data.
+
+Cloud workload protection, through Defender plans per resource type, catches threats at runtime. Defender for Servers, with endpoint protection and vulnerability management. Defender for Containers, with image scanning and runtime threat detection in Kubernetes. Defender for Storage, catching malware uploads and unusual access. Defender for SQL, catching SQL injection and anomalous access. And Defender for Key Vault, Resource Manager, APIs and AI services.
+
+Alerts show up in Defender for Cloud and can stream into Microsoft Sentinel for security operations.
+
+For developers, DevOps security hooks into Azure DevOps and GitHub to surface code, secret and infrastructure-as-code findings. Honestly that's the part developers actually see day to day.
+
+@p17-483
+Actually the right way now is Microsoft Entra Workload ID, which replaced the deprecated pod-managed identity. Pods in AKS often need Key Vault, Storage or Azure SQL, and this is how they get in without secrets.
+
+How it works. The AKS cluster has an OIDC issuer turned on. You create a user-assigned managed identity, or an app registration, and add a federated identity credential that trusts tokens from the cluster's issuer for a specific Kubernetes service account in a specific namespace. The service account is annotated with the identity's client id, and pods using it are labelled to use workload identity. A mutating webhook injects environment variables and a projected service account token into the pod. The Azure Identity SDK, through DefaultAzureCredential or WorkloadIdentityCredential, exchanges that token for an Entra ID access token. No secrets stored in the cluster at all.
+
+Then you grant the managed identity least-privilege RBAC roles on the resources it needs. Each workload gets its own identity, so permissions stay isolated.
+
+For secrets that apps expect as files or environment variables, the Secrets Store CSI Driver with the Azure Key Vault provider mounts Key Vault secrets into pods, authenticating with workload identity, and can sync them to Kubernetes secrets if needed, with rotation support.
+
+The cluster has its own identities too. The control plane identity, and the kubelet identity, which pulls images from Azure Container Registry and should only get the AcrPull role. In my experience people over-grant that one.
+
+@p17-484
+Okay, so cost management starts with visibility. Microsoft Cost Management shows costs by subscription, resource group, service and tags. A consistent tagging strategy, with tags like application, environment, owner and cost centre, enforced by Azure Policy, makes costs traceable to teams. Budgets with alerts at thresholds, like 80 and 100 percent, warn owners before overspending, and anomaly alerts catch unexpected spikes.
+
+Then optimisation, roughly in order of impact.
+
+Remove waste. Unattached disks, idle public IPs, old snapshots, VMs that are stopped but not deallocated, forgotten test environments, and oversized App Service plans running nothing. Azure Advisor lists a lot of these.
+
+Right-size. Reduce VM and database sizes based on actual utilisation, move to newer, more efficient generations, and use autoscale so capacity follows demand.
+
+Schedule. Shut down dev and test resources outside working hours, which can cut their cost by more than half.
+
+Commit. Azure Reservations for specific resources like VMs, SQL and Cosmos DB, and Azure Savings Plan for compute, which commits to hourly spend across services, with discounts for one or three years. Azure Hybrid Benefit reuses existing Windows Server and SQL Server licences.
+
+Pick cheaper options. Spot VMs for interruptible workloads, serverless and consumption plans for intermittent loads, storage lifecycle policies to cooler tiers, and tuned log retention and sampling, because Log Analytics ingestion is often a surprisingly big cost. I've seen that one shock people.
+
+And FinOps is ongoing, monthly reviews with teams, showing cost trends next to usage.
+
+@p17-485
+So SignalR is ASP.NET Core's library for real-time communication, pushing messages from server to clients over WebSockets, with fallbacks. Self-hosted SignalR has a scaling problem though. Each client is connected to one server instance, so to send a message to all users, or to a user connected to a different instance, the servers need a backplane, like Redis, and load balancers need sticky sessions. Each server also holds lots of open connections, which eats resources.
+
+Azure SignalR Service fixes that. It's a managed service that holds all the client connections. The app servers connect to the service and send messages through it, so the service handles fan-out to the right clients, no matter which app instance sends the message. No backplane, no sticky sessions, and app servers don't hold thousands of connections anymore. It scales to very large numbers of concurrent connections through units. Integration is mostly configuration, you call AddSignalR and then chain AddAzureSignalR onto it.
+
+It also has a serverless mode, used with Azure Functions bindings, where functions send messages through the service without any hub server. That suits event-driven notifications, like pushing a status update to a user when a background process finishes.
+
+Azure Web PubSub is a related service for plain WebSocket clients, without the SignalR protocol, useful for non-.NET clients and other frameworks.
+
+Where I'd use it, live dashboards, notifications, collaborative editing, chat and progress updates. Authentication uses access tokens, and user ids let you target specific users and groups.
+
+@p17-486
+Honestly Azure Static Web Apps is a really nice service for hosting static front ends, like React, Angular, Vue or static site generators, with optional serverless APIs.
+
+The main features. Built-in CI/CD, connecting a GitHub or Azure DevOps repo creates a workflow that builds and deploys on every push. Preview environments get created automatically for pull requests, with their own URLs, so reviewers can test changes before merging. Global distribution of static content, free SSL certificates and custom domains. Routing configuration in staticwebapp.config.json, including the navigation fallback to index.html for client-side routing, so deep links work, plus headers, redirects and route-based access rules. APIs, integrated Azure Functions in an api folder, or linking an existing backend, like a Function App, App Service, Container App or API Management, under the slash api path on the same domain, which avoids CORS issues. Authentication, built-in providers like Entra ID and GitHub, or custom OIDC providers on the Standard plan, with role-based route protection.
+
+It's very cost effective, with a free tier for personal projects and a Standard tier for production features, like private endpoints and an SLA.
+
+I'd use it for SPAs and documentation sites with simple backends. For apps that need a complex backend, I'd host the API separately, on App Service or Container Apps, and link it. And for apps that need server-side rendering frameworks with full Node servers, App Service or Container Apps fit better.
+
+@p17-487
+See, Microsoft Entra External ID is Microsoft's customer and partner identity solution, what people call CIAM. It lets external users, like customers, patients or partners, sign up and sign in to your apps.
+
+Azure AD B2C was the previous customer identity product. Very flexible, with custom policies for complex identity journeys, but those XML policies were notoriously painful. Microsoft stopped selling Azure AD B2C to new customers from May 2025, though existing customers stay supported for years, and External ID is the way forward.
+
+External ID comes in two configurations. An external tenant is a separate tenant just for the consumer and business customers of your apps, with self-service sign-up, sign-in with email and password, one-time passcodes, social providers like Google and Facebook, branded sign-in pages, custom user attributes collected at sign-up, custom authentication extensions to call your APIs during sign-in, and MFA. A workforce tenant configuration covers B2B collaboration, inviting partner users as guests into your organisation's tenant, so they sign in with their own organisation's identities, governed by conditional access and access reviews.
+
+From the app's point of view, it's standard OpenID Connect and OAuth. The app uses MSAL or Microsoft.Identity.Web, validates tokens, and authorises with roles and claims.
+
+For a new customer-facing portal on Azure, I'd go with External ID. For existing B2C deployments, I'd plan a migration rather than rush it, because those custom policies take real effort to move.
+
+@p17-488
+Okay, both are key Entra ID security features, part of a zero trust approach.
+
+Conditional Access is Entra's policy engine for sign-ins. Policies are if-then rules, if a sign-in matches certain conditions, then enforce controls. Conditions include which users or groups, which apps, the sign-in risk and user risk detected by Identity Protection, the device platform, whether the device is compliant or joined, the location, like trusted office networks or countries, and the client app. Controls include requiring MFA, requiring phishing-resistant MFA like passkeys for admins, requiring a compliant device, forcing a password change for risky users, limiting session lifetime, or just blocking access. Common policies, MFA for everyone, block legacy authentication, stronger requirements for administrators, and block access from unexpected countries. Report-only mode lets you test policies before enforcing them.
+
+Privileged Identity Management handles privileged roles, both Entra roles and Azure resource roles. Instead of permanent admin assignments, users are eligible for a role and activate it just in time, for a limited duration, like two hours, with MFA, a justification, a ticket number, and optionally approval from someone else. Activations are audited and alerts can be raised. Access reviews regularly ask owners to confirm whether people still need their roles, which clears out stale access.
+
+Put together, they cut the risk of stolen credentials a lot. Even a compromised account has no standing admin rights, and risky sign-ins get challenged or blocked. That's the bit I'd stress in an interview.
+
+@p17-489
+So Azure Container Registry is a private registry for container images, Helm charts and other OCI artifacts.
+
+In a pipeline, CI builds the image, tags it with a version or commit SHA, and pushes it to ACR, authenticating with a workload identity federated service connection, not admin credentials, which I keep disabled. ACR Tasks can also build images inside Azure, triggered by commits or base image updates, so images get rebuilt automatically when a patched base image comes out.
+
+Security habits I follow. Access through Entra ID and RBAC, AcrPush for pipelines, AcrPull for runtimes, like the AKS kubelet identity or a Container Apps managed identity. Network, private endpoints and public access disabled on the Premium tier, so images are only pulled over private networks. Scanning, Defender for Containers scans images in the registry for vulnerabilities, and keeps scanning images that are running. Immutable tags, by locking images or repositories, so a released tag can't be overwritten. Signing images with Notation and verifying signatures in the cluster with policy, so only trusted images run. And retention policies and purge tasks to clean up untagged and old images.
+
+Premium features, geo-replication, which keeps a single registry replicated across regions, so clusters in each region pull locally and quickly, and you're resilient if a region goes down. Plus zone redundancy.
+
+I also use artifact caching or import to copy public base images into ACR. That avoids Docker Hub rate limits and depending on external registries at deployment time.
+
+@p17-490
+Actually every container in a pod can declare requests and limits for CPU and memory, and they do quite different jobs.
+
+Requests are what the container is guaranteed. The scheduler uses them to place pods. A node only accepts a pod if the sum of requests on it fits the node's allocatable capacity. So requests decide where pods go and how many fit on a node. Too low, and nodes get overpacked and pods fight for resources. Too high, and you're paying for idle capacity.
+
+Limits are the ceiling. For memory, if a container goes over its limit, the kernel kills it, and you see OOMKilled. For CPU, a container over its limit isn't killed, it's throttled, which shows up as latency. That difference trips people up a lot.
+
+Together they decide the pod's quality of service class. Guaranteed, when requests equal limits for every container, and those pods are the last to be evicted under node pressure. Burstable, when requests are lower than limits. BestEffort, when nothing is set, and those go first.
+
+My defaults for a .NET API, memory request and limit set to the same value, based on observed usage plus headroom, because memory isn't compressible. A CPU request based on typical usage, and often no CPU limit, or a generous one, to avoid throttling. Then I check actual usage in metrics and adjust, because the first guesses are usually wrong.
+
+@p17-491
+Okay, OOMKilled means the container used more memory than its limit and the kernel killed it. kubectl describe pod shows the last state as OOMKilled with exit code 137, and the restart count keeps climbing.
+
+The first thing I check is whether it's a real leak or just a limit that's too low. I look at the container's memory graph over time, in Prometheus or Container Insights. A sawtooth that climbs steadily until the kill, after every restart, points to a leak. A sudden spike points to one big operation, like loading a large file or a huge query result into memory. A flat line just under the limit means the limit is simply too tight for normal work.
+
+For .NET specifically, the runtime reads the container's memory limit and sizes the GC heap from it, but if the limit is really small, server GC with many heaps can still push close to it. Options are setting GCHeapHardLimitPercent, using workstation GC for small containers, or just giving a realistic limit.
+
+If it's a leak, I reproduce it, take a memory dump with dotnet-dump or dotnet-gcdump before the kill, and look for what's growing. Caches without expiry, static collections, event handlers not removed, or undisposed objects.
+
+For spikes, I stream instead of buffering, page large queries, and limit concurrency of heavy jobs.
+
+Only after I understand the cause do I raise the limit. And I set an alert on memory near the limit, so we hear about it before the kills start, not after.

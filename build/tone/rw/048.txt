@@ -1,0 +1,157 @@
+@p17-564
+Okay, so normal example-based tests check specific inputs. Given 10 kits and 3 requested, 7 remain. Property-based testing instead states a rule that has to hold for all valid inputs, and the framework generates hundreds of random inputs trying to break it.
+
+Examples of properties. Serialising and then deserialising any object gives you back the same object. Sorting is idempotent and keeps all the items. For any sequence of reservations and releases, available stock never goes negative, and reserved plus available always equals the total. Or a parsing function never throws for any string, it either succeeds or returns a validation error.
+
+When a property fails, the framework shrinks the input down to the smallest failing example, like an empty list or a value of exactly zero, which makes the bug really easy to understand.
+
+Tools, FsCheck and CsCheck for .NET, which plug into xUnit. Hypothesis for Python. fast-check for TypeScript.
+
+Where it pays off, algorithms with clear invariants, like allocation, scheduling, calculations, encoders and parsers. Code with lots of edge cases. And stateful systems, where the framework generates random sequences of operations and compares the system against a simple model.
+
+It doesn't replace example tests, which document specific business cases clearly. And properties take some thought to write well. A property that just reimplements the code proves nothing. I use it for the most logic-heavy parts, and honestly it often finds bugs nobody thought of.
+
+@p17-565
+See, snapshot or approval testing checks a complex output against a previously approved version stored in a file, instead of writing loads of individual assertions.
+
+With the Verify library in .NET, a test ends with await Verify on the result. The first time, Verify serialises the result, like an object graph, an API response, a generated document, or even the HTTP calls made, into a received file, and the test fails. A developer reviews it, and if it's correct, accepts it as the verified file, which gets committed to the repository. On later runs, the new output is compared with the verified file, and any difference fails the test and shows a diff.
+
+It's great for API response shapes, so an accidental field rename or format change gets caught. Generated output like reports, emails, CSV or XML exports, PDFs and images. Complex mapping results. And characterising legacy code before refactoring, capturing its current behaviour.
+
+Verify handles the noise. It scrubs values that change every run, like GUIDs and dates, replacing them with stable placeholders, and lets you ignore specific members.
+
+The risk is if reviewers just accept every changed snapshot without reading it, the tests catch nothing. Snapshots should be small and focused enough to actually review. And for simple values, plain assertions are clearer.
+
+Jest has the same idea for JavaScript, with toMatchSnapshot, usually for serialisable outputs rather than whole component trees.
+
+@p17-566
+So load testing checks how a system behaves under realistic and peak traffic, before users find out the hard way.
+
+k6 is a popular open-source tool where tests are JavaScript scripts. A script defines what a virtual user does. Log in, list shipments, open one, create an allocation, with realistic think times and data. Scenarios define the load shape, like ramping to 200 virtual users over five minutes, or a constant arrival rate of 50 requests per second, which is better for APIs because it doesn't ease off when the system slows down. Thresholds define pass or fail, like p95 latency below 500 milliseconds and error rate below one percent. That makes load tests usable as pipeline gates. Results can stream to Grafana or other backends.
+
+NBomber is a .NET alternative, scenarios in C#, which suits teams that want to reuse existing .NET clients and models, and it's handy for non-HTTP things too, like message consumers.
+
+Getting meaningful results. Test in an environment sized like production, with production-like data volumes, because a query that's fast on 1,000 rows can crawl on 10 million. Generate load from outside the system under test, with enough load-generator capacity. Watch the server side during the test, CPU, memory, database waits, thread pool queue length, GC and dependency latency, so you know where the bottleneck is, not just that there is one. And run a baseline before changes, then compare.
+
+@p17-567
+Actually different performance tests answer different questions, so I pick based on the risk.
+
+A load test runs the expected normal and peak traffic, like the busiest hour of a typical day, for a while. It checks response times and error rates meet the targets under the load we actually expect.
+
+A stress test pushes load past expectations until the system breaks, to find the breaking point and, more importantly, how it fails. Does it slow down gracefully, shed load with 429 or 503 responses, and recover when load drops? Or does it fall over and stay down?
+
+A spike test applies a sudden jump, like ten times normal traffic within seconds, which tests autoscaling speed, connection pools, caches warming up, and queues absorbing bursts. Think of a study going live at lots of sites at once, or a batch import triggering a flood of events.
+
+A soak or endurance test runs a moderate load for many hours or days. It finds problems that only show up over time. Memory leaks, connection leaks, growing queues, log disks filling up, slow degradation from fragmentation, and scheduled jobs interfering with traffic.
+
+A capacity test finds how much load a given configuration can handle while meeting targets, which feeds sizing and cost decisions.
+
+Breakpoint and scalability tests check whether adding instances actually increases throughput, or whether a shared resource, like the database, caps it.
+
+All of them need clear targets defined up front, and server-side monitoring to explain the results. Without that, honestly, you just get numbers nobody can act on.
+
+@p17-568
+Okay, tests get hard to read when the arrange section is 30 lines of object construction, and fragile when a new required property means updating hundreds of tests. Good test data tools fix both.
+
+The test data builder pattern. A ShipmentBuilder class with sensible defaults for every property and fluent methods to change only what matters for this test. Like a new ShipmentBuilder, then WithStatus Delivered, then ForSite with the site, then Build. The test shows only the relevant details, and when the model changes, only the builder changes. Builders can create valid object graphs that respect domain rules, which matters when constructors enforce invariants.
+
+AutoFixture creates anonymous test data automatically, filling every property with generated values, and you can customise it for specific types. With xUnit's AutoData attributes, it removes boilerplate for tests where the values don't matter, and AutoMoq integration creates mocks for dependencies automatically.
+
+Bogus generates realistic fake data. Names, addresses, dates, numbers in realistic ranges, with a seed for reproducibility. It's great for seeding dev databases, demo environments and load tests, and for UI work where realistic data shows layout problems.
+
+My guidelines, values that matter to the test's outcome should be visible in the test, not hidden in defaults. Generated data should be valid by default. Seeds make random data reproducible when a test fails. And never use real production or patient data in tests, which in a clinical domain is especially important.
+
+@p17-569
+So code that calls DateTime.Now or DateTime.UtcNow directly is hard to test. A rule like "a kit expires after 30 days" or "send a reminder if a visit is overdue by two days" depends on the clock, and tests either get flaky or have to wait.
+
+The fix is to inject the clock. Since .NET 8 there's a built-in abstraction, TimeProvider. Code depends on TimeProvider, registered as TimeProvider.System in production, and calls GetUtcNow, GetLocalNow, or the CreateTimer and Task.Delay overloads that accept a TimeProvider.
+
+In tests, FakeTimeProvider, from Microsoft.Extensions.TimeProvider.Testing, lets me set the current time to an exact value and move it forward with Advance, passing TimeSpan.FromDays of 31. Timers and delays scheduled through the fake provider fire when time is advanced, so tests of timeouts, expiry, retries with delays, or periodic background work run instantly and deterministically.
+
+Before .NET 8, teams wrote their own IClock or ISystemClock interface, which works the same way.
+
+Things worth testing explicitly with a controllable clock. Boundaries, like exactly at the expiry moment versus one second before. Time zones, especially for sites in different countries and daylight saving transitions, where a visit window can be 23 or 25 hours. And month ends and leap years. Those daylight saving ones catch people all the time.
+
+For front-end code, Jest and Vitest have fake timers and can set the system time, which does the same job.
+
+@p17-570
+Honestly a BackgroundService is awkward to test directly. It runs a loop in ExecuteAsync, often reading from a queue or polling on a timer, so you've got the infinite loop, timing and cancellation all mixed in. So I separate concerns.
+
+Keep the loop thin. The hosted service only handles the mechanics. Wait for the next item or tick, create a DI scope, call a handler, and handle errors and cancellation. The real work lives in a separate class, like ProcessShipmentEventHandler, which is a normal class with injected dependencies and gets unit-tested like anything else. That's where most tests go.
+
+Test the loop's mechanics separately, with a small number of focused tests. Start the service with a cancellation token, feed it an item through a fake queue or a Channel, wait until the handler is called, using a TaskCompletionSource instead of sleeps, then cancel and check it stops cleanly. Check an exception in one item doesn't kill the loop, and that a scope gets created per item. With TimeProvider and FakeTimeProvider, periodic services can be tested without real waiting.
+
+Integration tests run the whole host with WebApplicationFactory or a test host, and a real broker through Testcontainers, publishing a message and asserting the expected database change shows up, with a timeout and polling.
+
+I also test graceful shutdown. Stopping the host while an item is being processed should either finish it or leave it safely to be redelivered, never half-done.
+
+@p17-571
+See, retry, timeout and circuit breaker logic is easy to get wrong and rarely exercised until an outage, so it deserves deliberate tests.
+
+At the unit level, I test the policy configuration itself. With Polly v8, I can build the resilience pipeline and execute a delegate that fails a set number of times, like throwing HttpRequestException twice and then succeeding, and assert it was called three times. For circuit breakers, I fail enough calls to open the circuit, assert the next call fails fast with BrokenCircuitException, then advance a fake TimeProvider past the break duration and check a trial call is allowed. Injecting the TimeProvider means no real waiting on backoff delays.
+
+At the integration level, I put a fake server, like WireMock.Net, behind the real typed HttpClient with its real resilience handler, configured from the real settings. Then stub sequences. 503 then 200, 429 with Retry-After, a delay longer than the attempt timeout. I assert what the caller experiences and how many requests actually reached the server.
+
+The important cases, non-idempotent requests, like POSTs, shouldn't be retried unless they carry an idempotency key. The total timeout should cap the whole sequence. And no retries for 400-type errors.
+
+Polly also has chaos strategies to inject faults, latency or fake results in a test environment, which validates the whole system's behaviour under failure. I've seen that surface stuff nobody expected.
+
+@p17-572
+Okay, migrations change production data structures, often irreversibly, so they need testing beyond "it ran on my machine".
+
+The checks I put in the pipeline.
+
+Model and migrations in sync. For EF Core, a test or a pipeline step fails if there are pending model changes without a migration, which .NET 8 and later can check with dotnet ef migrations has-pending-model-changes.
+
+Apply from scratch. Create an empty database in a container with Testcontainers and apply all migrations from the beginning. That catches broken or order-dependent migrations.
+
+Apply to a realistic existing state. Restore a copy of the schema, or an anonymised dataset, at the current production version, then apply the new migrations. A lot of failures only happen with real data, like adding a NOT NULL column without a default, a unique index on a column that has duplicates, or a data conversion that fails on unexpected values.
+
+Measure duration on production-sized data. A migration that takes two seconds on test data might lock a big table for 20 minutes. If it's slow, it needs redesigning as an online change or batched.
+
+Compatibility. Run the previous app version's tests against the new schema, since during a rolling deployment the old version runs against the migrated database.
+
+Rollback. If down migrations are supported, test them too, otherwise document the forward-fix plan.
+
+For SSDT projects, same thing applies to the generated deployment script, reviewed and run against a production-like copy.
+
+@p17-573
+So when important business logic lives in stored procedures, which is common in older systems like ours, it deserves tests just like C# code.
+
+tSQLt is a unit testing framework that runs inside SQL Server. Tests are themselves stored procedures, grouped in test classes, and each test runs in a transaction that gets rolled back, so tests don't leave data behind. The key feature is faking. FakeTable replaces a table with an empty copy without constraints, so a test inserts only the rows it needs. SpyProcedure replaces a called procedure with a spy that records calls. And assertions like AssertEqualsTable compare expected and actual result sets. That isolates the logic of one procedure from the rest of the schema.
+
+The alternative is testing procedures from .NET integration tests. Spin up a real SQL Server with Testcontainers, deploy the schema from the SSDT project or migrations, insert test data, call the procedure through Dapper or ADO.NET, and assert results. That tests the procedure and the calling code's mapping together, and fits the existing .NET test tooling and CI. In our kind of setup, I'd lean towards this one.
+
+What I focus on, boundary conditions, null handling, transactions and error handling with THROW, concurrency-related logic, like whether two calls can allocate the same item, and performance with realistic data volumes, checking execution plans for scans.
+
+Whatever the tool, the database schema should be in source control, so tests run in CI against the exact schema being released.
+
+@p17-574
+Actually integration tests that share a database can really interfere. One test's data changes another test's results, tests pass alone but fail together, and order starts mattering. I've used a few strategies to keep them isolated.
+
+Reset between tests. Respawn is a .NET library that deletes data from all tables quickly, in the right order respecting foreign keys, while keeping reference tables you list. Calling it before each test gives you a clean database in milliseconds, much faster than recreating the database.
+
+Wrap each test in a transaction and roll it back at the end. Fast and clean, but it doesn't work if the code under test manages its own transactions, uses multiple connections, or if you're testing through HTTP where the request runs on a different connection.
+
+Unique data per test. Each test creates its own data with unique ids or names and only asserts on that data. That allows parallel tests on one database, but queries like "count all shipments" become unreliable.
+
+Database per test class or collection. With Testcontainers, each test collection can get its own database inside a shared container, created from a template or snapshot, which allows parallel collections.
+
+My typical setup, one container per test run, one database per test collection, Respawn before each test, and tests that create their own data. In xUnit, collections run in parallel and tests within a collection run sequentially, which fits this model nicely.
+
+@p17-575
+Okay, concurrency bugs, like two requests reserving the same last kit, or a duplicate message being processed twice at the same time, rarely show up in normal tests, because tests run one call at a time.
+
+So I test them deliberately.
+
+Fire concurrent requests in integration tests. Start, say, 20 tasks that call the same endpoint at once, released together with a barrier or a SemaphoreSlim, against a real database. Then assert the invariant. Exactly one reservation succeeded, the others got a conflict, and the stock count is correct. Run it multiple times, because a race might not show up every run.
+
+Test the concurrency control itself. For optimistic concurrency, load an entity in two DbContexts, save one, then assert the second save throws DbUpdateConcurrencyException, and that the app turns it into a 409 or a retry. For unique constraints, assert the database rejects duplicates and the code handles the error.
+
+Test idempotency under concurrency. Deliver the same message twice in parallel to the consumer and assert the effect happened once.
+
+Use deterministic tools where you can. For code using locks or channels, control the interleaving by pausing one operation at a specific point with hooks, so the test hits the dangerous window every time, not just by luck.
+
+Load tests at higher concurrency also surface deadlocks and lock contention.
+
+The mindset I go with is, figure out the invariant that has to hold, then try really hard to break it.

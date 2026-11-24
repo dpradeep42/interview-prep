@@ -1,0 +1,155 @@
+@p17-552
+Okay, so with a database per study, a schema change isn't one deployment, it's hundreds. Doing that reliably needs proper orchestration.
+
+The change itself has to be backward compatible to begin with, because databases get updated over minutes or hours, and the app has to work with both old and new schemas during that time. Expand and contract again. Add new structures first, and remove old ones only in a later release once every database is updated.
+
+Then the rollout process. Keep a registry of all target databases, from the master database, with each one's current schema version, recorded in a version table inside each database. Run the migration in waves. Internal test databases first, then a small canary group of production databases, then the rest in batches with limited parallelism, so the database server doesn't get overloaded. Each run is idempotent and records success or failure per database, with the script version and timestamps, which also gives you the audit evidence a regulated environment needs.
+
+Failure handling. A failure in one database must not leave it half-migrated, so each database's change runs in a transaction where possible, or in carefully ordered idempotent steps. Failed databases get reported and retried after investigation, without blocking the others, unless the failure looks systemic, and then the whole rollout halts.
+
+Long-running changes, like adding an index to a huge table, get scheduled for quiet periods per region, with online index operations where available.
+
+And honestly, a dashboard showing the version of every database makes it obvious when something's behind.
+
+@p17-553
+See, when a release causes problems, the decision is about restoring service fastest with the least risk. It's not about pride.
+
+I lean towards rolling back when the previous version is known good and rollback is cheap and safe. Stateless services, the artifact still available, no irreversible database changes, and the impact is serious. Rolling back is usually a pipeline run or a traffic switch, and it gets you back to a known state while you investigate calmly. Feature flags are even faster, just switch off the new feature without redeploying.
+
+I lean towards rolling forward, deploying a quick fix, when rollback isn't safe or possible. Like the release included database changes the old version can't handle, data's already been written in the new format, external partners have already integrated with a new API, or the fix is tiny, well understood and can go through the pipeline quickly. Rolling forward under pressure is risky though, so the fix still goes through tests and review.
+
+Preparation makes all this easier. Backward-compatible database changes keep rollback possible. Every release has a documented rollback plan before it goes out. Deployments are automated, so rolling back isn't a manual scramble. And monitoring with clear signals, like error rate and key business events, tells you quickly if the action actually worked.
+
+In a regulated environment, either action is a controlled change, so the decision, approvals and verification get recorded in the incident and change records.
+
+@p17-554
+So in regulated companies, production changes often need approval from a change advisory board, a CAB. A heavyweight CAB meeting for every change slows delivery, pushes people towards big risky batches, and research shows external approval boards don't actually reduce failure rates. So the goal is to keep the control but make it lighter and smarter.
+
+What's helped, in my experience.
+
+Classify changes. Standard changes are pre-approved because they're low-risk and follow a proven, automated process, like a routine deployment through the validated pipeline. Normal changes get a review. Emergency changes have an expedited path with review afterwards. Getting our routine pipeline deployments classified as standard changes was a big win for us.
+
+Bring evidence automatically. The pipeline produces what the CAB wants to see. Linked work items, test results, code review approvals, security scan results, the deployment plan and the rollback plan. The change record gets created and updated by the pipeline, not typed in by hand.
+
+Shift approvals left. Peer review in pull requests and automated checks give most of the assurance, and the CAB focuses on genuinely risky stuff, like data migrations or infrastructure changes.
+
+Make releases smaller and more frequent, so each change is easier to assess.
+
+Show the data, like change failure rate, to build trust that the process works.
+
+In our GxP context, validation evidence and approvals are mandatory, but automating their collection kept releases moving without cutting corners.
+
+@p17-555
+Actually an ephemeral preview environment is a short-lived copy of the app created automatically for a pull request, with its own URL, and destroyed when the pull request is merged or closed. Reviewers, testers and product owners can try the change for real before it merges, instead of reading code or waiting for a shared test environment.
+
+How it's usually built. For front ends it's easy. Services like Azure Static Web Apps, Vercel or Netlify, or a pipeline that uploads to a bucket under a pull-request path, create a preview site per pull request automatically.
+
+For back-end services on Kubernetes, the pipeline deploys the pull request's image into a new namespace named after the pull request, using the same Helm chart with a small values override, and a dynamic host name like pr-123.dev.example.com. Dependencies are either shared, like a common dev database with test data, or created per environment, like a small database container seeded with test data, depending on cost and isolation needs. A cleanup job deletes the namespace when the pull request closes, plus a nightly sweep for anything left behind.
+
+On Azure Container Apps or AWS, infrastructure as code can create and destroy a small stack per pull request.
+
+Watch-outs, cost, so environments are small and auto-expire. Secrets, which shouldn't be exposed to pull requests from forks. And data, which has to be synthetic, never copies of production data. That last one is non-negotiable in our domain.
+
+@p17-556
+Okay, GitHub Actions gives you two main ways to reuse logic, at different levels.
+
+Composite actions bundle several steps into one action, defined in an action.yml with inputs and outputs. Like a setup-dotnet-build action that installs the SDK, restores with caching, builds and runs tests with coverage. Any job can use it as a single step. They're good for sharing step sequences, and they run inside the caller's job, on the caller's runner.
+
+Reusable workflows are whole workflows triggered with workflow_call, with defined inputs, secrets and outputs. A caller job references them with a uses line pointing at the workflow file in the shared repo, pinned to a tag like v2. They can contain multiple jobs, use their own runners, environments and protection rules, and they're good for standardising entire processes, like build-and-push-image or deploy-to-environment with approvals.
+
+What I do, keep shared workflows in a central repository, version them with tags, and have consumers pin a tag, or for third-party actions a full commit SHA, so an upstream change can't silently alter pipelines. Pass secrets explicitly instead of using secrets inherit everywhere. Set minimal permissions for the GITHUB_TOKEN at the workflow level. And document inputs clearly.
+
+Organisation-level rulesets can require certain workflows to run on all repositories, like a security scan, which gives you similar governance to required templates in Azure Pipelines.
+
+And changes to shared workflows get tested on a sample repository before a new version is tagged.
+
+@p17-557
+So traceability means for any change running in production, I can answer which requirement or bug it came from, who wrote and reviewed it, which tests verified it, which build produced it, and when and by whom it was deployed and approved. In a GxP environment, auditors expect exactly this.
+
+How the tooling gives it to you in Azure DevOps.
+
+Work items. Every requirement, user story and bug is a work item. Branch policies require pull requests to link work items, and commits mention them too.
+
+Pull requests record the reviewers, approvals, comments and the validation build.
+
+Builds link to the commits and work items included since the last build, and publish test results and coverage, which attach to the build. The build number carries the version.
+
+Releases and environments. The deployment records which build artifact went to which environment, with timestamps, approvals and who approved. Release notes can be generated from the linked work items.
+
+Test management. Test cases link to requirements, and test runs, manual or automated, link to builds, so validation evidence connects requirement to verification.
+
+Going the other way, from a requirement I can find all the code and every release that included it.
+
+What actually makes it work is enforcement through policies, not just discipline. And keeping retention settings long enough, because pipeline runs and artifacts get deleted by default after a while, which would break the audit trail. In our setup we set retention to match our records requirements.
+
+@p17-558
+See, Testcontainers is a library that starts real dependencies in Docker containers from inside the test code, and throws them away afterwards. There's a .NET version, with ready-made modules for SQL Server, PostgreSQL, Redis, RabbitMQ, Kafka, LocalStack for AWS, Azurite for Azure Storage, and lots more.
+
+Why it beats the alternatives. In-memory fakes, like the EF Core in-memory provider or SQLite standing in for SQL Server, behave differently from the real database. No real transactions, different SQL translation, no stored procedures or constraints. Tests pass and production fails. A shared test database is slow to reset, and tests step on each other. Testcontainers gives each test run a real, clean instance of the same engine and version you use in production.
+
+How I use it in .NET with xUnit. A fixture class implements IAsyncLifetime, creates an MsSqlBuilder and calls Build on it, starts the container in InitializeAsync, applies migrations, and exposes the connection string. WebApplicationFactory then overrides the app's connection string to point at the container, so the API runs end to end against the real database. The fixture is shared across a test collection, because starting a container takes a few seconds, and Respawn or transactions reset data between tests.
+
+It runs the same on a developer laptop and in CI, as long as Docker is available on the agent, which is really the main setup requirement. Once teams try it, they honestly don't go back to in-memory fakes.
+
+@p17-559
+Okay, integration tests that call secured endpoints need an authenticated user, but they shouldn't depend on a real identity provider like Keycloak. I've used two approaches for this.
+
+A test authentication handler. In WebApplicationFactory's ConfigureTestServices, I register a custom AuthenticationHandler under a test scheme and make it the default. Its HandleAuthenticateAsync builds a ClaimsPrincipal with the claims the test needs, user id, roles, site or study scopes, and returns success. Tests can control the claims per request, for example by reading a test header, so one test runs as a site user and another as an admin. Authorisation policies, role checks and resource-based handlers still run for real, which is exactly what I want to test.
+
+Locally signed JWTs. Configure the JWT bearer options in tests to trust a signing key created in the test, then mint tokens with the claims you need. This exercises the real JWT bearer pipeline, including issuer, audience and expiry validation, which is good for testing token-related behaviour.
+
+Whichever one, I always include negative tests. No token gives 401, a valid user without permission gives 403, and a user from one site can't read another site's data. Those are the tests that catch real security bugs.
+
+What I avoid is disabling authorisation in tests altogether, with AllowAnonymous filters, because then the most important rules never get tested.
+
+@p17-560
+So when a service calls an external HTTP API, like a partner's shipment API or an identity provider, tests shouldn't call the real thing. It's slow, flaky, might cost money, and you can't make it fail on demand.
+
+WireMock.Net starts a real HTTP server inside the test process on a random port. I point the app's HttpClient base address at it, then set up stubs. When a GET comes in at slash shipments slash 123 with a certain header, return 200 with this JSON body. When a POST comes in, return 201. It records all requests, so tests can verify exactly what was sent, URL, headers and body.
+
+Its real value is testing failure behaviour, which is hard with the real API. I can stub a 500, a 429 with a Retry-After header, a slow response that blows past the timeout, malformed JSON, or a connection reset. Then I check retries, circuit breakers and fallbacks behave as designed, like the Polly pipeline retrying twice and then the service returning a clear error.
+
+Scenarios let stubs change state across calls, like failing on the first call and succeeding on the second.
+
+Compared with mocking HttpMessageHandler in unit tests, WireMock exercises the real HTTP stack, serialisation and handler pipeline.
+
+The stubs should match the real API's contract though. If the partner gives an OpenAPI spec or a sandbox, I check stubs against it, or use contract tests, so the fake doesn't drift from reality. That drift is where I've seen people get burned.
+
+@p17-561
+Honestly in microservices, an API change can break a consumer without anyone noticing until integration or production. End-to-end tests catch it, but they're slow and fragile. Contract testing catches it earlier and cheaper.
+
+With Pact, the consumer team writes tests describing the interactions they rely on. When I call GET slash shipments slash 123, I expect 200 with a body containing id, status and site. During the consumer's test run, Pact acts as a mock provider and records these expectations into a contract file, the pact. The pact gets published to a Pact Broker.
+
+The provider then runs verification in its own pipeline. Pact replays each interaction from every consumer's pact against the real provider service, using provider states to set up data, like a shipment with id 123 exists, and checks the responses match. If the provider renamed a field a consumer uses, verification fails in the provider's pipeline, before release.
+
+The broker tracks which versions of consumers and providers are compatible, and the can-i-deploy check answers whether a specific version can safely go to an environment.
+
+What you get, each consumer only specifies what it actually uses, so providers can change everything else freely. Teams find breaking changes early. And you need fewer slow end-to-end tests.
+
+It works for messages too, like event payloads on RabbitMQ or Kafka. The investment is mainly setting up the broker and provider states, so it pays off most with several teams and lots of service interactions.
+
+@p17-562
+Okay, Mock Service Worker intercepts requests at the network level. In the browser it uses a service worker, and in Node, for Jest or Vitest, it hooks into the request layer. The app code keeps using fetch or axios normally. It has no idea requests are mocked.
+
+I define handlers with the http helpers, like http.get for slash api slash shipments, returning a JSON response. Tests use the real data-fetching code, like RTK Query, TanStack Query or a service, so I'm testing what users actually experience. The component renders, fetches, shows a loading state, then shows data or an error.
+
+Why it's better than mocking fetch or the API module. Module-level mocks tie tests to implementation details, so refactoring how data is fetched breaks tests even when behaviour hasn't changed. MSW tests survive refactors.
+
+Per-test overrides make error cases easy. server.use with a handler returning 500 or a delayed response, then assert that the error message and retry button show up. After each test, handlers reset.
+
+The same handlers get reused in Storybook, so components show realistic data in isolation, and in local development, so front-end work can carry on before the back-end endpoint even exists.
+
+To keep mocks honest, I generate handlers or types from the OpenAPI spec where I can, so if the API changes, TypeScript flags the mismatch.
+
+One config tip, fail tests on unhandled requests, so a missing handler gets caught instead of silently hitting nothing.
+
+@p17-563
+So code coverage tells you which lines ran during tests, not whether the tests would notice if those lines were wrong. A test that calls a method and asserts nothing gives full coverage and catches nothing.
+
+Mutation testing measures test quality directly. A tool makes small changes to the code, called mutants. Changing greater than to greater than or equal, flipping a boolean, swapping a plus for a minus, removing a method call, or returning a default value. Then it runs the tests against each mutant. If a test fails, the mutant is killed, which is good. If all tests still pass, the mutant survived, meaning nothing in the test suite would notice that bug. The mutation score is the percentage killed.
+
+For .NET, Stryker.NET does this, and Stryker exists for JavaScript and TypeScript too. It produces an HTML report showing each surviving mutant in the code, which points straight to missing assertions or untested edge cases, like boundary conditions in a date or quantity check.
+
+It's slow, because it runs the tests many times, so I don't run it on every build. I run it on critical modules, like calculation, validation or allocation logic, periodically or in a nightly pipeline, and use the since option to mutate only changed code in pull requests.
+
+I don't chase 100 percent, some mutants are equivalent and can't be killed. The value is finding the important gaps that coverage hides. I think that's the best way to put it in an interview.

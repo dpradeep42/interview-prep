@@ -1,0 +1,165 @@
+@p17-540
+So supply chain attacks go after the path from source code to production rather than the app itself. A compromised dependency, a tampered build agent, or a malicious package with the same name as an internal one. So I protect each step.
+
+Source. Branch protection with required reviews, signed commits where practical, and secret scanning to stop credentials getting committed.
+
+Dependencies. Lock files and pinned versions, so builds are reproducible. Package source mapping in NuGet and scoped registries in npm, so internal package names can only come from the internal feed, which prevents dependency confusion. Vulnerability scanning with dotnet list package with the vulnerable flag, npm audit, Dependabot or a commercial scanner. And a review process for adding new dependencies.
+
+Build. Pipelines defined as code and reviewed. Minimal permissions for the pipeline's token. Pinned versions of actions or tasks, ideally by commit SHA. Ephemeral, clean build agents. And no secrets available to builds from untrusted pull requests.
+
+Artifacts. Generate a software bill of materials, an SBOM in CycloneDX or SPDX format, so we know exactly what's inside each release and can quickly answer "are we affected?" when a new vulnerability drops. Sign artifacts and images, with tools like Sigstore Cosign or Notation, and produce provenance attestations following SLSA. Verify signatures at deployment time.
+
+Deployment. Only signed, scanned artifacts from the trusted pipeline can reach production. Honestly, the SBOM part is what pays off fastest when the next big CVE hits.
+
+@p17-541
+Okay, outdated dependencies pile up security vulnerabilities and make future upgrades painful, because jumping several major versions at once is way harder than small, regular steps. Automating update pull requests keeps it manageable.
+
+Dependabot, built into GitHub, and Renovate, which works with GitHub, Azure DevOps, GitLab and others, scan manifests, like csproj files, Directory.Packages.props, package.json, Dockerfiles and pipeline files, and open pull requests to update versions. Security updates are raised as soon as a vulnerable version is known.
+
+To make it workable and not just noise.
+
+Group related updates, like all Microsoft.Extensions packages or all testing packages, into one pull request, and schedule non-security updates weekly.
+
+Automerge low-risk updates, like patch versions of dev dependencies, when the pipeline passes. That depends on a good test suite, which is the real safety net.
+
+Treat major versions separately, read the release notes and plan the changes, since they're often breaking.
+
+Use central package management in .NET, so versions are defined in one place across a solution.
+
+Keep base images current too, because OS packages in images are a big source of vulnerabilities.
+
+The team also needs a habit, someone reviews update pull requests every week, so they don't turn into ignored noise. In a regulated product, dependency updates still go through the normal validated release process, but small regular updates make that process way lighter.
+
+@p17-542
+See, the situation is production is on version 3.4, main already has weeks of changes for 3.5 that aren't ready, and a critical bug has to be fixed in production today.
+
+Here's what I'd do.
+
+Branch from what's in production, not from main. That's the release branch or the tag for 3.4, like release slash 3.4. Create a hotfix branch from it.
+
+Make the smallest possible fix, with a test that reproduces the bug first. Keep it focused, no refactoring or extra changes sneaking in.
+
+Run it through the pipeline like any release. Build, automated tests, review and approvals. Even in an emergency, I don't skip the review or the regression tests that matter. In a regulated environment, there's often an expedited change process, but it still records the risk assessment, testing evidence and approvals.
+
+Release it as 3.4.1, a new patch version, and deploy with the normal deployment pipeline, so the deployment itself is a known, tested process.
+
+Bring the fix back to main. Merge or cherry-pick it into main, and into any other active release branches, so 3.5 doesn't bring the bug back. Ideally the fix is developed on main first and cherry-picked to the release branch, so it's never forgotten, but in urgent cases you can reverse the order.
+
+Afterwards, a short review. Why did the bug escape, and what test or check would have caught it. That's the part people skip, and it's the part that actually prevents the next one.
+
+@p17-543
+Actually a slow pipeline costs focus and pushes people to batch changes, which is the opposite of what we want. My target for pull request validation is around ten minutes. I start by measuring where the time goes, using the pipeline's step timings over several runs, then go after the biggest items.
+
+Caching. Restore NuGet and npm packages from a pipeline cache keyed on the lock file hash, instead of downloading everything every time. For Docker, reuse layer caches through BuildKit and a registry cache.
+
+Parallelism. Split independent work into parallel jobs, like backend build and tests, front-end build and tests, and static analysis. Split large test suites across agents.
+
+Do less work. Path filters, so front-end changes don't trigger the backend pipeline in a monorepo. Only build affected projects with tools like Nx for front ends. And move slow, broad tests, like full end-to-end suites or long performance tests, to a nightly or post-merge pipeline, keeping a fast smoke set on pull requests.
+
+Faster tests. Find the slowest ones. Replace sleeps with proper waits. Share expensive fixtures like Testcontainers databases across a test class or collection. And run tests in parallel where they're isolated.
+
+Better agents. More CPU, or self-hosted agents with warm caches, if the hosted agents are the bottleneck.
+
+Then track pipeline duration as a metric, so it doesn't slowly creep back up. Trust me, it always creeps.
+
+@p17-544
+Okay, both work. The choice just changes how builds, versioning and ownership get handled.
+
+In a monorepo, many services and packages live in one repository. The good side, atomic changes across services and shared libraries in a single pull request, one place to search, consistent tooling and standards, and easy refactoring. The CI/CD challenge is you don't want every commit to build and deploy everything, so pipelines need path filters or affected-project detection, like Nx affected for JavaScript, or a build graph tool. Ownership has to be explicit, with CODEOWNERS files per folder. Versioning is either one version for all, or independent versions per package with tooling. And the repo can get big, needing shallow clones and sparse checkouts.
+
+With multiple repositories, each service or package has its own repo, pipeline and version. The good side, clear ownership and permissions, independent release cycles, smaller and faster pipelines. The challenges, changes across several repos need coordinated pull requests and releases, shared code becomes versioned packages, which brings dependency update work, and standards drift unless pipeline templates are shared.
+
+What I've seen work is polyrepo for independently deployed services, with shared pipeline templates and packages published to an internal feed. Our React shell with npm feature packages is a good example. Each feature package is versioned and published to the Azure DevOps feed, and the shell consumes specific versions. A monorepo makes sense for tightly coupled front-end packages where changes usually span several of them.
+
+@p17-545
+So protecting main is the simplest, highest-value control in the whole delivery process. Here's what I usually set up.
+
+No direct pushes to main. All changes go through pull requests.
+
+A required build validation. The pull request pipeline has to pass, compiling the code, running unit tests and static analysis, before merging. In Azure Repos that's a build validation policy, in GitHub it's a required status check. The build should run against the merged result, not just the branch.
+
+Required reviewers. At least one or two approvals, with code owners automatically added for the areas they own, like the database schema or the security code. Approvals reset when new changes are pushed, so reviewers don't approve one version and then a different one gets merged.
+
+Linked work items, so every change traces to a requirement or bug, which matters a lot in a regulated environment.
+
+All comments resolved before merging.
+
+A merge strategy. Squash merges for a clean history on main, or merge commits if detailed history matters.
+
+Quality gates. A SonarQube or similar gate on new code, like no new critical issues and coverage on new code above a threshold, plus secret scanning and dependency checks.
+
+Exceptions. Admins can bypass in emergencies, but bypasses are logged and reviewed.
+
+These rules are only as good as the checks behind them, so I keep the pull request pipeline fast and reliable. Otherwise people honestly start looking for ways around it.
+
+@p17-546
+See, DORA metrics come from the DevOps Research and Assessment program, and they measure software delivery performance with four key numbers.
+
+Deployment frequency, how often you deploy to production. Lead time for changes, how long from a commit to that commit running in production. Change failure rate, the percentage of deployments that cause a failure needing a fix, rollback or hotfix. And time to restore service, how long it takes to recover from a failure in production. DORA has since added deployment rework rate and refined the model, but these four are the core.
+
+The research shows the first two, throughput, and the last two, stability, improve together in high-performing teams. Going faster with small changes doesn't have to mean more failures. Usually it means fewer, because each change is smaller and easier to understand.
+
+How I'd use them. Measure from data the tools already have, like pipeline runs, deployment records and incident tickets, not manual reporting. Look at trends for a team over time, not comparisons between teams. Use them to find bottlenecks, like a long lead time caused by waiting days for a manual test environment, or a high failure rate pointing at weak tests.
+
+What to avoid is turning them into targets for individuals, which leads to gaming, like splitting deployments artificially.
+
+In a regulated release process, lead time includes validation and approval steps, so measuring it shows where automating evidence collection would help most.
+
+@p17-547
+Okay, so in our front-end architecture, the React shell consumes feature packages, each built and versioned independently and published to a private npm feed on Azure DevOps. The pipeline for each package goes like this.
+
+On pull request, install with npm ci using the lock file, run lint, type checks with tsc, unit tests with coverage, and a build with Vite in library mode, producing ES module output and type declarations. The package.json lists React, MUI and Redux Toolkit as peer dependencies, so the shell provides a single copy of each, instead of every package bundling its own.
+
+On merge to main, calculate the version, using conventional commits or a manual version bump reviewed in the pull request, then publish to the feed with an npmrc that authenticates through the pipeline's identity, never a personal token committed to the repo. Pre-release versions, like 2.3.0-beta.1, can be published from feature branches for testing in the shell without affecting stable consumers.
+
+Feed views help promote versions. A package goes to the Prerelease view first, and once it's validated, gets promoted to Release, so consumers only see approved versions.
+
+In the shell, versions are pinned exactly, and upgrading a feature package is a reviewed change with its own release notes. That gives us traceability, for any shell release we know exactly which version of each feature it had.
+
+And changelogs per package make it clear what each version changes.
+
+@p17-548
+So SSDT database projects keep the database schema as code. Tables, views, stored procedures and functions as .sql files in a project, compiled into a dacpac, which is a package describing the desired schema.
+
+In the build stage, the pipeline builds the database project, which validates references and syntax, and publishes the dacpac as an artifact, alongside the app artifacts, with the same version.
+
+In the deployment stage, SqlPackage compares the dacpac with the target database and generates a change script to bring it to the desired state. What I do is generate the script first, with the Script action, publish it as an artifact and review it for production, especially in a regulated environment, instead of blindly applying it. Then apply with Publish, or by running the reviewed script.
+
+Publish profiles control the dangerous behaviour. BlockOnPossibleDataLoss stays true, so a change that would drop a column with data fails instead of losing data. DropObjectsNotInSource is used carefully. Pre- and post-deployment scripts handle data changes, like seeding reference data, written to be idempotent.
+
+Since our platform has a database per study plus a master database, the same dacpac gets applied to many databases. So the deployment loops over the target list, records each result, and stops or continues according to a clear rule when one database fails.
+
+Drift reports catch changes made directly in production outside the process, which should then either be reverted or brought into source control.
+
+@p17-549
+Actually for apps hosted on IIS, which is how our on-premise platform runs, deployments usually use Azure DevOps deployment groups or environments with VM resources, where an agent on each server runs the deployment steps.
+
+The basic steps. Download the build artifact. Stop the site or drop app_offline.htm in place, which tells the ASP.NET Core Module or ASP.NET to stop the app and serve a maintenance page, releasing file locks. Copy the new files with Web Deploy, msdeploy, or a robocopy-style file copy. Apply configuration transforms or environment-specific settings. Start the app pool or remove app_offline. Then warm the site with a request and run smoke tests.
+
+To get close to zero downtime with multiple servers behind a load balancer, I deploy one server or a batch at a time. Take it out of the load balancer pool, or let health checks drain it, deploy, warm up, verify, and put it back, then move to the next. The rolling strategy in deployment jobs supports this with a max number of targets in parallel.
+
+For a single server, a blue-green style setup with two IIS sites or folders and a switch in the binding or reverse proxy, like ARR or URL Rewrite, lets you switch instantly and switch back.
+
+Details that matter, the Application Initialization module to preload the app, consistent versions across all nodes, verified after deployment, and keeping the previous version's folder for quick rollback. That last one has saved us more than once.
+
+@p17-550
+Okay, the goal is one build artifact and different configuration per environment, applied at deployment or runtime, never by rebuilding.
+
+For .NET Framework apps, configuration lives in web.config. Traditionally, build configurations had transforms, like Web.Release.config, applied at build time, which ties configuration to the build. Better options for build once, deploy many. Apply transforms at deployment time, which Azure DevOps IIS deployment tasks support with environment-named transform files. Use token replacement, where the web.config has placeholders, like DbServer wrapped in hash and curly brace markers, replaced from pipeline variables or variable groups during deployment. Or Web Deploy parameters.xml, which declares parameters that get values per environment. Since .NET Framework 4.7.1, configuration builders can also pull values from environment variables or a secrets store at runtime.
+
+For modern .NET, configuration is layered at runtime. appsettings.json, then appsettings dot environment name dot json, then environment variables, then sources like Key Vault, App Configuration or Parameter Store, with later sources overriding earlier ones. The ASPNETCORE_ENVIRONMENT or DOTNET_ENVIRONMENT variable picks the environment. Nested keys map to environment variables with double underscores, like ConnectionStrings double underscore Default.
+
+Secrets never go in config files in the repo. They come from pipeline secret variables or secrets managers.
+
+I also make the app validate its configuration at startup, with options validation, so a missing or wrong setting fails the deployment right away instead of failing later on the first request. I learned that one the hard way.
+
+@p17-551
+So front-end frameworks push you towards build-time configuration. Vite injects import.meta.env values, Create React App had process.env, and Angular has environment files picked by build configuration. The values get baked into the JavaScript bundle. That means a separate build per environment, which breaks build once, deploy many, and in a regulated setting means the tested bundle isn't the one that goes to production.
+
+The usual fix is runtime configuration. The app ships with a small config file, like a config.json at the site root or an env-config.js, that's not part of the bundle. At deployment, the pipeline writes the environment's values into that file, like the API base URL, the identity provider authority and client id, feature flags and the telemetry key. At startup, the app fetches the file before rendering, or index.html loads env-config.js, which sets a global object.
+
+In Angular, an APP_INITIALIZER, or provideAppInitializer in newer versions, can load the config before the app bootstraps, and a config service exposes it. In React, the root component waits for the config before rendering the router.
+
+For containers, the entrypoint can generate the file from environment variables at startup.
+
+A few things matter. The config file must not be cached aggressively, or users get stale values after a change, so it gets no-cache headers. It must contain no secrets, since everything in a browser is public. And the app should fail clearly if the config is missing, not half-load. People miss that caching one a lot.

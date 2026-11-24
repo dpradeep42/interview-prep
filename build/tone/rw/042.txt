@@ -1,0 +1,131 @@
+@p17-492
+So CPU limits in Kubernetes are enforced by the Linux CFS quota. The CPU limit gets converted into a time budget per 100-millisecond period. A limit of 500m means the container can use 50 milliseconds of CPU time in each 100-millisecond window. If it burns that early, say because several threads run in parallel, it's paused until the next window. That's throttling.
+
+The symptom is really confusing. Average CPU looks fine, maybe 40 percent of the limit, but latency spikes, especially p99. Multi-threaded runtimes like .NET make it worse, because GC and the thread pool can burn the budget in one short burst. The metric to check is container_cpu_cfs_throttled_periods_total compared with total periods. A high throttled ratio confirms it.
+
+Fixes, depending on the situation. Raise the CPU limit, or remove CPU limits for latency-sensitive services and rely on requests, which still guarantee a fair share, because CPU is compressible and unused CPU on the node is otherwise just wasted. A lot of teams now keep memory limits but drop CPU limits. Also make sure the runtime sees a sensible CPU count. .NET uses the limit to size the thread pool and GC heaps, and DOTNET_PROCESSOR_COUNT can be set if needed.
+
+And if CPU is genuinely saturated, then honestly the real fix is scaling out with the HPA or optimising the hot code path. No setting will save you there.
+
+@p17-493
+Okay, the Horizontal Pod Autoscaler changes the number of replicas of a Deployment based on metrics. Every 15 seconds or so, it compares the current metric with the target and works out the desired replicas. Current replicas times current value divided by target, within the min and max you set.
+
+CPU utilisation is the classic metric, measured as a percentage of the pod's CPU request, from the metrics server. So the HPA only works properly if requests are realistic. Memory is usually a poor scaling signal for .NET, because the GC doesn't hand memory back quickly, so pods never scale back in.
+
+Better signals are often application metrics. Requests per second per pod, in-flight requests, or queue length for workers. With the autoscaling v2 API, the HPA can use custom metrics through an adapter, like the Prometheus adapter, or external metrics, like the length of a RabbitMQ queue.
+
+The behaviour section controls how fast it scales. What I usually do is scale up quickly, say double the pods within a minute, and scale down slowly, with a stabilisation window of five minutes or more, so it doesn't flap when traffic dips for a moment.
+
+Things that break it, missing requests, a minReplicas of one in production, which gives you no redundancy, and pods with long startup times, where readiness probes and enough headroom matter, because new pods take time before they actually help.
+
+@p17-494
+See, KEDA, Kubernetes Event-Driven Autoscaling, is a CNCF project that scales workloads based on event sources. It installs as an operator, and you describe scaling with a ScaledObject that points at a Deployment and lists triggers.
+
+Under the hood, KEDA feeds external metrics into a normal HPA, so it doesn't replace the HPA, it makes it smarter. It has scalers for dozens of sources. RabbitMQ queue length, Kafka consumer lag, Azure Service Bus, AWS SQS, Redis lists, Prometheus queries, cron schedules, databases and more.
+
+It adds two things the plain HPA can't easily do. One is scaling to zero. When there are no messages, KEDA scales the worker to zero replicas, and when a message arrives, it activates the deployment again. Great for background workers that sit idle most of the day. The other is scaling on the real backlog instead of CPU. A queue worker might be mostly waiting on I/O, so CPU stays low even with thousands of messages waiting. Scaling on queue length per replica, like one pod per 100 messages, matches the actual work.
+
+KEDA also has ScaledJobs, which start a Kubernetes Job per batch of events, good for long-running tasks.
+
+Things to watch. Scale-to-zero adds a cold start delay, the target value needs tuning, and consumers have to handle being stopped mid-work, so graceful shutdown and idempotent processing still matter.
+
+@p17-495
+Actually you can scale three different things in Kubernetes, and each tool handles one of them.
+
+The HPA scales the number of pods. But if new pods don't fit on any node, they just sit Pending, so you also need node scaling.
+
+Cluster Autoscaler scales nodes. It watches for pods that can't be scheduled because of insufficient resources, and adds nodes to a node group, like an AWS Auto Scaling group or an AKS node pool. It also removes underused nodes when their pods can be moved elsewhere. It works with predefined node groups, so you decide the instance types up front.
+
+Karpenter, which started at AWS and is used more widely now, is a more flexible node provisioner. Instead of fixed node groups, it looks at the pending pods' requirements, like CPU, memory, architecture, zone, and spot or on-demand, and launches the best-fitting instance directly, often within a minute. It also consolidates, replacing several half-empty nodes with fewer, cheaper ones. On EKS it's become the common choice, and EKS Auto Mode uses it under the hood.
+
+The Vertical Pod Autoscaler adjusts a pod's requests and limits based on observed usage. I find it most useful for recommendations, running in recommendation-only mode to right-size requests. Applying changes used to need pod restarts, though in-place resizing is arriving. And VPA and HPA shouldn't both act on CPU for the same workload, they'll fight each other.
+
+@p17-496
+Okay, so a PodDisruptionBudget protects an app's availability during voluntary disruptions. Voluntary means planned actions, like draining a node for an upgrade, the cluster autoscaler or Karpenter removing a node, or someone running kubectl drain. Involuntary ones, like a node crashing, aren't covered.
+
+A PDB selects pods by label and says either minAvailable, like at least two pods must stay running, or maxUnavailable, like at most one pod can be down at a time. When a drain tries to evict pods, the eviction API checks the budget and refuses evictions that would break it. The drain then waits and retries, so pods move one at a time and the service stays up.
+
+Without a PDB, a node drain can evict all replicas of a service at once if they happen to sit on the same node, or a rolling node upgrade can take down too many replicas together. Then you get an outage during routine maintenance, which is embarrassing.
+
+Some practical rules. A PDB only helps if you have more than one replica, so production services run at least two or three, spread across nodes and zones. Don't set minAvailable equal to the replica count, or maxUnavailable to zero, because then the node can never be drained and upgrades get stuck. And pods failing readiness count as unavailable, so an unhealthy deployment can block drains too.
+
+My approach is to add a PDB to every production Deployment as part of the Helm chart.
+
+@p17-497
+So both expose HTTP services from inside the cluster to the outside, but they're different generations.
+
+Ingress is the original API. An Ingress resource lists host and path rules, like api.example.com slash shipments going to the shipments service, plus TLS settings. It needs an ingress controller to actually do the work, like ingress-nginx, Traefik, or a cloud load balancer controller. Its weakness is the API is small, so anything advanced, like rewrites, timeouts, canary weights or header-based routing, goes into controller-specific annotations, which aren't portable and are easy to get wrong. The community ingress-nginx controller has also been announced for retirement in 2026, so lots of teams are planning migrations.
+
+Gateway API is the newer, official successor, and it's generally available now. It splits responsibilities into roles. A GatewayClass is defined by the infrastructure provider. A Gateway, owned by the platform team, describes the listeners, ports and certificates. HTTPRoutes, owned by app teams, attach to a Gateway and describe routing. Path and header matching, traffic splitting by weight for canaries, redirects, rewrites and timeouts, all as first-class fields instead of annotations. There are also GRPCRoute and TLSRoute types, and cross-namespace references with explicit permission.
+
+For a new cluster, I'd go with Gateway API, because it's more expressive, portable across implementations, and that's where the ecosystem is heading. For existing Ingress setups, I'd migrate gradually, since both can run side by side.
+
+@p17-498
+Honestly the simple way to put it is a Deployment is for stateless pods. All replicas are interchangeable, they get random names, they can be created and killed in any order, and if they use storage, they usually share it or don't need it. Web APIs and workers are Deployments.
+
+A StatefulSet is for workloads where each replica has its own identity and data. It gives you three guarantees. Stable names, pods are named app-0, app-1, app-2, and keep those names when rescheduled. Stable network identity, with a headless service each pod gets its own DNS name, like app-0.app.namespace.svc, so peers can find each other. Stable storage, volumeClaimTemplates create a separate persistent volume for each pod, and that volume follows the pod when it moves to another node. It also starts, scales and updates pods in order, one at a time, by default.
+
+That's what clustered systems need. Databases like PostgreSQL with replicas, Kafka brokers, RabbitMQ clusters, Elasticsearch, Redis with persistence, or ZooKeeper, where each member has to know who it is and keep its own data.
+
+In practice, I'd think twice before running databases on Kubernetes at all. Managed services like RDS, Azure SQL or a managed message broker take away a lot of operational work. If we do run stateful systems in the cluster, I'd use a mature operator, like CloudNativePG or the RabbitMQ cluster operator, which handles failover, backups and upgrades on top of StatefulSets.
+
+@p17-499
+See, besides Deployments, Kubernetes has workload types for other patterns.
+
+A DaemonSet runs one copy of a pod on every node, or on a selected set of nodes. When a node joins the cluster, the pod gets added automatically. It's for node-level agents. Log collectors like Fluent Bit, monitoring agents like the node exporter or the OpenTelemetry collector in agent mode, network plugins, storage drivers and security agents.
+
+A Job runs pods until a task completes successfully, instead of keeping them running forever. It has settings for completions, parallelism, a backoffLimit for retries, an activeDeadlineSeconds timeout, and a ttlSecondsAfterFinished to clean up. It's for one-off work, like a database migration before a release, a data backfill, or generating a report.
+
+A CronJob creates Jobs on a schedule using cron syntax, with a time zone field. Useful settings, concurrencyPolicy set to Forbid, so a new run doesn't start while the previous one is still going. startingDeadlineSeconds, so missed runs after downtime don't pile up. And history limits for successful and failed jobs.
+
+A few lessons I've picked up. Jobs and CronJobs have to be idempotent, because a pod can be retried or, rarely, run twice. The container must exit with a non-zero code on failure, or Kubernetes thinks it succeeded. And for business schedules, the logic is the same as our Quartz jobs on-premise. The schedule triggers the job, but the job itself has to be safe to rerun.
+
+@p17-500
+Okay, a pod can have more than one container, and two patterns come up a lot.
+
+Init containers run before the main containers start, one after another, and each has to finish successfully. If one fails, the pod restarts it until it succeeds. They're for setup tasks. Waiting for a dependency to be reachable, downloading config or certificates, running a schema check, or setting file permissions on a shared volume. Since they're separate images, they can carry tools you don't want in the main app image.
+
+Sidecar containers run next to the main container for the pod's whole life, adding a capability without changing the app. Like a log shipper reading log files from a shared volume, a service mesh proxy like Envoy, an OpenTelemetry collector, or a proxy that refreshes credentials.
+
+Historically, sidecars were just extra regular containers, and that caused problems. No guarantee they started before the app, and in Jobs, the sidecar kept running after the main container finished, so the Job never completed. Kubernetes now has native sidecars, stable since version 1.33. You declare them as init containers with restartPolicy Always. They start before the main containers, keep running, get restarted if they crash, and shut down after the main containers stop, which fixes both problems.
+
+I keep the number of containers per pod small, though, because every container adds resource requests and complexity. Pretty much my rule of thumb.
+
+@p17-501
+So by default, every pod in a Kubernetes cluster can talk to every other pod, in any namespace. Convenient, but it means a compromised pod can reach everything, including databases and internal admin services.
+
+A NetworkPolicy restricts traffic to and from selected pods. It selects pods by label and lists allowed ingress sources and egress destinations, by pod labels, namespace labels or IP blocks, plus ports. Once any policy selects a pod for a direction, everything not explicitly allowed in that direction is denied.
+
+Policies need a network plugin that enforces them, like Calico, Cilium, or the cloud provider's implementation. Without one, the objects are accepted but do nothing, which is a dangerous surprise.
+
+My usual approach per namespace, start with a default deny for ingress, and often egress, for all pods. Then add explicit allows. The ingress controller can reach the API pods on port 8080. The API can reach the database or Redis on their ports. The worker can reach the message broker. Egress rules also have to allow DNS to the cluster DNS service, or nothing works at all. That's the most common mistake, people forget DNS.
+
+I roll it out carefully, in audit or logging mode first where the plugin supports it, and test traffic paths in staging, because a wrong policy just shows up as mysterious timeouts.
+
+For richer rules, like by DNS name or HTTP path, Cilium and service meshes offer extended policies.
+
+@p17-502
+Actually Kubernetes RBAC controls who can do what with the Kubernetes API, and it's built from four objects.
+
+A Role lists permissions within one namespace. Which API groups, which resources, like pods, deployments or secrets, and which verbs, like get, list, watch, create, update or delete. A ClusterRole is the same but cluster-wide, or reusable across namespaces. A RoleBinding grants a Role or ClusterRole to subjects within one namespace. A ClusterRoleBinding grants a ClusterRole across the whole cluster.
+
+Subjects are users, groups or service accounts. Kubernetes doesn't store users itself. Humans come from the identity provider, like Entra ID on AKS or IAM on EKS through access entries, mapped to groups. Workloads use service accounts.
+
+How I apply least privilege. Developers get read access in their team's namespaces, with no access to secrets in production. Deployment pipelines get a service account that can update deployments in specific namespaces only. App pods get their own service account with no API permissions at all, unless they genuinely need them, and automountServiceAccountToken set to false otherwise. Cluster-admin is kept for a small platform group, ideally with just-in-time access.
+
+One thing to watch, permission to read secrets, create pods or exec into pods is very powerful, because it can lead to reading any secret in the namespace. So I treat those verbs as sensitive.
+
+kubectl auth can-i, with the as flag, is the quick way to check what a subject can do.
+
+@p17-503
+Okay, namespaces are the basic unit for sharing a cluster. Each team or app gets its own namespaces, often one per environment, and namespaces give you separate names, RBAC boundaries, policies and quotas.
+
+ResourceQuotas cap the total resources a namespace can use. Total CPU and memory requests and limits, number of pods, services, load balancers, persistent volume claims and storage. It stops one team's runaway deployment or a bad HPA setting from eating the whole cluster. Once a quota covers CPU or memory, every pod in that namespace has to declare requests and limits, or it gets rejected.
+
+LimitRanges set per-container rules within a namespace. Default requests and limits applied when a container doesn't specify them, plus min and max values. That makes the quota work smoothly and catches containers asking for absurd amounts.
+
+Together with RBAC per namespace, NetworkPolicies with default deny, and Pod Security admission labels, this gives you soft multi-tenancy, which is fine for teams within one company who reasonably trust each other.
+
+It isn't strong isolation, though. All namespaces share the same nodes, kernel and control plane. For hostile or strongly regulated tenants, I'd go with separate node pools with taints, separate clusters, or virtual clusters.
+
+I also label namespaces with owner and cost centre, so cost tools can show each team its share of the cluster. That makes the cost conversation way less awkward.

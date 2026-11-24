@@ -1,0 +1,153 @@
+@p17-516
+Okay, so when traffic through a Service or Ingress fails with 503 or connection refused, I follow the path from the outside in, checking each hop.
+
+I start with, does the Service even have endpoints? kubectl get endpointslices for that service, or kubectl describe service. If the endpoints list is empty, the Service isn't selecting any ready pods. Usually that's one of two things. The Service selector doesn't match the pod labels, maybe a typo, or a label changed in the Deployment but not in the Service. Or the pods exist but aren't ready, because the readiness probe is failing, and Kubernetes removes unready pods from endpoints on purpose.
+
+Then ports. The Service's targetPort has to match the port the container actually listens on. Classic .NET example, since .NET 8 the container images listen on 8080 by default, but the Service still points to 80, so everything gets refused. I've seen that exact one more than once.
+
+Then the app itself. I port-forward straight to a pod on 8080 and call it. If that works, the problem's in the Service or Ingress. If not, it's the app.
+
+After that, the Ingress or Gateway. The backend service name and port in the rule, host and path matching, TLS secrets, and the ingress controller's logs, which usually say pretty clearly there's no healthy upstream.
+
+And last, NetworkPolicies that block traffic from the ingress controller's namespace to the app's namespace.
+
+@p17-517
+See, NotReady means the control plane hasn't heard a healthy status from the node's kubelet for a while, about 40 seconds by default. After a few minutes, pods on that node get marked for eviction and rescheduled elsewhere, as long as there's capacity and the workloads have more than one replica.
+
+My first step is kubectl describe node, looking at Conditions and recent events. The conditions tell you a lot. MemoryPressure, DiskPressure or PIDPressure being true points to resource exhaustion. NetworkUnavailable points to the network plugin. And if the kubelet has just stopped posting status, the Ready condition shows Unknown.
+
+The usual causes. The kubelet or container runtime crashed or is stuck, which you can often see in the node's system logs with journalctl. The disk filled up with images, logs or emptyDir data, which triggers disk pressure and image garbage collection. Memory exhaustion where system processes got OOM-killed because pods had no limits. Network problems between the node and the control plane, like security group or firewall changes, or expired node certificates. On cloud providers, the underlying VM might be impaired or being retired.
+
+For immediate impact, I cordon the node so nothing new lands there, and drain it if it's partly working, so pods move cleanly.
+
+On managed node groups, honestly the quickest fix is often to just replace the node, let the autoscaler or node group create a fresh one, and then investigate the root cause from logs instead of nursing the broken node back.
+
+@p17-518
+So an evicted pod was stopped by the kubelet or the API, not because the app crashed. kubectl describe pod shows the reason, and it's usually one of these.
+
+Node pressure eviction. When a node runs low on memory, disk or process ids, the kubelet evicts pods to protect the node. It picks by quality of service and usage. BestEffort pods first, then Burstable pods using more than their requests, and Guaranteed pods last. The fix is realistic requests, so heavy pods count properly at scheduling time, memory limits, and right-sized nodes.
+
+Ephemeral storage. A container writing too much to its writable layer or an emptyDir volume, like big temp files or logs written to files instead of stdout, goes over its ephemeral storage limit or fills the node's disk. Fix it with ephemeral-storage requests and limits, logs to stdout, cleaning up temp files, and a persistent volume for big data.
+
+Preemption. A higher-priority pod needed room, so the scheduler evicted lower-priority pods. That's by design if you use PriorityClasses, and critical services should have higher priority than batch jobs.
+
+API-initiated eviction, during node drains for upgrades or autoscaler scale-down, which PodDisruptionBudgets control.
+
+Evicted pods stay listed with status Failed until they're garbage collected, which is mostly noise. But a steady stream of evictions is a signal that capacity or limits need attention. That's the thing I'd actually watch for.
+
+@p17-519
+Actually with distroless or chiseled images, kubectl exec with bash just fails, because there's no shell. That's good for security, but you still need ways to debug.
+
+kubectl debug is the main tool. With an ephemeral container, you run kubectl debug on the pod with a busybox image, targeting the app container, and it adds a temporary container into the running pod. Since it shares the process namespace with the target container, I can see its processes, look at its files through the proc filesystem, and use network tools in the same network namespace, like curl, nslookup or netstat, to test DNS and connectivity exactly as the app sees them. The ephemeral container goes away when the pod is deleted, and the pod itself isn't restarted.
+
+kubectl debug can also create a copy of the pod with changes, like a different image with tools, or a changed command so a crashing container stays alive for inspection, without touching the real pod.
+
+For node-level problems, kubectl debug on a node starts a privileged pod on that node with the host filesystem mounted, which replaces SSH in a lot of cases.
+
+For .NET specifically, the diagnostics tools, dotnet-counters, dotnet-trace and dotnet-dump, can run from a sidecar or debug container sharing the process namespace and the tmp folder, because they talk to the runtime over a diagnostics socket.
+
+But honestly the first tools are still logs, metrics and traces. Interactive debugging in production is a last resort, and access to it should be restricted and audited.
+
+@p17-520
+Okay, these features control which pods run on which nodes, from two directions.
+
+Taints are on nodes and push pods away. A taint like dedicated equals batch with the NoSchedule effect means no pod gets scheduled there unless it tolerates that taint. NoExecute also evicts running pods that don't tolerate it, and PreferNoSchedule is a soft version. Kubernetes uses taints itself too, like on nodes that aren't ready or are under pressure.
+
+Tolerations are on pods and let them onto tainted nodes. But a toleration only permits. It doesn't attract the pod to that node. People mix that up a lot.
+
+Node affinity is on pods and attracts them to nodes with certain labels, like a particular instance type, zone, or a GPU label. requiredDuringSchedulingIgnoredDuringExecution is a hard rule, and preferredDuringScheduling is a weighted preference. nodeSelector is the simple, older form of a hard rule.
+
+So to dedicate nodes to a workload, you combine both. Taint the node pool so other pods stay away, and give the workload a toleration plus node affinity so it goes there and only there.
+
+Typical uses, GPU nodes for machine learning jobs, nodes with lots of memory for a cache, spot nodes for interruptible batch work with a toleration, separate system node pools for cluster add-ons, and Windows nodes for Windows containers, where Windows pods need a nodeSelector for the OS.
+
+@p17-521
+So running three replicas doesn't help much if all three land on the same node or the same availability zone. One node failure or zone outage and the service is down. So you have to tell the scheduler to spread them.
+
+Pod anti-affinity is the older way. A rule says don't schedule this pod on a node, or in a zone, that already runs a pod with the same label. The required form is strict, which can leave pods Pending if there are more replicas than nodes, and the preferred form is a soft preference. It also gets expensive to compute in large clusters.
+
+Topology spread constraints are the better, more flexible tool. A constraint says spread pods matching a label across a topology key, like the standard zone label or the hostname label, with a maxSkew, the maximum allowed difference in pod count between domains. whenUnsatisfiable set to DoNotSchedule makes it strict, ScheduleAnyway makes it best-effort. What I usually do is add two constraints, one across zones and one across nodes.
+
+Some details matter. Spread only applies at scheduling time, so after a zone recovers, pods don't automatically rebalance, and the descheduler can help with that. The autoscaler has to be able to create nodes in each zone. And PodDisruptionBudgets keep the spread safe during maintenance.
+
+Zone spreading can add cross-zone data transfer costs, which is usually worth it for production APIs.
+
+@p17-522
+Honestly this one surprises people a lot. You update a ConfigMap, and the app keeps using the old values. It depends on how the configuration is consumed.
+
+Environment variables are read only when the container starts. Changing the ConfigMap does nothing to running pods, they need a restart.
+
+Mounted volumes get updated by the kubelet eventually, usually within a minute or so, because files are refreshed through a symlink swap. An app that watches the file can reload. In .NET, adding a JSON file with reloadOnChange and reading settings through IOptionsMonitor works, though file watching on these symlinked volumes can be flaky, so you might need polling. And volumes mounted with subPath never get updated.
+
+Common approaches. Rollout restart, kubectl rollout restart deployment after the change, which recreates pods gradually. A checksum annotation in the Helm chart, where the pod template includes a hash of the ConfigMap contents, so any config change changes the pod template and triggers a normal rolling update automatically. That's my preferred method, because the change goes through the same safe rollout as a code change. Or a controller like Stakater Reloader, which watches ConfigMaps and Secrets and restarts deployments that reference them.
+
+Immutable ConfigMaps with versioned names, like app-config-v12, are another pattern. Each change creates a new ConfigMap, and the deployment references the new name, which makes rollback clean too.
+
+And real feature flags that must change instantly are better served by a feature flag service than ConfigMaps.
+
+@p17-523
+See, Kubernetes Secrets are only base64-encoded by default, not encrypted. Anyone who can read them through the API, or read etcd backups, can see the values. So I treat native Secrets carefully and usually source them from a real secrets manager.
+
+The baseline, turn on encryption at rest for secrets in etcd, which managed clusters support with a KMS key. Restrict RBAC so very few people and service accounts can get or list secrets. And never commit secret manifests to Git in plain form.
+
+Then pick how secrets get into the cluster.
+
+External Secrets Operator. An ExternalSecret resource says which keys to fetch from AWS Secrets Manager, Parameter Store, Azure Key Vault, HashiCorp Vault or others, and the operator creates and refreshes a normal Kubernetes Secret. Apps stay unchanged, and rotation in the source flows through.
+
+Secrets Store CSI Driver. Mounts secrets from the external store directly as files in the pod, optionally syncing to a Kubernetes Secret.
+
+Sealed Secrets. Encrypts secrets with the cluster's public key, so the encrypted version can be safely committed to Git, which suits GitOps. Only the controller in the cluster can decrypt them.
+
+Even better, avoid secrets where you can. Use workload identity, like IRSA or Pod Identity on EKS and Workload ID on AKS, so pods authenticate to cloud databases and services without any stored credentials. That's always my first choice.
+
+@p17-524
+Okay, Kubernetes releases a minor version roughly every four months, and each one is supported for about a year upstream, longer on some managed services with paid extended support. So upgrades are routine, and I treat them as a process, not an event.
+
+Before upgrading, read the release notes for removed or deprecated APIs. Tools like Pluto or kubent scan manifests and Helm releases for API versions that'll stop working. Check that add-ons, like the ingress controller, CNI, CSI drivers, cert-manager and monitoring agents, support the new version, and upgrade them first if needed. And go one minor version at a time, you can't skip versions on the control plane.
+
+The order. Upgrade a non-production cluster first and run the test suites. Then the control plane, which managed services do for you without downtime. Then the node pools, which have to stay within the supported version skew of the control plane. For nodes, I prefer creating a new node pool on the new version and draining the old one, or using surge upgrades that add new nodes before removing old ones. PodDisruptionBudgets, multiple replicas and graceful shutdown keep services up while pods move.
+
+After, watch error rates and events, then upgrade the remaining add-ons.
+
+Teams that keep clusters disposable and fully defined in code sometimes do blue-green clusters instead. Build a new cluster on the new version, shift traffic, retire the old one. Pretty clean if you can afford it.
+
+@p17-525
+So admission control is the step where the Kubernetes API checks or modifies objects before saving them. It's where you enforce security rules on every workload, instead of trusting each manifest.
+
+Pod Security Standards define three profiles. Privileged has no restrictions, for system components. Baseline blocks known privilege escalations, like privileged containers, host networking and host paths. Restricted enforces hardening best practices, non-root users, no privilege escalation, dropped capabilities, and a seccomp profile.
+
+Pod Security Admission is built into Kubernetes and applies these profiles per namespace, using labels. Each profile can be set to enforce, which rejects violating pods, audit, which logs them, or warn, which returns a warning to the user. My approach is to start with warn and audit on restricted, fix the workloads, then enforce.
+
+For rules beyond pod security, policy engines help. Kyverno writes policies as Kubernetes YAML. Require labels like owner and cost centre, require resource limits, allow images only from our registry, require signed images, or add default settings automatically. OPA Gatekeeper uses the Rego language for the same things. Kubernetes also now has built-in ValidatingAdmissionPolicy using CEL expressions, which covers a lot of simple rules without installing anything.
+
+I keep policies in Git, test them in CI against our manifests, and roll them out in audit mode first, so nobody's deployment breaks without warning.
+
+@p17-526
+Actually walking through it is the best way to show how the pieces fit together.
+
+kubectl reads the manifest and sends it to the API server over HTTPS, authenticating with my credentials. kubectl apply uses server-side or client-side apply to work out what changed compared to the last applied configuration.
+
+The API server authenticates me, checks RBAC authorisation, then runs admission controllers. Mutating ones first, which might add defaults or sidecars, then validating ones, like Pod Security or policy engines. If everything passes, it stores the Deployment object in etcd, the cluster's key-value database. Nothing has actually run yet, we've only recorded desired state.
+
+Controllers watch the API server for changes. The Deployment controller, in the controller manager, sees the new Deployment and creates a ReplicaSet. The ReplicaSet controller sees it needs three pods and creates three Pod objects, with no node assigned yet.
+
+The scheduler watches for unassigned pods. For each one, it filters nodes that fit the requests, taints, affinity and spread rules, scores them, and binds the pod to the best node.
+
+The kubelet on that node sees a pod assigned to it, asks the container runtime, like containerd, to pull the image and start the containers, sets up networking through the CNI plugin and volumes through CSI, runs probes, and reports status back.
+
+Meanwhile, the EndpointSlice controller adds ready pods to the Service, and kube-proxy or the CNI updates routing so traffic can reach them. So yeah, that's the whole chain.
+
+@p17-527
+Okay, containers are ephemeral, so anything written inside them disappears on restart. Persistent storage in Kubernetes has three layers.
+
+A PersistentVolume is a piece of storage in the cluster, like an EBS volume, an Azure Disk, or a network file share, with a size, access modes and a reclaim policy.
+
+A PersistentVolumeClaim is a request for storage by a workload. I need 20 GiB, ReadWriteOnce, of this class. The pod mounts the claim, not the volume directly, so app manifests don't depend on storage details.
+
+A StorageClass describes a type of storage and its provisioner, like gp3 EBS volumes, premium Azure disks, or EFS. With dynamic provisioning, creating a claim makes the provisioner create a matching volume automatically. volumeBindingMode WaitForFirstConsumer delays creation until the pod is scheduled, so the volume gets created in the same availability zone as the pod. That setting saves a lot of pain.
+
+Access modes matter. ReadWriteOnce means one node can mount it, typical for block disks. ReadWriteMany means many nodes, which needs a network file system, like EFS or Azure Files. ReadWriteOncePod restricts it to a single pod.
+
+The reclaim policy decides what happens when the claim is deleted. Delete removes the underlying disk, Retain keeps it for manual recovery. For important data, I use Retain plus regular snapshots with the CSI snapshot feature.
+
+For most stateless services, though, I avoid volumes completely and use object storage or managed databases.

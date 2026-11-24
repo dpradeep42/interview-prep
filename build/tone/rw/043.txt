@@ -1,0 +1,139 @@
+@p17-504
+So Helm is the package manager for Kubernetes. Instead of maintaining loads of raw YAML files per environment, you write a chart once and install it with different values.
+
+A chart is a folder with a Chart.yaml for metadata and version, a values.yaml with default settings, and a templates folder with Kubernetes manifests written as Go templates, like a Deployment whose replica count, image tag, resources and environment variables come from values. Charts can depend on other charts, and helpers in an underscore-helpers file avoid repetition, like standard labels.
+
+Installing a chart creates a release, a named instance in a namespace. helm upgrade with the install flag applies a new version with new values, and Helm keeps a history of release revisions, stored as secrets in the cluster, so helm rollback can go back to a previous revision quickly. The atomic flag rolls back automatically if the upgrade fails, and the wait flag waits for resources to become ready.
+
+Per environment, I keep small values files, like values-dev and values-prod, that only override what's different. Replica counts, resource sizes, hostnames and feature flags. Secrets don't go in values files, they come from a secrets manager.
+
+Habits I'd recommend, run helm lint and helm template in CI to render and validate manifests before deploying. Version charts properly. Publish charts to an OCI registry. And keep templates simple, because heavy template logic gets really hard to read and debug. I've seen charts nobody wanted to touch.
+
+@p17-505
+Okay, both solve the same problem, managing Kubernetes manifests across environments, just in different ways.
+
+Helm uses templating. Manifests have placeholders and logic, and values fill them in. It's a full package manager. Charts are versioned, published to registries, have dependencies, and installations are tracked as releases with history and rollback. It's the standard way to distribute software for others to install, like ingress controllers, cert-manager or monitoring stacks. The downside is templates can get hard to read, with lots of conditionals and indentation functions.
+
+Kustomize uses patching, no templates. You write plain, valid Kubernetes YAML as a base, then overlays per environment that patch it. Change replicas, add a resource limit, set an image tag, add labels or generate ConfigMaps. It's built into kubectl, kubectl apply with the k flag. It's simple, transparent and easy to review, because what you see is real YAML. But no packaging, versioning or release history, and complex variations turn into lots of patch files.
+
+How I'd choose. For third-party software, I use the vendor's Helm chart. For our own services, either works honestly. A team with many similar microservices benefits from one shared Helm chart with per-service values. A team that prefers plain YAML and GitOps might like Kustomize. And they combine well, Kustomize can render a Helm chart and then patch it, and Argo CD supports both.
+
+@p17-506
+See, GitOps means Git is the single source of truth for what should run in the cluster. Instead of a pipeline pushing changes into the cluster with kubectl or helm commands, an agent running inside the cluster pulls the desired state from a Git repo and keeps making the cluster match it.
+
+Argo CD and Flux are the two main tools. In Argo CD, you define an Application that points to a repo path, a Helm chart or Kustomize folder, and a target cluster and namespace. Argo CD compares the rendered manifests with what's actually running, shows the difference in a UI, and syncs, automatically or after approval. Flux works similarly with Kustomization and HelmRelease objects, and it's more CLI and controller oriented.
+
+Why I like it. Every change is a commit, reviewed in a pull request, so you get an audit trail and easy rollback by reverting. Drift detection, if someone changes something by hand in the cluster, the tool shows it as out of sync and can revert it. Security, CI doesn't need cluster admin credentials, because the cluster pulls changes. And disaster recovery is simpler, since the whole state can be reapplied to a new cluster.
+
+A typical flow. CI builds and tests the image, pushes it, then updates the image tag in the config repo, often through a pull request. Argo CD sees the change and deploys it. Promotion between environments becomes a pull request too, which suits audited environments really well.
+
+@p17-507
+Actually the latest tag is just a default name. It doesn't mean newest, and it moves every time someone pushes. If deployments use latest, you can't tell which code is running, two nodes can pull different images for the same deployment, a pod restart can silently upgrade the app, and rolling back is guesswork. With the imagePullPolicy defaults, Kubernetes might not even pull the new image at all.
+
+What I do instead. Tag every build with something unique and traceable, usually the Git commit SHA, and for releases also the semantic version, like 1.8.3. Both tags point to the same image. The deployment manifest references the exact tag, so every deployment is a recorded change and rollback just means deploying the previous tag.
+
+Make tags immutable in the registry. ECR, ACR and Artifact Registry all support it, so a tag can't be overwritten with different content.
+
+For the strongest guarantee, deploy by digest, the sha256 of the image manifest, which is content-addressed and can never change. Tools can resolve a tag to a digest at deploy time and record both.
+
+Build once and promote the same image through dev, test and production, instead of rebuilding per environment. In regulated work that matters a lot, because what was tested is byte-for-byte what goes live.
+
+And add OCI labels to the image, like source repo, commit and build time, so anyone can trace a running container back to its source.
+
+@p17-508
+Okay, so distroless images contain only the app and its runtime dependencies. No package manager, no shell, no extra OS tools. Google popularised them, and Microsoft provides the .NET version as Ubuntu chiseled images, like the ASP.NET 8.0 noble chiseled image from the Microsoft container registry.
+
+The benefits are real. They're much smaller, a chiseled ASP.NET Core image is around a quarter of the size of the full Debian one, so pulls and startup are faster. Far fewer packages, so vulnerability scanners report far fewer CVEs, which cuts patching noise. Attackers who get code execution find no shell or tools to work with. And chiseled images run as a non-root user by default.
+
+But you pay for it a bit. You can't exec into the container and poke around with bash or curl, so debugging needs other approaches, like kubectl debug with an ephemeral container that has tools, or just good logging and metrics. Some apps need native libraries, like ICU for globalisation or time zone data, and Microsoft offers extra variants that include them. Health checks can't use curl inside the container, so they have to come from the orchestrator over HTTP.
+
+My approach for .NET services, build in the SDK image in a multi-stage Dockerfile, publish, and copy the output into a chiseled runtime image. Or use a self-contained or Native AOT build on the runtime-deps chiseled image for the smallest result.
+
+@p17-509
+So slow image builds usually come from not using the cache well. BuildKit, the default builder in modern Docker, gives you several tools for this.
+
+Layer order matters most. Docker reuses a layer only if the instruction and everything before it is unchanged. So for .NET, I copy the solution and project files first, run dotnet restore, and only then copy the rest of the source and run publish. Code changes then don't invalidate the restore layer. For Node, same thing with package.json and the lock file before npm ci.
+
+A good .dockerignore keeps bin, obj, node_modules, .git and test results out of the build context, which speeds up the upload and stops cache misses from irrelevant files.
+
+Cache mounts keep package caches between builds without putting them in the image. Like a RUN step with a cache-type mount on the NuGet packages folder before dotnet restore, or on the npm cache folder.
+
+In CI, every build might run on a fresh agent with an empty cache. BuildKit can export and import cache, using cache-to and cache-from with a registry, local or GitHub Actions cache backend, so the next pipeline run reuses layers.
+
+Multi-stage builds also let BuildKit run independent stages in parallel, like building the API and running tests at the same time.
+
+And secrets needed during build, like a private feed token, go in through a secret-type mount, never as build args, which end up in the image history. I've seen that mistake leak tokens.
+
+@p17-510
+Honestly by default a lot of images run as root inside the container. If an attacker breaks out of the app, root inside the container makes escaping to the host and causing damage much easier. So I harden containers at two levels.
+
+In the image, create or use a non-root user and set USER in the Dockerfile. The official .NET images include an app user, and since .NET 8 they listen on port 8080, so you don't need root to bind to a low port.
+
+In Kubernetes, the pod and container securityContext. runAsNonRoot true, so Kubernetes refuses to start a container that would run as root. runAsUser and runAsGroup with fixed non-zero ids. allowPrivilegeEscalation false. readOnlyRootFilesystem true, so the app can't modify its own files, with an emptyDir volume mounted only where it really needs to write, like slash tmp. Capabilities drop ALL, adding back only what's essential, which for a web API is usually nothing. And a seccompProfile of RuntimeDefault.
+
+At cluster level, Pod Security admission with the restricted profile on app namespaces enforces these settings, so a manifest that forgets them gets rejected instead of silently running as root.
+
+Common issues when you tighten things, apps that write logs or temp files to their own folder, which I fix by writing to stdout and mounted temp volumes. And file permissions on mounted volumes, fixed with fsGroup.
+
+@p17-511
+See, ENTRYPOINT defines the executable the container runs, and CMD provides default arguments, or the default command if there's no ENTRYPOINT. Arguments passed to docker run, or args in Kubernetes, replace CMD, while command in Kubernetes replaces ENTRYPOINT. For a .NET app, a typical line is ENTRYPOINT in exec form, with "dotnet" and the API dll name as the array items.
+
+The form matters. The exec form, a JSON array, runs the process directly as PID 1. The shell form, written as plain text, runs it through the shell with sh dash c, so the shell is PID 1 and the app is its child.
+
+Why that matters. When Kubernetes or Docker stops a container, it sends SIGTERM to PID 1, waits for the grace period, 30 seconds by default, then sends SIGKILL. A shell as PID 1 usually doesn't forward SIGTERM to the app, so the app never hears it, can't finish in-flight requests or close connections, and gets killed hard after 30 seconds. Deployments get slow and requests fail. I've hit this exact issue, it's confusing until you know.
+
+Also, PID 1 has special signal handling and has to reap zombie child processes. If the app starts child processes, a tiny init like tini, or docker run with the init flag, handles that.
+
+For .NET, the host listens for SIGTERM and triggers graceful shutdown. Hosted services get StopAsync and Kestrel drains requests, within HostOptions.ShutdownTimeout, which has to be shorter than the Kubernetes grace period.
+
+@p17-512
+Okay, modern .NET is container-aware. It reads the cgroup limits instead of the host machine's resources, and that matters a lot.
+
+Memory. The GC sets its heap hard limit to 75 percent of the container memory limit by default, leaving room for native memory, thread stacks and other overhead. You can tune it with GCHeapHardLimit or GCHeapHardLimitPercent. If you set no memory limit at all, the runtime sees the whole node's memory and can grow way more than you'd expect.
+
+GC mode. ASP.NET Core uses server GC by default, which creates a heap per logical CPU and favours throughput, but uses more memory. In a small container with a tight memory limit, workstation GC, or server GC with fewer heaps through GCHeapCount, can fit better. Since .NET 8 and 9, DATAS, dynamic adaptation to application sizes, is available, and it's on by default in .NET 9 for server GC. It shrinks and grows the heap count with load and makes server GC much friendlier for containers.
+
+CPU. Environment.ProcessorCount reflects the CPU limit, rounded up, and the thread pool and GC size themselves from it. DOTNET_PROCESSOR_COUNT can override it when the limit is fractional or you want different behaviour.
+
+Practically, what I do is set a memory limit, watch GC heap size and working set through dotnet-counters or OpenTelemetry runtime metrics, and test under load with the real limits before going live.
+
+@p17-513
+So for local development, developers need the service's dependencies, like SQL Server, Redis, RabbitMQ and Keycloak, without installing them all by hand.
+
+Docker Compose is the classic answer. One compose file defines each dependency with an image, ports, volumes and environment variables. Health checks plus depends_on with condition service_healthy make the API wait until SQL Server is actually ready, not just started. Named volumes keep data between restarts, and seed scripts or a migration container load test data. Profiles let developers start only what they need, and an override file keeps personal tweaks out of the shared file. The same file is handy for integration tests in CI.
+
+.NET Aspire is a newer, .NET-native option. An AppHost project describes the application in C#. Add a SQL Server resource, a Redis resource, a RabbitMQ resource, and the API and worker projects that reference them. Running the AppHost starts the containers and projects, injects connection strings automatically through configuration, and opens a dashboard with logs, traces and metrics from every service, via OpenTelemetry. Service defaults add health checks, resilience and telemetry consistently. It can also generate deployment manifests.
+
+My take, Compose works for any stack and everyone understands it. For a .NET-heavy microservice solution, Aspire gives a much better inner loop and observability out of the box. For our on-premise platform, I'd only use either for local dev and tests, since production deployment there is to IIS and servers.
+
+@p17-514
+Okay, Pending means the pod's been accepted but not scheduled onto a node, or it's waiting on something before it can start. The answer is almost always in kubectl describe pod, in the Events section, under FailedScheduling.
+
+The usual causes, and what the message looks like.
+
+Insufficient CPU or memory. The requests don't fit on any node. Either requests are too big, the cluster is full, or the node autoscaler hasn't added capacity yet or has hit its max. Fix by right-sizing requests or adding capacity.
+
+Node selectors, affinity or taints. You'll see something like "didn't match node affinity" or "had untolerated taint". The pod wants a node type that doesn't exist, or it lacks the toleration for a dedicated node pool.
+
+Volumes. The PersistentVolumeClaim is itself Pending, because there's no matching StorageClass, the provisioner failed, or the volume exists in a different availability zone than the available nodes. kubectl describe pvc shows why. That zone one has bitten me before.
+
+Quota. In a namespace with a ResourceQuota, the pod might be rejected at creation, so it shows up as a ReplicaSet event, not a Pending pod. Describe the ReplicaSet to see it.
+
+Topology spread or anti-affinity rules that can't be satisfied, like requiring one pod per zone with more replicas than zones.
+
+I also check kubectl get events sorted by time, and the autoscaler's logs, because they explain why no node was added.
+
+@p17-515
+So ImagePullBackOff means the kubelet tried to pull the container image, failed, and is backing off before retrying. kubectl describe pod shows the exact error in the events, and that tells me which of a handful of causes it is.
+
+Image doesn't exist. A typo in the repository name, or a tag that was never pushed, maybe because the build failed or the pipeline pushed a different tag than the manifest references. I check the registry for the exact tag.
+
+Authentication. "unauthorized" or "access denied". The cluster needs permission to pull from a private registry. On EKS, the node role needs ECR read access. On AKS, the kubelet identity needs AcrPull on the registry. Elsewhere, an imagePullSecret has to exist in the same namespace as the pod and be referenced by the pod or its service account. Expired tokens, or a secret created in the wrong namespace, are really common.
+
+Network. The nodes can't reach the registry, because of a firewall, missing NAT, missing private endpoints or VPC endpoints for ECR, or DNS problems. The error's usually a timeout.
+
+Rate limits. Pulling from Docker Hub anonymously can hit "toomanyrequests". The fix is mirroring base images into our own registry, or authenticating.
+
+Platform mismatch. An image built only for arm64 running on amd64 nodes gives "no matching manifest", so I build multi-arch images.
+
+Once it's fixed, the pod retries on its own, or I delete it to retry right away.
