@@ -1,0 +1,177 @@
+@p17-972 | A third-party script broke the page or slowed it down. How do you protect the application?
+Third-party scripts, analytics, chat widgets, tag managers, feedback tools, they run with full access to the page. So if they're slow, buggy or compromised, our app suffers even though we didn't change a thing.
+
+Immediate response, identify the script using the browser's network and performance panels and console errors, and turn it off, through the tag manager or a feature flag, to get the page back.
+
+Protecting against slowness. Load scripts asynchronously with async or defer, and load the non-essential ones after the main content, so they don't block rendering.
+
+Measure their impact with real user monitoring and Lighthouse, and set a performance budget for third parties.
+
+Use facades. Show a lightweight placeholder, like a static chat button, and load the heavy widget only when the user interacts. Honestly that trick alone saves a lot.
+
+Protecting against breakage and attacks. Content Security Policy, allow scripts only from approved domains, so injected or unexpected scripts can't run.
+
+Subresource Integrity. For scripts loaded from CDNs with fixed versions, the integrity attribute makes the browser refuse a file that changed.
+
+Self-host critical libraries instead of pulling them from external CDNs.
+
+Govern the tag manager. Changes reviewed like code, with limited access, because anyone who can add a tag can run code in our app.
+
+Privacy and compliance. Scripts that send user data to third parties need review, especially in healthcare and clinical contexts, where pages might show sensitive information.
+
+Error isolation, wrap integrations so their errors don't break our code, and monitor console errors from production.
+
+And I prefer fewer third-party scripts in general, each with a clear owner and purpose.
+
+@p17-973 | A detailed health check endpoint is causing load and outages. What went wrong?
+Health checks are supposed to protect availability, but badly designed ones can actually cause outages.
+
+What usually goes wrong. Deep checks in liveness probes. The liveness endpoint checks the database, Redis and downstream APIs. When the database is slow for a moment, every instance's liveness check fails, Kubernetes or the load balancer restarts or removes all instances at once, and a small database hiccup turns into a total outage. Then instances restarting together put even more load on the database as they reconnect and warm up. I've seen exactly this happen, and it's not fun.
+
+Expensive checks called too often. Each check runs real queries, and with many instances, several load balancers and monitoring tools all calling it every few seconds, the checks put real load on shared dependencies.
+
+Checks calling other services' health checks, creating chains where one slow service makes everything look unhealthy.
+
+No timeouts in the check, so it hangs and ties up threads.
+
+Better design. Liveness is only "is this process alive and able to respond", no external dependencies.
+
+Readiness is, can this instance serve traffic? It can check critical local requirements, but be careful with shared dependencies, because pulling every instance out of rotation helps nobody.
+
+A separate detailed diagnostics endpoint for humans and monitoring, protected, not used by load balancers, with results cached for a few seconds so frequent calls don't hit dependencies every time.
+
+Timeouts on each dependency check, and graceful degradation, report degraded rather than unhealthy when a non-critical dependency fails.
+
+In ASP.NET Core, health check tags let me map different checks to liveness and readiness endpoints, which makes this separation easy.
+
+@p17-974 | Retries made an outage worse. What is a retry storm, and how do you prevent it?
+So a retry storm is when a service starts failing or slowing down, and its callers respond by retrying, which multiplies the traffic on the service that's already struggling. If each layer in a chain retries three times, one user request can become dozens of calls at the bottom. The service never recovers, because the load just keeps rising.
+
+How it usually plays out. The database slows down, API calls time out, the API's clients retry immediately, the gateway retries too, and the front end retries as well. Load triples or worse at the worst possible time.
+
+Prevention. Exponential backoff with jitter, wait longer between each retry, with some randomness, so retries spread out instead of arriving in synchronised waves.
+
+Limit retries. A few attempts, only for transient errors, and only for idempotent operations.
+
+Retry at one layer. Decide where retries happen, usually closest to the failing call, and don't stack them at every layer. People miss this one a lot.
+
+Retry budgets, allow retries only up to a percentage of normal traffic, like 10 percent, so retries can't multiply the load.
+
+Circuit breakers. After repeated failures, stop calling the failing service for a while and fail fast, giving it room to recover.
+
+Respect Retry-After headers and 429 or 503 responses.
+
+Timeouts that fit together, outer timeouts longer than inner ones, so callers don't give up and retry while the inner call's still running.
+
+Load shedding on the server, reject excess requests quickly when overloaded, rather than queuing everything.
+
+In .NET, Polly and the standard resilience handler in .NET 8 give you backoff with jitter, circuit breakers and timeouts, which I configure deliberately instead of leaving defaults on every client.
+
+@p17-975 | A message consumer is slow even though CPU is idle. What do you check?
+If messages are piling up but the consumer's CPU is barely used, it's spending its time waiting, not working. So I look at what it's waiting on.
+
+Processing one message at a time, that's the most common one in my experience. A prefetch count of one with sequential processing means each message waits for the full round trip, receive, process, call the database, acknowledge. If each message spends 50 milliseconds mostly waiting on I/O, one consumer handles at most 20 a second. Increasing prefetch and processing several messages concurrently, with a sensible limit, often multiplies throughput.
+
+Slow downstream calls. Each message calls an API or database that's slow, and traces show where the time goes. Fixes include batching database writes, caching reference data, and fixing slow queries.
+
+Synchronous I/O or locks, blocking calls in async code, or a lock around shared state that serialises processing.
+
+Too few consumers or partitions. One consumer instance, or in Kafka, fewer partitions than the consumers you want, so the extra consumers just sit idle.
+
+Acknowledgement overhead, acknowledging each message individually with a round trip, where batched acknowledgements would help.
+
+Network latency between consumer and broker or database, like a consumer running in a different region or data centre.
+
+Throttling, a rate limiter, or the broker applying flow control.
+
+After changes, I measure throughput, processing time per message and queue depth, and make sure higher concurrency doesn't break ordering guarantees or overload the database. For ordered processing, I'd say parallelise across keys, like per site or study, while keeping order within each key.
+
+@p17-976 | After enabling HTTPS behind a load balancer, users get "too many redirects". How do you fix it?
+Ah, this is a classic redirect loop with TLS offloading. The load balancer terminates HTTPS and forwards requests to the app over plain HTTP. The app sees HTTP, thinks the user isn't on HTTPS, and redirects to the HTTPS URL. The browser follows it, the load balancer forwards it as HTTP again, and round and round it goes until the browser gives up.
+
+The fix is making the app aware of the original scheme. Load balancers add the X-Forwarded-Proto header, set to https, along with X-Forwarded-For with the client IP.
+
+In ASP.NET Core, use the forwarded headers middleware early in the pipeline, set to include the forwarded proto and forwarded for headers, and configure known proxies or known networks so the app only trusts these headers from the load balancer, not from clients. Then HTTPS redirection, HSTS, generated URLs and cookie security flags all work properly. On IIS with the ASP.NET Core Module, some of this is handled automatically, but extra proxies in front still need configuring.
+
+In .NET Framework apps on IIS, URL Rewrite rules that redirect to HTTPS have to check the X-Forwarded-Proto header rather than the HTTPS server variable.
+
+Other places to check. Redirect rules on both the load balancer and the app doing conflicting things, like the load balancer redirecting HTTP to HTTPS and the app redirecting to a different host. Authentication redirects using the wrong scheme for callback URLs, which causes login loops. And cookies marked Secure not being sent when the app thinks the request is HTTP.
+
+The other option is re-encrypting from the load balancer to the app, HTTPS end to end, which also satisfies stricter security requirements.
+
+@p17-977 | What are matrix builds, and when do you use them?
+Okay, a matrix build runs the same job several times with different parameter combinations, in parallel. In GitHub Actions you define a strategy matrix, and in Azure Pipelines a strategy with a matrix of named configurations. Each combination becomes its own job with its own result.
+
+Typical uses are testing a library against several runtime versions, like Node 18, 20 and 22, or Python 3.10 to 3.12, building on Windows and Linux, or testing against different database versions. It's also handy for building lots of similar services or packages from one pipeline, where each matrix entry is one service.
+
+A few practical points. Be careful with fail-fast. Turning it off lets you see all the failing combinations instead of stopping at the first one. Use include and exclude to skip pointless combinations, so you don't end up with an exploding number of jobs. Cache dependencies per combination, keyed by the version, or caches will clash. And keep the matrix small for pull requests, with the full matrix running nightly or on main, because every entry costs agent minutes.
+
+In practice, I used a matrix for our shared front-end npm packages, building and testing against two React versions while the shell migration was going on, because some sub-apps were still on the older one. It caught a breaking peer dependency issue before it reached any app. For services though, I prefer one pipeline per service triggered by path filters, rather than one big matrix that rebuilds everything.
+
+@p17-978 | Microsoft-hosted vs self-hosted build agents: how do you choose?
+Hosted agents, Microsoft-hosted agents in Azure Pipelines or GitHub-hosted runners, are fresh virtual machines created per job and thrown away afterwards. Self-hosted agents are machines you run and maintain yourself.
+
+Hosted agents are clean every time, so no leftover state between builds, no patching, and they scale without effort. The downsides are limited control over installed tools, no access to private networks unless you add extra setup, caches that have to be restored every time, and cost or time limits at scale.
+
+Self-hosted agents make sense when builds need to reach private resources, like an on-prem database or an internal package feed, when you need special hardware or licensed tools, when on-disk caches make builds much faster, or when the whole server's on-premises anyway. The cost is operational. You patch them, secure them, and deal with disks filling up and state leaking between builds.
+
+Security really matters with self-hosted agents. Never run untrusted pull requests from forks on them, because a malicious build can attack the network. Run the agent as a low-privilege account, isolate pools per environment so a test build can't deploy to production, and ideally use ephemeral agents, container-based or autoscaled VMs that get recreated after each job.
+
+In our case, the on-prem Azure DevOps Server uses self-hosted agents, since deployments go to servers inside the network. We keep separate pools for build and for production deployment, and the production pool can only be used by approved release pipelines.
+
+@p17-979 | How do you sign container images and verify them before deployment?
+Signing proves an image was built by your pipeline and hasn't been changed since. Without it, anyone with push access to a registry could swap an image, and the cluster would happily run it.
+
+The common tools are Cosign from the Sigstore project and Notation from the Notary project, which Azure Container Registry supports. The pipeline builds the image, pushes it, and signs it by its digest, not its tag, because tags can move. Signing can use a key held in a key vault, or keyless signing, where a short-lived certificate is tied to the pipeline's identity through OIDC.
+
+Alongside the signature you can attach attestations, an SBOM listing every package in the image, and provenance saying which commit and pipeline built it. Those help a lot when a new vulnerability shows up and you need to know which images contain the affected package.
+
+Verification happens at deploy time. In Kubernetes, an admission controller like Kyverno, Gatekeeper or the Ratify project checks every pod's image and rejects anything unsigned or signed by the wrong identity. Deployments should also reference images by digest, so what was verified is exactly what runs.
+
+I'd roll it out gradually. Sign everything to begin with, then turn on verification in audit mode to find unsigned images, like third-party ones, and only then enforce. Base images from trusted publishers can be allowed by their own signatures. And it gives you a solid answer when security reviewers ask how you know production runs only what CI built.
+
+@p17-980 | How do conventional commits help generate changelogs and release notes automatically?
+Conventional commits is basically a simple format for commit messages, a type, an optional scope, and a description. For example, feat for a new feature, fix for a bug fix, docs, refactor, test or chore, plus a breaking-change marker when something isn't backward compatible.
+
+Because the messages are structured, tools can read them. semantic-release or release-please can work out the next version automatically. A fix bumps the patch, a feat bumps the minor, and a breaking change bumps the major. They also generate a changelog grouped by features and fixes, create a tag, and publish the package.
+
+To make it reliable, you enforce the format. commitlint in a Git hook catches mistakes locally, and a pull request check validates the PR title if you squash merge, since that title becomes the commit on main. Linking each commit or PR to a work item lets the release notes include the ticket ids.
+
+The benefits are practical. Release notes stop being a manual job at the end of a sprint, versions are consistent, and consumers of shared packages can see breaking changes clearly.
+
+We used this pattern for our shared front-end npm packages published to the Azure DevOps feed. The version and changelog came from the commits, so teams consuming a package knew whether an upgrade was safe. For the main application, though, release notes still need business language for the validation team, so the generated list is a starting point someone edits, not the final document.
+
+@p17-981 | Merge commit vs squash merge vs rebase: which do you use for pull requests?
+All three bring a branch's changes into main, but they give you different history.
+
+A merge commit keeps every commit from the branch and adds a merge commit joining the two lines. It preserves exactly what happened, but history gets noisy with lots of small commits like "fix typo", and the graph gets hard to read.
+
+Squash merge combines the whole branch into one commit on main. History becomes one commit per pull request, which is clean and easy to revert, since reverting a feature is just reverting one commit. You lose the individual commits, though they still exist in the pull request.
+
+Rebase replays the branch's commits on top of main, so history stays linear without a merge commit. It keeps individual commits, which is nice if they're meaningful, but because it rewrites history you should never rebase a branch others are working on, and it means force-pushing your own branch.
+
+For me, the default for short-lived feature branches is squash merge, with the pull request title written as a good commit message, since that also works with conventional commits and changelogs. For long-lived release branches, I use real merges so the relationship between branches stays visible. Locally I use rebase to update my feature branch from main before opening a pull request, because it gives reviewers a cleaner diff.
+
+Whatever the team picks, it should be set in branch policies so it's consistent, not left to each person.
+
+@p17-982 | What are deployment rings, and how do they reduce release risk?
+Deployment rings release a change to progressively bigger groups of users, with a pause and a health check between each group. It's how large products avoid exposing everyone to a bad release at once.
+
+A typical setup has ring zero for the internal team, ring one for a small set of friendly customers or one region, ring two for a larger share, and then everyone. Each ring has a bake time, and the pipeline only moves forward if error rates, latency and business metrics stay normal. If something goes wrong, only that ring's affected, and you stop or roll back.
+
+Rings differ from canary releases mainly in what you divide. A canary usually splits traffic randomly by percentage, while rings divide by meaningful groups like tenants, regions or customer types. In multi-tenant systems rings fit really naturally, because you can upgrade tenants or databases in batches.
+
+To do it well, automate the gates, so promotion depends on metrics and not on someone remembering to check. Keep ring membership in configuration, make the code work with mixed versions, and keep database changes backward compatible.
+
+In our platform, each study has its own database, so schema and data changes naturally roll out in batches. We start with internal and test studies, then low-risk studies, then the rest, with checks after each batch. A problem caught in the first batch affects a handful of non-critical databases instead of every live study.
+
+@p17-983 | What are dark launches and shadow traffic?
+A dark launch, you know, deploys new code to production and runs it with real traffic, but users don't see its results. Shadow traffic, or traffic mirroring, is a common way to do it. Each real request goes to the current version as normal, and a copy goes to the new version, whose response just gets thrown away.
+
+The point is testing with real production load and real data shapes, which test environments never fully reproduce. You can compare the new version's results with the old one's, watch its latency and errors, and find performance problems before switching anyone over.
+
+You can do it at different levels. A service mesh or proxy like Istio or Envoy can mirror a percentage of requests. In code, you can call both implementations, return the old result, and log the differences, which is the approach libraries like Scientist take.
+
+The big risk is side effects. A shadow request must not write to the real database, charge a card or send an email twice. So shadowing works best for read paths, or the new version writes to a separate store, or calls go out with a dry-run flag.
+
+I'd use it when replacing a critical read path, like a new search or a new calculation engine. For example, when moving a data transfer from the old integration layer to a new .NET API, running both and comparing outputs for a while gives confidence the new one produces identical results before it becomes the real path.
