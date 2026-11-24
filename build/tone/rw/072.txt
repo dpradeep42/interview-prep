@@ -1,0 +1,187 @@
+@p17-852 | How do you add WebSockets to a Node.js service with ws or Socket.IO?
+So for real-time features in Node you've basically got two main choices.
+
+ws is a fast, minimal WebSocket library that implements the standard protocol. Clients can be any WebSocket client, including the browser's native one. But you handle reconnection, heartbeats, rooms and message formats yourself.
+
+Socket.IO is a higher-level framework on top of WebSockets, with a fallback to HTTP long polling, automatic reconnection, acknowledgements, rooms and namespaces, and broadcasting. Clients have to use the Socket.IO client library, because it has its own protocol.
+
+How I'd decide, for internal apps where I want features quickly, Socket.IO saves time. For interoperability with standard clients or maximum performance, ws.
+
+Either way, a few concerns come up. Authentication, validate a token during the connection handshake, and close connections whose tokens expire or get revoked. Don't trust data sent later without checking permissions per action.
+
+Scaling. With several instances behind a load balancer, a message published on one instance has to reach clients connected to the others. Socket.IO's Redis adapter, or a pub-sub layer like Redis or a broker for ws, solves that. Load balancers need WebSocket support and sensible idle timeouts, plus sticky sessions for Socket.IO's polling fallback.
+
+Heartbeats, ping and pong to detect dead connections, because proxies can drop idle connections silently. That one's caused me some head-scratching in the past.
+
+Backpressure, don't send faster than a slow client can receive. Check the buffered amount and drop or merge updates.
+
+And managed options like API Gateway WebSocket APIs on AWS or Azure Web PubSub take the scaling work away, which I'd look at for really large numbers of connections.
+
+@p17-853 | How do you write efficient Node.js Lambda functions?
+Node's one of the best runtimes for Lambda because it starts quickly. A few habits make functions faster and cheaper.
+
+Initialise outside the handler. Create SDK clients, database connections and config at module level, so they get reused across invocations on a warm environment. Only per-request work goes inside the handler. That's probably the single biggest win.
+
+Keep the bundle small. Use AWS SDK v3's modular clients, importing only what you need, and bundle with esbuild, which tree-shakes everything into one small file. Smaller packages load faster on cold starts. And avoid heavy frameworks inside functions unless you really need them.
+
+Use async handlers properly. Return a promise or use async functions, and don't leave work running after you return, because the environment freezes and that work might never finish. People get bitten by that with fire-and-forget logging.
+
+Connections, reuse HTTP connections with keep-alive, which SDK v3 does by default. For relational databases, use RDS Proxy so you don't exhaust connections when lots of functions scale out.
+
+Memory setting. CPU scales with memory, so bumping memory often makes functions faster and sometimes cheaper overall. Lambda Power Tuning finds the sweet spot.
+
+Timeouts, set them close to what's needed, and shorter than upstream timeouts like API Gateway's.
+
+Error handling, for SQS triggers report partial batch failures so only the failed messages get retried, and use dead-letter queues or destinations for async invocations.
+
+Observability, structured JSON logs, Powertools for AWS Lambda for logging, metrics and tracing, and X-Ray or OpenTelemetry.
+
+For latency-sensitive endpoints that need predictability, provisioned concurrency removes cold starts, at extra cost.
+
+@p17-854 | How does database connection pooling work in Node.js?
+Opening a database connection is expensive, there's TCP, TLS and authentication. A pool keeps a set of open connections and lends them out to queries, then takes them back.
+
+In Node, with Postgres say, you create one Pool from the pg library at startup with settings like max connections, idle timeout and connection timeout, and run queries with pool query, which grabs a connection, runs the query and releases it. For transactions, you check out a client with pool connect, run BEGIN, the queries and COMMIT, and always release it in a finally block. Otherwise the pool leaks connections and eventually every request just waits forever. ORMs like Prisma, TypeORM and Knex manage a pool internally.
+
+Sizing is the interesting bit. Because Node handles lots of concurrent requests in one process, it's easy to throw more queries at the database than it can handle. The pool's max limits concurrency per process. Total connections are max times the number of processes and containers, and that has to stay under the database's limit. A smaller pool often gives better throughput than a big one, because databases do best with limited concurrent queries. That one can catch people out.
+
+Common problems. Pool exhaustion, where slow queries or leaked clients mean requests wait for a connection, so monitor waiting counts and acquisition times. Serverless, where each Lambda instance has its own pool, so scaling out can open thousands of connections. Use RDS Proxy or a pooler like PgBouncer and keep the per-instance pool small. And connection timeouts, set them so requests fail fast instead of hanging.
+
+On shutdown, call pool end to close connections cleanly.
+
+@p17-855 | How do you run background jobs and queues in Node.js with BullMQ?
+Long-running or deferred work, sending emails, generating reports, calling slow third-party APIs, shouldn't run inside HTTP requests. In Node, BullMQ is a popular job queue built on Redis.
+
+How it works, the API adds a job to a named queue with data and options and returns straight away. Separate worker processes take jobs off the queue and run a processor function. Jobs move through states like waiting, active, completed, failed and delayed, all stored in Redis.
+
+The features I find useful. Retries with backoff, you set attempts and an exponential backoff so transient failures retry on their own. Delayed jobs, like a reminder in two hours. Repeatable jobs on cron-style schedules, where BullMQ makes sure only one instance runs each scheduled job even with several workers, which fixes the classic "job ran twice" problem. Concurrency per worker and rate limiting to protect downstream APIs. And priorities, job dependencies with flows, progress reporting, and events for completed or failed jobs.
+
+Good practices from what I've seen. Keep job data small, ids rather than whole objects. Make processors idempotent, since a job can run again after a crash. Set removeOnComplete and removeOnFail limits so Redis doesn't fill up, which is easy to forget. Run workers as separate deployments from the API so they scale independently. Handle graceful shutdown with worker close so active jobs finish. And monitor queue length, failure rates and job duration, with a dashboard like Bull Board.
+
+If guaranteed durability or consumers in other languages matter more, a broker like RabbitMQ or SQS might fit better than a Redis-based queue.
+
+@p17-856 | How do you debug a Node.js application locally and in production?
+Locally it's pretty easy. Start Node with the inspect flag, or inspect-brk to pause on the first line, and attach Chrome DevTools through the chrome inspect page, or the VS Code debugger, which can also launch the app straight from a launch configuration. Then set breakpoints, step through, look at variables and the call stack, and use conditional breakpoints and logpoints, which print values without changing code. For TypeScript, source maps make breakpoints work on the original ts files. Vitest and Jest can run under the debugger too.
+
+In containers, expose the inspector port only to localhost and use port forwarding, like kubectl port-forward. Never expose it publicly, because the inspector lets anyone run arbitrary code.
+
+In production, attaching a debugger to a live service is risky and rarely allowed, so I lean on other tools.
+
+Structured logs with correlation ids, and log levels you can raise temporarily through configuration.
+
+Distributed traces to see where the time goes across calls.
+
+Metrics like event loop delay, heap usage and garbage collection.
+
+Heap snapshots and CPU profiles. Node can write a heap snapshot on a signal or when memory's near the limit, with the heapsnapshot-near-heap-limit flag, and CPU profiles with the cpu-prof flag, and you analyse them in DevTools afterwards.
+
+Diagnostic reports, where process report or the report-on-fatalerror flag writes a JSON report with the stack, heap and system info when the process crashes.
+
+And then once the evidence narrows it down, I try to reproduce it locally with production-like data and configuration. That's usually where it finally clicks.
+
+@p17-857 | Deno and Bun vs Node.js: would you use them for production services?
+Deno and Bun are the newer JavaScript runtimes competing with Node.
+
+Deno comes from Node's original creator and focuses on security and modern defaults. Permissions are off by default, so a script can't touch the network, files or environment unless you allow it. TypeScript runs out of the box, there's a built-in formatter, linter and test runner, and it now supports npm packages and Node APIs for compatibility.
+
+Bun's about speed and being all-in-one. A very fast runtime on JavaScriptCore, a package manager that installs much faster than npm, a bundler, a test runner and native TypeScript. It aims for high Node compatibility, so a lot of Node apps run unchanged.
+
+Would I use them in production? Depends on risk tolerance, honestly. Node has the biggest ecosystem, LTS releases, mature tooling for observability and profiling, and support from every cloud and platform. And its gaps have narrowed, native fetch, a test runner, watch mode, running TypeScript with type stripping.
+
+For core business services in a regulated enterprise, I'd stay on Node LTS, because stability, support and compatibility with monitoring, security scanning and hosting matter more than raw speed.
+
+Where the others make sense, Bun as a fast package manager or test runner in development, or for internal tools and scripts. Deno for scripts where its permission model adds safety, or edge platforms built around it.
+
+And I'd test them on a real service with benchmarks and compatibility tests before committing, not pick based on headline performance numbers.
+
+@p17-858 | How do you hash passwords securely in Node.js?
+Passwords should never be stored in plain text or with fast hashes like MD5 or SHA-256, because someone with a leaked database can try billions of guesses a second. Password hashing algorithms are slow on purpose and use a unique salt per password.
+
+In Node you've got three good options. Argon2id, through the argon2 package, is the current OWASP recommendation. It's memory-hard, which makes GPU and specialised hardware attacks expensive. You configure memory, iterations and parallelism so it takes a reasonable time on your servers.
+
+bcrypt, through bcrypt or bcryptjs, is widely used and still fine, with a cost factor of at least 10 to 12. It has a 72-byte input limit though, so very long passwords get truncated. Not many people know that.
+
+scrypt is built into Node's crypto module, memory-hard and no native dependencies.
+
+Usage, hash on registration, and verify with the library's verify function, which does a constant-time comparison. Store the full encoded hash, which includes the algorithm, parameters and salt, so you can upgrade parameters later. When a user logs in successfully with an old-parameter hash, rehash with the new ones.
+
+Performance, hashing is intentionally CPU-heavy. Use the async versions, which run on the libuv thread pool, never the sync ones on request paths, and maybe raise the thread pool size, otherwise a burst of logins blocks other work. Rate-limit login attempts too.
+
+Also check new passwords against breached password lists, and require MFA for sensitive systems.
+
+But really, for most business apps I'd say delegate authentication to an identity provider like Keycloak, Cognito or Entra ID, so the app never handles passwords at all.
+
+@p17-859 | What is tRPC, and when would you use it instead of REST or GraphQL?
+tRPC lets a TypeScript backend expose procedures that a TypeScript front end calls with full type safety, without writing an API schema or generating code. On the server you define a router with queries and mutations, each with an input validator, usually Zod, and a resolver. The client imports only the router's type and calls procedures like functions, so something like trpc dot shipments dot byId dot query with an id. If the server changes an input or output type, the front end gets a compile error straight away.
+
+What's nice is end-to-end type safety with almost no boilerplate, great autocomplete, and it plugs into TanStack Query for caching and loading states in React.
+
+The limits. It needs TypeScript on both ends, ideally in the same monorepo. It doesn't suit public APIs or other languages, like a .NET or mobile client.
+
+The front end and back end are tightly coupled, which is fine for one product team but not for APIs shared across teams.
+
+And tooling, REST with OpenAPI has much better support for docs, gateways, caching and monitoring.
+
+When I'd use it, a full-stack TypeScript app, like Next.js with a Node backend, owned by one team, where speed of development matters.
+
+When I wouldn't is basically our kind of architecture, where the backends are .NET and the API is consumed by multiple front ends and partners. There, OpenAPI with generated TypeScript clients gives similar type safety across languages, and that's what I'd recommend instead.
+
+@p17-860 | How do you call .NET or other services from Node.js with gRPC?
+Okay, gRPC works really well across languages, because the contract is a proto file shared by every service. A .NET service can expose a gRPC API and a Node service can call it, or the other way round.
+
+In Node, the official library is grpc-js, which is pure JavaScript. You can use the proto file two ways. Load it at runtime with proto-loader, which is quick to start with but gives you no types. Or generate TypeScript code with tools like ts-proto or protobuf-es with Connect, which gives typed clients and messages. I prefer that one for TypeScript services.
+
+Creating a client, you point it at the service address with TLS credentials and call methods. Unary calls return a single response, server streaming gives you a stream you read with async iteration, and client and bidirectional streaming are supported too.
+
+Important settings. Deadlines on every call, so a slow service doesn't hang the caller, and they propagate across hops. Retries and keep-alive through the service config, with care for idempotency. Metadata for auth tokens and correlation ids. And error handling with gRPC status codes, mapped to meaningful errors, like NOT_FOUND to a 404 if the Node service exposes REST.
+
+Contract management, keep proto files in a shared repo or package, version them, and follow the protobuf compatibility rules. Never reuse field numbers, and add new fields instead of changing existing ones.
+
+For browser clients, gRPC needs gRPC-Web or Connect, so I'd normally keep REST at the edge and use gRPC for internal service-to-service calls where performance or streaming matters.
+
+@p17-861 | What changed in Express 5, and should you upgrade?
+Express 5 finally went stable after years and years of Express 4. The changes are mostly about modernising and removing old behaviour.
+
+The big one for me is async error handling. If an async route handler or middleware returns a rejected promise, Express 5 passes the error to the error-handling middleware automatically. In Express 4, an unhandled rejection in an async handler could hang the request or crash the process, unless you wrapped every handler or used a helper package. That alone is a strong reason to upgrade.
+
+Path matching moved to a newer path-to-regexp version. Some patterns changed, wildcards need names now, optional parameters have new syntax, and regex characters in strings aren't supported anymore. So routes need a review during the upgrade.
+
+Deprecated APIs got removed, things like app dot del, res send with a status number, and several older method signatures. And req query is read-only by default now with a simpler parser.
+
+It needs a modern Node version, very old ones are dropped. And body parsing changed a bit, the built-in urlencoded parser defaults are different and some behaviour's stricter.
+
+Should you upgrade? For active services, yes, planned like any major upgrade. Read the migration guide, run the codemods where they exist, update route patterns, run the full integration test suite, and check middleware packages for compatibility.
+
+For new projects I'd also look at Fastify or NestJS, which give built-in validation, better performance or more structure. But if the team knows Express well, Express 5 is a reasonable, simpler choice than it used to be.
+
+@p17-862 | list vs tuple vs set vs dict in Python: when do you use each?
+Yeah, these are Python's four core collections, and picking the right one affects both correctness and performance.
+
+A list is ordered and mutable, allows duplicates, and is indexed by position. Appending is fast, but checking membership with "in" is linear, because Python scans the whole list. Use it for ordered sequences you'll change, like rows read from a file.
+
+A tuple is ordered and immutable. Since it can't change, it's hashable if its contents are, so it can be a dict key or a set member, like a key made of site id and date. Tuples say "this is a fixed record", like coordinates or a function returning several values, and they're a bit lighter than lists.
+
+A set is an unordered collection of unique, hashable items, with constant-time membership checks on average, plus union, intersection and difference. Use it for de-duplication, or checking membership in big collections, like "have I already processed this id?". frozenset is the immutable version.
+
+A dict maps unique, hashable keys to values with constant-time average lookups, and since Python 3.7 it keeps insertion order. Use it for lookups by key, counting, grouping, and JSON-like data.
+
+A common performance bug I've seen in scripts is checking whether an item's in some list inside a loop over thousands of items, which makes the whole thing quadratic. Converting the list to a set first fixes it, and it's like a one-line change.
+
+The collections module adds specialised versions too, defaultdict for grouping, Counter for counting, deque for fast appends and pops at both ends, and namedtuple for readable records.
+
+@p17-863 | What are *args and **kwargs in Python?
+Basically they let a function accept a variable number of arguments.
+
+Star args collects extra positional arguments into a tuple. So if you define log with a message and star args, and call it with "x", 1, 2, 3, then args is the tuple one, two, three.
+
+Double-star kwargs collects extra keyword arguments into a dictionary. Define create with double-star kwargs, call it with name equals kit and qty equals five, and kwargs is a dict with name and qty.
+
+The names args and kwargs are just conventions. It's the star and the double star that matter.
+
+The same symbols unpack at call time. Calling a function with star my-list passes the list items as separate positional arguments, and double-star my-dict passes the dict items as keyword arguments. You can merge dicts that way too, a new dict with double-star defaults followed by double-star overrides, and unpack lists inside list literals.
+
+Related parameter features. Keyword-only parameters, anything after a bare star, like a send function with to, then a star, then retries defaulting to three, has to be passed by name, which makes calls clearer and safer. And positional-only parameters, anything before a slash has to be passed by position.
+
+Where they're useful, decorators and wrappers that pass any arguments through, like a wrapper that takes star args and double-star kwargs and just calls the wrapped function with the same, functions that forward options to another library, and flexible logging or formatting helpers.
+
+The downside, I think, is overusing kwargs hides what a function actually accepts, which hurts readability, type checking and autocomplete. For business code I prefer explicit parameters, and for typed wrappers, ParamSpec in type hints keeps the wrapped function's signature.
