@@ -11270,3 +11270,555 @@ X: In ASP.NET Core: use the forwarded headers middleware early in the pipeline, 
 X: In .NET Framework apps on IIS: URL Rewrite rules that redirect to HTTPS must check the X-Forwarded-Proto header rather than the HTTPS server variable.
 X: Other places to check: redirect rules on both the load balancer and the app doing conflicting things, like the load balancer redirecting HTTP to HTTPS and the app redirecting to a different host; authentication redirects using the wrong scheme for callback URLs, causing login loops; and cookies marked Secure not being sent when the app thinks the request is HTTP.
 X: Alternatively, re-encrypt from the load balancer to the app with HTTPS end to end, which also satisfies stricter security requirements.
+@p17-977
+S: cdx
+D: A
+T: What are matrix builds, and when do you use them?
+K: matrix build, matrix strategy github actions, azure pipelines matrix, test multiple versions, parallel jobs
+X: A matrix build runs the same job several times with different parameter combinations, in parallel. In GitHub Actions you define a strategy matrix, and in Azure Pipelines a strategy with a matrix of named configurations. Each combination becomes its own job with its own result.
+X: Typical uses are testing a library against several runtime versions, like Node 18, 20 and 22, or Python 3.10 to 3.12; building on Windows and Linux; or testing against different database versions. It's also handy for building many similar services or packages from one pipeline, where each matrix entry is one service.
+X: A few practical points. Use fail-fast carefully: turning it off lets you see all failing combinations instead of stopping at the first. Use include and exclude to avoid pointless combinations, so you don't build an exploding number of jobs. Cache dependencies per combination, keyed by the version, or caches will clash. And keep the matrix small for pull requests, with the full matrix running nightly or on main, because every entry costs agent minutes.
+X: In practice, I used a matrix for our shared front-end npm packages: build and test against two React versions while the shell migration was in progress, because some sub-apps were still on the older one. It caught a breaking peer dependency issue before it reached any app. For services, I prefer one pipeline per service triggered by path filters, rather than a large matrix that rebuilds everything.
+@p17-978
+S: cdx
+D: A
+T: Microsoft-hosted vs self-hosted build agents: how do you choose?
+K: self hosted agent, hosted agent, self hosted runner, build agent choice, private network build agent
+X: Hosted agents, like Microsoft-hosted agents in Azure Pipelines or GitHub-hosted runners, are fresh virtual machines created per job and thrown away afterwards. Self-hosted agents are machines you run and maintain yourself.
+X: Hosted agents are clean every time, so there's no leftover state between builds, no patching work, and they scale without effort. The downsides are limited control over installed tools, no access to private networks unless you add extra setup, caches that must be restored each time, and cost or time limits at scale.
+X: Self-hosted agents make sense when builds need to reach private resources, like an on-prem database or internal package feed, when you need special hardware or licensed tools, when caches on disk make builds much faster, or when the whole server is on-premises anyway. The cost is operational: you patch them, secure them, and handle disk filling up and state leaking between builds.
+X: Security matters with self-hosted agents. Never run untrusted pull requests from forks on them, because a malicious build can attack the network. Run the agent as a low-privilege account, isolate pools per environment so a test build can't deploy to production, and ideally use ephemeral agents, like container-based or autoscaled VMs that are recreated after each job.
+X: Our on-prem Azure DevOps Server uses self-hosted agents, since deployments go to servers inside the network. We keep separate pools for build and for production deployment, and the production pool can only be used by approved release pipelines.
+@p17-979
+S: cdx
+D: A
+T: How do you sign container images and verify them before deployment?
+K: image signing, cosign, sigstore, notation, verify image signature, admission policy signed images, sbom attestation
+X: Signing proves that an image was built by your pipeline and hasn't been changed since. Without it, anyone with push access to a registry could replace an image, and the cluster would happily run it.
+X: The common tools are Cosign from the Sigstore project and Notation from the Notary project, which Azure Container Registry supports. The pipeline builds the image, pushes it, and signs it by its digest, not its tag, because tags can move. Signing can use a key held in a key vault or keyless signing, where a short-lived certificate is tied to the pipeline's identity through OIDC.
+X: Alongside the signature you can attach attestations: an SBOM listing every package in the image, and provenance saying which commit and pipeline built it. Those help when a new vulnerability appears and you need to know which images contain the affected package.
+X: Verification happens at deploy time. In Kubernetes, an admission controller such as Kyverno, Gatekeeper or the Ratify project checks every pod's image and rejects anything unsigned or signed by the wrong identity. Deployments should also reference images by digest, so what was verified is exactly what runs.
+X: I'd roll it out gradually: sign everything first, then enable verification in audit mode to find unsigned images, like third-party ones, and finally enforce. Base images from trusted publishers can be allowed by their own signatures. This gives a solid answer when security reviewers ask how you know production runs only what CI built.
+@p17-980
+S: cdx
+D: A
+T: How do conventional commits help generate changelogs and release notes automatically?
+K: conventional commits, automated changelog, release notes generation, semantic release, commit message convention
+X: Conventional commits is a simple format for commit messages: a type, an optional scope, and a description. For example, feat for a new feature, fix for a bug fix, docs, refactor, test or chore, plus a breaking-change marker when something isn't backward compatible.
+X: Because the messages are structured, tools can read them. semantic-release or release-please can work out the next version number automatically: a fix bumps the patch, a feat bumps the minor, and a breaking change bumps the major. They also generate a changelog grouped by features and fixes, create a tag, and publish the package.
+X: To make it reliable, enforce the format. commitlint in a Git hook catches mistakes locally, and a pull request check validates the PR title if you squash merge, since that title becomes the commit on main. Linking each commit or PR to a work item lets the release notes include the ticket ids.
+X: The benefits are practical. Release notes are no longer a manual task at the end of a sprint, versions are consistent, and consumers of shared packages can see breaking changes clearly.
+X: We used this pattern for our shared front-end npm packages published to the Azure DevOps feed. The version and changelog came from the commits, so teams consuming a package knew whether an upgrade was safe. For the main application, release notes still need business language for the validation team, so the generated list is a starting point that someone edits, not the final document.
+@p17-981
+S: cdx
+D: A
+T: Merge commit vs squash merge vs rebase: which do you use for pull requests?
+K: merge vs rebase, squash merge, git rebase, linear history, git merge strategies, pull request merge type
+X: All three bring a branch's changes into main, but they produce different history.
+X: A merge commit keeps every commit from the branch and adds a merge commit joining the two lines. It preserves exactly what happened, but the history gets noisy with many small commits like fix typo, and the graph becomes hard to read.
+X: Squash merge combines the whole branch into one commit on main. History becomes one commit per pull request, which is clean and easy to revert, since reverting a feature is reverting one commit. You lose the individual commits, though they still exist in the pull request.
+X: Rebase replays the branch's commits on top of main so history stays linear without a merge commit. It keeps individual commits, which is nice if they're meaningful, but rewriting history means you should never rebase a branch others are working on, and it needs force-pushing your own branch.
+X: My default for short-lived feature branches is squash merge, with the pull request title written as a good commit message, since that also works with conventional commits and changelogs. For long-lived release branches, I use real merges so the relationship between branches stays visible. Locally I use rebase to update my feature branch from main before opening a pull request, because it gives a cleaner diff for reviewers.
+X: Whatever the team picks, it should be set in branch policies so it's consistent, not left to each person.
+@p17-982
+S: cdx
+D: A
+T: What are deployment rings, and how do they reduce release risk?
+K: deployment rings, ring based deployment, staged rollout, progressive exposure, early adopters ring
+X: Deployment rings release a change to progressively larger groups of users, with a pause and health check between each group. It's how large products avoid exposing everyone to a bad release at once.
+X: A typical setup has ring zero for the internal team, ring one for a small set of friendly customers or one region, ring two for a larger share, and then everyone. Each ring has a bake time, and the pipeline only moves forward if error rates, latency and business metrics stay normal. If something goes wrong, only that ring is affected, and you stop or roll back.
+X: Rings differ from canary releases mainly in what you divide. A canary usually splits traffic randomly by percentage, while rings divide by meaningful groups like tenants, regions or customer types. In multi-tenant systems, rings fit naturally, because you can upgrade tenants or databases in batches.
+X: To do it well, automate the gates, so promotion depends on metrics and not on someone remembering to check. Keep the ring membership in configuration, make the code work with mixed versions, and make database changes backward compatible.
+X: In our platform, each study has its own database, so schema and data changes naturally roll out in batches. We start with internal and test studies, then low-risk studies, then the rest, with checks after each batch. A problem caught in the first batch affects a handful of non-critical databases instead of every live study.
+@p17-983
+S: cdx
+D: A
+T: What are dark launches and shadow traffic?
+K: dark launch, shadow traffic, traffic mirroring, test in production safely, mirror requests
+X: A dark launch deploys new code to production and runs it with real traffic, but users don't see its results. Shadow traffic, or traffic mirroring, is a common way to do it: each real request goes to the current version as normal, and a copy is sent to the new version, whose response is thrown away.
+X: The point is to test with real production load and real data shapes, which test environments never fully reproduce. You can compare the new version's results with the old one's, watch its latency and errors, and find performance problems before switching anyone over.
+X: There are ways to do it at different levels. A service mesh or proxy like Istio or Envoy can mirror a percentage of requests. In code, you can call both implementations, return the old result, and log differences, which is the approach of libraries like Scientist.
+X: The big risk is side effects. A shadow request must not write to the real database, charge a card or send an email twice. So shadowing works best for read paths, or the new version writes to a separate store, or calls are made with a dry-run flag.
+X: I'd use it when replacing a critical read path, like a new search or a new calculation engine. For example, when moving a data transfer from the old integration layer to a new .NET API, running both and comparing outputs for a period gives confidence that the new one produces identical results before it becomes the real path.
+@p17-984
+S: cdx
+D: A
+T: How do you keep dev, test and production environments consistent?
+K: environment parity, dev prod parity, environment drift, consistent environments, it works on my machine
+X: Inconsistent environments cause the classic problem: it works in test but fails in production. The goal is that environments differ only in size and configuration, not in how they're built.
+X: The first tool is infrastructure as code. If every environment is created from the same Terraform or Bicep modules with different variables, they can't quietly drift apart, and drift detection in the pipeline catches manual changes.
+X: The second is building once and promoting the same artifact, so test and production run identical binaries or images. Configuration comes from the environment through settings and secret stores, never baked into the build.
+X: The third is matching versions of dependencies: the same database engine version, the same runtime, the same message broker version. Containers and Docker Compose help locally, so a developer runs the same Redis and broker versions as production.
+X: Data is the hard part. Test databases are often small and clean, so performance problems and odd data only show in production. Masked copies of production data, or generated data at realistic volume, close that gap.
+X: Finally, the deployment process itself should be the same everywhere. If test is deployed by hand and production by pipeline, you're not testing the deployment.
+X: In our on-prem setup, we keep a server configuration baseline and compare IIS settings, installed runtimes and app pool settings across environments. A mismatch in a runtime version on one production node once caused a failure that test never showed, which is why we added that check.
+@p17-985
+S: cdx
+D: A
+T: How do you protect CI pipelines from malicious pull requests?
+K: pipeline security fork pull request, pull_request_target, untrusted code ci, poisoned pipeline execution, secrets in pr builds
+X: A pull request build runs code that someone else wrote, including the build scripts themselves. If that build has access to secrets or a privileged agent, a malicious pull request can steal credentials or attack your network. This is called poisoned pipeline execution.
+X: The main defences are about separation. Pull request builds from forks must run without secrets and with a read-only token. In GitHub Actions, the pull_request event does this by default, while pull_request_target runs with secrets in the base repository's context, so it must never check out and run the pull request's code. In Azure Pipelines, settings control whether fork builds get secrets, and that should stay off.
+X: Run untrusted builds on hosted, throwaway agents, not self-hosted agents inside the network. Require approval before running workflows from first-time contributors.
+X: Protect the pipeline definitions too. Changes to workflow files or templates should need review from owners, using a code owners file, and deployment pipelines should come from protected templates that a pull request can't modify.
+X: Keep deployment credentials scoped to protected environments with approvals, so even a compromised build job on a branch can't deploy to production. Pin third-party actions to a commit hash, since a tag can be moved to malicious code.
+X: For internal repos the threat is lower, but the same rules help against a compromised developer account. Secrets live in environments with approvals, not in the pipeline used for pull request validation.
+@p17-986
+S: cdx
+D: A
+T: How do you promote container images between registries or environments?
+K: image promotion, promote container image, copy image between registries, acr import, ecr replication, registry per environment
+X: Promotion means the exact image tested in one environment is the one that goes to the next, never a rebuild. With containers, that means moving or re-tagging the same digest.
+X: There are two common setups. With one registry, you promote by adding tags or by updating the deployment to the tested digest. It's simple, but production pulls from a registry that test pipelines can also push to.
+X: With a registry per environment or per trust level, like a dev registry and a production registry, you copy the image across after it passes testing. Azure Container Registry has an import command that copies by digest between registries, ECR supports cross-account replication, and tools like crane or skopeo copy images without pulling them locally. Production clusters only have pull access to the production registry, and only the release pipeline can push to it.
+X: Important details. Always copy and deploy by digest, because a tag like the version number could be overwritten. Copy signatures and SBOMs along with the image so verification still works. Run a vulnerability scan at promotion time as well, since new vulnerabilities appear after build. Keep a record of which digest went to which environment for traceability.
+X: I prefer the separate production registry for anything regulated. It gives a clear boundary: if an image is in the production registry, it passed the gates. The extra copy step is a few seconds and adds a lot of confidence.
+@p17-987
+S: cdx
+D: A
+T: How do you build a deployment pipeline for serverless apps with SAM or CDK?
+K: sam pipeline, cdk pipelines, deploy lambda ci cd, serverless deployment pipeline, cloudformation deploy lambda
+X: For serverless on AWS, the application and its infrastructure usually deploy together, because a Lambda function, its API Gateway route, its queue and its permissions all belong to the same unit. SAM and CDK both produce CloudFormation, which does the actual deployment.
+X: With SAM, the pipeline runs sam build to package the functions, runs unit tests, and then sam deploy with a parameter file per environment. SAM can also set up gradual deployment for Lambda through CodeDeploy, shifting traffic to the new version over minutes and rolling back automatically if CloudWatch alarms fire.
+X: With CDK, you write infrastructure in a programming language like TypeScript or C#. The pipeline runs cdk synth to produce templates, which become the artifact, and then deploys those same templates to each environment. CDK Pipelines can model the stages and approvals itself, and cdk diff shows what will change, which is useful in a pull request.
+X: The general practices stay the same. Build once and deploy the same package to every stage. Deploy with a role assumed through OIDC, not stored keys. Use separate accounts per environment. Run integration tests against the deployed stack in a test stage before promotion. Watch for changes that replace resources, like renaming a table, which CloudFormation does by deleting and recreating.
+X: For a small team, SAM is quicker to learn. For larger systems with shared constructs, CDK gives better reuse and type checking.
+@p17-988
+S: cdx
+D: A
+T: What does a good CI pipeline for a Python service look like?
+K: python ci pipeline, python lint test pipeline, ruff mypy pytest ci, python build pipeline, python docker pipeline
+X: A Python pipeline should check quality quickly and produce one reproducible artifact, usually a container image or a wheel.
+X: The steps I use start with setting up the exact Python version and installing dependencies from a lock file, using uv or pip with hashes, with the package cache saved between runs. Then linting and formatting checks with Ruff, which replaces flake8, isort and black and is very fast. Then type checking with mypy or pyright, which matters in a dynamic language. Then tests with pytest, including coverage reporting and integration tests that use Testcontainers or service containers for Postgres or Redis.
+X: Security checks come next: pip-audit for vulnerable packages, a secret scan, and bandit for risky code patterns.
+X: Then the build. For a service, I build a Docker image with a multi-stage Dockerfile, installing dependencies in a builder stage and copying only what's needed into a slim runtime image, running as non-root. For a library, I build a wheel and publish it to an internal feed.
+X: Finally, tag the image with the commit and version, scan it, push it, and deploy through the same promotion flow as other services.
+X: For our Python RAG service with FastAPI and pgvector, the integration tests run against a real Postgres container with the pgvector extension, because mocking vector search wouldn't prove the queries actually work. The whole pipeline runs in a few minutes, mostly thanks to caching and Ruff's speed.
+@p17-989
+S: cdx
+D: A
+T: How do you use pre-commit hooks with Husky or the pre-commit framework?
+K: pre commit hooks, husky, lint-staged, pre-commit framework, git hooks, shift left checks
+X: Git hooks are scripts that run at points like before a commit or before a push. Pre-commit hooks catch simple problems, like formatting, lint errors or committed secrets, before code ever reaches the pull request.
+X: In JavaScript projects, Husky installs the hooks automatically when someone runs npm install, and lint-staged runs tools only on the files being committed, so it stays fast. A typical setup runs Prettier and ESLint on staged files and commitlint on the commit message.
+X: In Python and many other stacks, the pre-commit framework manages hooks from a config file, with hooks for Ruff, trailing whitespace, large files and secret scanning with tools like gitleaks. It works for any language, so it's a good choice for repos mixing Python, YAML and Terraform.
+X: In .NET, dotnet format can run in a hook, or with Husky.Net.
+X: A few rules. Keep hooks fast, a few seconds, or people will skip them with the no-verify flag. Hooks are a convenience, not a control, because anyone can bypass them, so the pipeline must run the same checks. Don't run the full test suite in a pre-commit hook; at most, run quick tests in a pre-push hook.
+X: In our front-end repos, Husky with lint-staged catches most formatting and lint issues locally, so pull request reviews focus on design rather than style comments. Secret scanning in the hook has stopped a few accidental commits of local configuration files before they left a laptop.
+@p17-990
+S: tx
+D: A
+T: How do you mock dependencies in Python tests with unittest.mock and patch?
+K: python mock, unittest.mock, patch where it is used, MagicMock, pytest monkeypatch, mocker fixture
+X: Python's unittest.mock gives you Mock and MagicMock objects that record how they're called and return whatever you configure. patch temporarily replaces an object during a test, as a decorator or a context manager, and the pytest-mock plugin offers the same through a mocker fixture.
+X: The rule that trips most people is patch where it's used, not where it's defined. If my module does from services import send_email, the name send_email now lives in my module, so I must patch mymodule.send_email. Patching services.send_email won't affect the copy my module already imported.
+X: Other useful points. Use autospec, or create_autospec, so the mock has the real function's signature; otherwise a typo in a method name or wrong arguments still pass silently. For async functions, AsyncMock returns awaitables. Use side_effect to raise exceptions or return a sequence of values, which is how I test retry logic. Assert calls with assert_called_once_with, but don't over-assert every internal call, or tests break on harmless refactors.
+X: pytest's monkeypatch is simpler for environment variables and attributes, and it undoes changes automatically.
+X: Design matters more than tooling, though. If a test needs five patches, the code probably has hidden dependencies. Passing dependencies in, for example through FastAPI's Depends with dependency overrides in tests, is cleaner than patching module globals. In our FastAPI RAG service, tests override the embedding client dependency with a fake, so no test calls a real model endpoint.
+@p17-991
+S: tx
+D: A
+T: How do you test RxJS streams with marble testing?
+K: marble testing, rxjs testing, TestScheduler, cold hot observables test, test debounceTime
+X: Marble testing describes observable streams as small text diagrams, where each character is a frame of virtual time. A letter is an emitted value, a dash is time passing, a pipe is completion and a hash is an error. RxJS's TestScheduler runs the test in virtual time, so operators like debounceTime or delay finish instantly instead of waiting.
+X: Inside testScheduler.run, you create cold observables from marble strings, apply your operator chain, and use expectObservable to compare the result with an expected marble diagram and a values map. Time can also be written explicitly, like 300 milliseconds, which makes debounce tests readable.
+X: This is most useful for custom operators and complex chains, such as a type-ahead search that debounces, ignores duplicates, cancels old requests with switchMap and handles errors. Testing that with real timers is slow and flaky; with marbles it's precise and deterministic. You can also check subscription timing with expectSubscriptions, which proves an old request was really unsubscribed.
+X: For simpler cases, like a service method that just maps an HTTP response, marbles are overkill. Subscribing and checking the value, or using firstValueFrom with an async test, is clearer.
+X: In our Angular study builder, the search-and-filter panel used a chain of debounce, distinct and switchMap. Marble tests caught a bug where an error from one search killed the stream permanently, so later searches did nothing. Adding catchError inside the switchMap fixed it, and the marble test now guards that behaviour.
+@p17-992
+S: tx
+D: A
+T: How do xUnit fixtures and parallel test execution work?
+K: xunit fixtures, IClassFixture, ICollectionFixture, xunit parallel, test collections, shared context xunit
+X: xUnit creates a new instance of the test class for every test method, so the constructor is your per-test setup and Dispose is the teardown. That isolation is good, but expensive setup, like starting a database container, shouldn't run for every test.
+X: Fixtures solve that. IClassFixture of T creates one shared object for all tests in a class, passed into the constructor. ICollectionFixture of T shares one object across several classes that belong to the same named collection. For async setup, the fixture implements IAsyncLifetime with InitializeAsync and DisposeAsync. A typical example is a WebApplicationFactory or a Testcontainers database shared by all integration test classes in one collection.
+X: Parallelism follows collections. By default, each test class is its own collection, and collections run in parallel, while tests inside one collection run one after another. So putting classes in the same collection to share a fixture also makes them run sequentially, which is often what you want for tests sharing a database.
+X: Things to watch: shared fixtures must not hold state that tests change, or test order starts to matter. Static state breaks parallel runs. You can tune parallelism with a runner configuration file or turn it off for a specific collection.
+X: In our integration tests, one collection fixture starts a SQL Server container and applies the schema once. Each test then runs inside a transaction that's rolled back, so tests stay independent and the whole suite runs in a couple of minutes.
+@p17-993
+S: tx
+D: A
+T: How do you test async Python code with pytest-asyncio?
+K: pytest asyncio, test async python, async fixtures pytest, anyio pytest, test fastapi async
+X: pytest doesn't run coroutines by itself, so async tests need a plugin. pytest-asyncio is the common one: you mark a test with the asyncio marker, or set asyncio mode to auto in configuration, and the plugin runs it in an event loop. The anyio plugin is an alternative and also supports trio.
+X: Fixtures can be async too. An async fixture with yield can open a database connection or an HTTP client before the test and close it afterwards. Fixture scope matters: a session-scoped async fixture needs an event loop that lives for the whole session, and newer pytest-asyncio versions let you set the loop scope explicitly, because mismatched loop scopes cause confusing errors about the loop being closed or attached to a different loop.
+X: For FastAPI, I use httpx's AsyncClient with an ASGI transport pointed at the app, which calls the app in-process without a real server. Dependency overrides swap real clients for fakes.
+X: To mock async functions, use AsyncMock, so awaiting the mock works. For timing behaviour, keep timeouts small in tests, and avoid real sleeps; inject a clock or patch the sleep function.
+X: A common mistake is calling an async function without awaiting it, which creates a coroutine that never runs, so the test passes without testing anything. Turning warnings into errors in pytest configuration catches the never-awaited warning.
+X: In our RAG service, async tests cover the retrieval endpoint against a real Postgres container, with the embedding call replaced by a deterministic fake.
+@p17-994
+S: tx
+D: A
+T: How do you test AWS code locally with LocalStack or moto?
+K: localstack, moto, test aws locally, mock aws services, s3 sqs local testing, aws integration tests
+X: Code that calls AWS services, like S3, SQS or DynamoDB, is hard to test against real AWS: it's slow, costs money and needs credentials. Two tools help.
+X: moto is a Python library that mocks AWS APIs in memory. With a decorator or context manager, boto3 calls go to moto instead of AWS, so you can create a bucket, put an object and test your code's behaviour in milliseconds. It's ideal for unit tests of Python code.
+X: LocalStack runs emulated AWS services in a Docker container with real HTTP endpoints. Any SDK, including .NET and Node, can point at it by overriding the service URL. It's better for integration tests and local development, and it works with Testcontainers, so each test run gets a fresh instance.
+X: The trade-off is fidelity. Emulators don't perfectly copy AWS behaviour, especially IAM permissions, limits and edge cases, and some services are paid-only in LocalStack. So code can pass locally and still fail in AWS because of a missing permission. I still run a small set of smoke tests against a real test account after deployment.
+X: Make the endpoint configurable rather than writing special code paths for testing. In .NET, the AWS SDK's service URL setting can be overridden through configuration in the test environment.
+X: For a newer service storing files in S3 and processing them through SQS, LocalStack in Testcontainers let us test the full upload, event and processing flow in CI, which caught a message format bug that unit tests with mocks never would.
+@p17-995
+S: tx
+D: A
+T: How do you test Azure code locally with Azurite and emulators?
+K: azurite, azure storage emulator, cosmos db emulator, service bus emulator, test azure locally, azure integration tests
+X: Azure has local emulators for several services, so integration tests can run in CI without real cloud resources.
+X: Azurite emulates Azure Storage: blobs, queues and tables. It runs as a Docker container or npm package, and the SDK connects with the well-known development connection string. It's good for testing file uploads, blob triggers in Azure Functions and queue processing.
+X: The Cosmos DB emulator runs locally, including a Linux container version, and supports the main APIs, which is useful for testing queries and partition key design.
+X: The Service Bus emulator, released more recently, runs in Docker with a configuration file that defines queues and topics, so you can test sessions, dead-lettering and message handling without a namespace in Azure. Event Hubs also has an emulator.
+X: For Azure Functions, Core Tools run functions locally with these emulators. Testcontainers has modules for Azurite, Cosmos and Service Bus, so each test run gets clean instances automatically.
+X: Limitations are similar to any emulator. Authentication is simplified, so managed identity and RBAC aren't tested; performance and throttling differ; and some features are missing. So I keep connection settings configurable, run most tests against emulators, and run a few smoke tests against a real test subscription after deployment, which is where permission problems actually show up.
+X: In a team learning Azure, emulators also make onboarding easier, because a developer can run the whole system locally on day one without waiting for cloud access.
+@p17-996
+S: tx
+D: A
+T: What is API fuzz testing, and how do tools like Schemathesis help?
+K: fuzz testing, api fuzzing, schemathesis, property based api testing, openapi fuzz, restler
+X: Fuzz testing sends large numbers of unexpected, random or malformed inputs to a system to find crashes and unhandled cases. Normal tests check the inputs you thought of; fuzzing finds the ones you didn't.
+X: For APIs, schema-based fuzzers are the practical choice. Schemathesis reads your OpenAPI specification and generates requests that cover each endpoint with valid and edge-case values: empty strings, huge numbers, unicode, missing optional fields, boundary dates. It then checks responses: no 500 errors, responses match the documented schema, and status codes are ones the specification declares. RESTler from Microsoft does stateful fuzzing, chaining calls such as create then read then delete.
+X: What it typically finds: unhandled exceptions from unexpected nulls or formats, validation that's missing on the server even though the client validates, responses that don't match the documented contract, and occasionally security issues like errors revealing stack traces.
+X: I'd run it in CI against a test deployment or an in-process app, starting with a limited number of examples per endpoint so it stays fast, and run longer fuzzing nightly. Failures come with the exact request, which is easy to turn into a regular regression test.
+X: For an ASP.NET Core API, it's also a good check that the generated OpenAPI document is actually accurate. When we tried it on an internal API, the first findings were 500 errors from date parameters in unexpected formats, which should have been 400 validation responses.
+@p17-997
+S: tx
+D: A
+T: What is test impact analysis, and how do you run only the tests affected by a change?
+K: test impact analysis, run affected tests, selective testing, nx affected, test selection, faster test runs
+X: Test impact analysis means working out which tests could be affected by a change and running only those, instead of the whole suite. It matters when the full suite takes too long for every pull request.
+X: There are a few levels. The simplest is project-level selection: in a monorepo, tools like Nx or Turborepo know the dependency graph, so changing one library runs tests only for that library and the projects that depend on it. Path filters in pipelines do a basic version of the same, triggering a service's pipeline only when its folder changes.
+X: The finer level uses coverage data to map tests to the code they execute. Azure Pipelines has a test impact analysis feature for .NET, and Jest can run tests related to changed files. When a file changes, only tests that touched it run.
+X: The risk is missing something. Changes to configuration, shared build files or test data aren't always tracked well. So I treat it as a speed-up for pull requests, while main and nightly builds still run everything. Any change to shared infrastructure, like the build config, should trigger the full suite.
+X: Before using impact analysis, I'd check the basics, because they often give bigger wins: run tests in parallel, cache dependencies, split slow integration tests into a separate stage, and remove sleep calls in tests.
+X: For our front-end packages in a shared repo, running only affected projects cut pull request builds from around twenty minutes to a few minutes for most changes.
+@p17-998
+S: tx
+D: A
+T: How do you assert that the right logs were written in .NET tests?
+K: test logging, FakeLogger, assert logs dotnet, ILogger unit test, verify log messages
+X: Sometimes logging is a requirement, not just debugging help. For example, an audit-relevant warning must be written when access is denied, or a security event must be logged with specific fields. Then it deserves a test.
+X: The old approach was mocking ILogger with Moq and verifying the Log method, which is painful because the real logging extension methods call a generic Log method with a formatter, so the verification is ugly and fragile.
+X: Since .NET 8, the Microsoft.Extensions.Diagnostics.Testing package includes FakeLogger and FakeLogCollector. You pass a FakeLogger into the class under test, or register the fake logging provider in an integration test, and afterwards read the collected records: level, message, event id, exception and structured state. That lets you assert that a warning with a given event id was logged and that it included the user id property.
+X: For Serilog, there are similar in-memory sinks for tests.
+X: What I assert is the important part: level, event id and key structured properties, not the exact message text, since wording changes. I also write tests that sensitive data is not logged, for example checking that no record contains the password or token value passed in a request.
+X: These tests are few and targeted. Most code shouldn't have log assertions, or tests break every time someone improves a message. In our services, we test logging only for security and audit-related events, where a missing log entry would be a real compliance problem.
+@p17-999
+S: tx
+D: A
+T: How do you test authorization rules systematically across roles and endpoints?
+K: authorization tests, role matrix tests, test permissions api, broken access control testing, endpoint security tests
+X: Broken access control is the top risk in the OWASP list, and it usually comes from one endpoint missing an authorization check. Testing a few endpoints by hand doesn't find that, so I test authorization as a matrix.
+X: First, define the expected access: for each endpoint and each role, should the response be allowed, forbidden or not found. Keep this as data, like a table in the test project.
+X: Second, write a parameterised integration test that runs every combination. Using WebApplicationFactory with a test authentication handler, each test sets the user's roles and claims, calls the endpoint and checks the status code against the table. Adding a role or endpoint is just a new row.
+X: Third, add a guard test that discovers all endpoints from the app's endpoint data sources and fails if any endpoint is missing from the matrix or has no authorization metadata, unless it's explicitly marked anonymous. That catches the new endpoint someone forgot to protect.
+X: Also test resource-level rules, not just roles: user A must not read user B's record by changing an id in the URL. Those tests create two users with their own data and try cross-access.
+X: In a system with site-level and study-level permissions, this approach found an export endpoint that checked the role but not whether the user belonged to that site. The matrix test now covers it, and the endpoint discovery check stops similar gaps from returning.
+@p17-1000
+S: tx
+D: A
+T: userEvent vs fireEvent in React Testing Library: which should you use?
+K: userEvent vs fireEvent, user-event library, react testing library events, simulate typing click test
+X: Both trigger events in React Testing Library tests, but they work at different levels.
+X: fireEvent dispatches a single DOM event. fireEvent.change sets a value and fires one change event; fireEvent.click fires one click. It's low level and doesn't do what a browser does around that event.
+X: userEvent, from the testing-library user-event package, simulates what a real user does. Typing into an input fires focus, key down, key press, input and key up for every character, respects disabled and read-only fields, and moves the cursor. Clicking fires pointer events, mouse down, focus, mouse up and click. So tests catch bugs that fireEvent misses, like a handler on key down or a field that's disabled but still accepted a change.
+X: In version 14, userEvent is asynchronous. The recommended pattern is calling userEvent.setup at the start of the test, then awaiting each action. If you use fake timers, pass the timer advance function to setup, or tests hang.
+X: My default is userEvent for anything a user does: typing, clicking, selecting, tabbing through a form. I keep fireEvent for events users can't easily trigger, like scroll or a custom event, or where userEvent doesn't support something.
+X: Combined with queries by role and label, this keeps tests close to real usage. In our React shell's forms built with MUI, switching from fireEvent to userEvent exposed a validation message that only appeared on blur, which the old tests never triggered.
+@p17-1001
+S: tx
+D: A
+T: Test pyramid vs testing trophy: which shape should your test suite have?
+K: testing trophy, test pyramid vs trophy, testing honeycomb, how many unit vs integration tests, kent c dodds trophy
+X: The test pyramid says most tests should be fast unit tests, fewer should be integration tests and very few end-to-end. The testing trophy, popularised in the front-end world, puts most weight on integration tests, with static analysis like TypeScript and linting as the base, fewer unit tests and a few end-to-end tests. In microservices, a similar idea is called the honeycomb.
+X: The reasoning behind the trophy is confidence per test. A unit test of a React component with all its children mocked proves little about whether the screen works. Rendering the real component tree with a mocked network layer gives much more confidence for similar cost. Modern tools made integration tests fast enough, like Testing Library with Mock Service Worker on the front end, or WebApplicationFactory with Testcontainers on the back end.
+X: The pyramid still fits code with heavy logic: calculations, rules engines, parsers, algorithms. Those deserve many small unit tests covering edge cases.
+X: So my answer depends on the code. For a business API that mostly moves data through validation into a database, I write mainly integration tests at the API level, plus unit tests for the complex rules. For a calculation-heavy module, like randomisation or dosing logic, I write extensive unit tests. Static checks come first everywhere, because the type checker catches a whole class of bugs for free.
+X: The shape matters less than the outcome: tests that are fast, trusted, catch real bugs and don't break on every refactor.
+@p17-1002
+S: tx
+D: A
+T: How do you test an ETL job or data pipeline?
+K: test etl, data pipeline testing, data quality tests, test data transformation, great expectations, reconciliation tests
+X: Data pipelines fail in quieter ways than APIs: they run successfully but produce wrong or incomplete data. So testing covers both the code and the data.
+X: Unit tests cover transformation logic with small, hand-written inputs, including the awkward cases: nulls, duplicates, dates across time zones, unexpected codes and very long strings. If transformations are pure functions, this is straightforward.
+X: Integration tests run the job end to end against real database containers with a realistic sample dataset, checking the output tables. They catch mapping mistakes, type conversion issues and performance problems with set-based SQL.
+X: Data quality checks run in production too, as part of the pipeline. Tools like Great Expectations or dbt tests, or simple SQL assertions, check row counts against the source, no unexpected nulls in required columns, valid ranges, unique keys and referential integrity. A failed check stops the load or flags it, instead of silently publishing bad data.
+X: Reconciliation is the final safety net: compare totals between source and target, such as counts per day or sums of key amounts, and alert on differences.
+X: Idempotency testing matters as well: running the job twice must not duplicate data, and a run that fails halfway must be safe to rerun.
+X: For data transfers between systems, like moving integration flows from a middleware platform to .NET APIs, we ran old and new paths in parallel and compared the outputs record by record before switching, which was the strongest test of all.
+@p17-1003
+S: tx
+D: A
+T: How do you catch breaking API changes automatically in CI?
+K: breaking api changes ci, openapi diff, oasdiff, api compatibility check, detect breaking changes openapi, public api analyzer
+X: Breaking changes usually slip in by accident: a renamed field, a property made required, a removed enum value or a changed status code. Reviewers miss them because the diff looks harmless. So I check compatibility automatically.
+X: For HTTP APIs, the pipeline generates the OpenAPI document from the built service, for example with the build-time document generation in ASP.NET Core, and compares it with the version from main or the last release using a diff tool like oasdiff or openapi-diff. These tools classify changes, and the build fails on breaking ones, such as removing an endpoint, adding a required request field, or removing a response field. Non-breaking additions just get reported.
+X: For shared .NET libraries, the public API analyzer tracks every public member in text files, so any change to the public surface shows up in the pull request, and package validation compares with the previous NuGet version. For TypeScript packages, API Extractor does something similar with an API report file.
+X: For events, a schema registry or checked-in JSON schemas with compatibility checks do the same job.
+X: When a breaking change is truly needed, the check forces a conscious decision: add a new version, mark the old one deprecated and tell consumers. Contract tests with Pact add another layer by checking what consumers actually use.
+X: On a team with many front-end sub-apps calling the same APIs, the OpenAPI diff check stopped several accidental field renames that would otherwise have broken a screen in production.
+@p17-1004
+S: obx
+D: A
+T: How do you connect logs to traces using trace ids and span ids?
+K: logs and traces correlation, trace id in logs, span id logging, log trace correlation, jump from log to trace
+X: Logs tell you what happened, and traces tell you where time went across services. Linking them means every log line written during a request carries that request's trace id and span id, so from one error log you can open the whole distributed trace, and from a slow span you can see its logs.
+X: In .NET, this mostly comes for free. Activity.Current holds the current trace, and the logging infrastructure can include TraceId and SpanId in every log scope, either through the logger factory's activity tracking options or through the OpenTelemetry logging provider, which attaches them automatically. Serilog has an enricher that does the same. In Node, the OpenTelemetry instrumentation for pino or winston injects trace ids, and in Python, the logging instrumentation adds them to log records.
+X: The backend must also know how to link them. In Datadog, Grafana with Loki and Tempo, or Application Insights, a trace id field in structured logs becomes a clickable link to the trace.
+X: Some details matter. The field name must match what the backend expects. Background jobs and message consumers need their own spans, or their logs have no trace id. And if traces are sampled, some logs will point to traces that weren't kept, so the sampling policy should keep traces with errors.
+X: In older services, we already had a correlation id passed through middleware and message headers. In the newer OpenTelemetry-based services, the W3C trace id replaces that, and Datadog connects logs, traces and metrics for one request automatically.
+@p17-1005
+S: obx
+D: A
+T: What is OpenTelemetry baggage, and how is it different from span attributes?
+K: otel baggage, opentelemetry baggage, context propagation baggage, baggage vs attributes, propagate tenant id
+X: Span attributes are key-value pairs recorded on one span, like the HTTP route or the order id. They stay on that span and don't travel to other services.
+X: Baggage is key-value data that travels with the request context across process boundaries. It's sent in the baggage HTTP header, next to the traceparent header, and every downstream service can read it. A typical example is a tenant id or customer tier set at the edge, so services several hops away know it without every API passing it as a parameter.
+X: Baggage is not automatically recorded on spans or logs. If you want the tenant id on downstream spans, you add a span processor that copies chosen baggage entries into attributes, which also makes them searchable in the tracing backend.
+X: There are important cautions. Baggage is sent on every outgoing call, including calls to third parties unless you strip it, so never put sensitive data like user emails, patient details or tokens in it. Keep it small, since it adds bytes to every request. And treat incoming baggage from outside as untrusted; anyone can send the header, so it must not drive authorization decisions.
+X: In .NET, the Baggage API in OpenTelemetry, or Activity baggage, sets values, and the propagators handle the header. I'd use it for low-sensitivity routing and diagnostic context, like a tenant or region label, which makes it easy to filter traces by tenant during an incident.
+@p17-1006
+S: obx
+D: A
+T: What are OpenTelemetry semantic conventions, and how should you name spans and attributes?
+K: semantic conventions, span naming, otel attribute names, http.route, low cardinality span names
+X: Semantic conventions are OpenTelemetry's standard names for common telemetry: attributes like http.request.method, http.route, http.response.status_code, db.system and messaging.destination.name, plus standard metric names like http.server.request.duration. When every service and library uses the same names, dashboards and queries work across languages without mapping.
+X: The automatic instrumentation for ASP.NET Core, HttpClient, Express or FastAPI already follows them. The question is mostly about custom spans and attributes you add yourself.
+X: For span names, keep them low cardinality and descriptive of the operation, not the data. GET plus the route template, like orders by id, is good; the full URL with an actual id is bad, because every request becomes a unique name, breaking aggregation and increasing cost. For a custom operation, something like process shipment or allocate kit is clear.
+X: For custom attributes, follow the conventions first, then use your own namespace for business attributes, like app.study.phase or app.order.type, so they don't clash with future standard names. Put high-cardinality identifiers, like an order id, on spans as attributes, where they're useful for search, but never as metric labels.
+X: Record errors with the span status set to error and the exception recorded as an event, so backends show them consistently.
+X: Agreeing on a short naming guide across teams was one of the most useful things we did when moving newer services to OpenTelemetry. Without it, the same field appeared under four different names, and cross-service queries were painful.
+@p17-1007
+S: obx
+D: A
+T: What are burn-rate alerts, and why are they better than simple error thresholds?
+K: burn rate alert, multi window burn rate, slo alerting, error budget alert, alert on slo
+X: A simple threshold alert, like error rate above two percent for five minutes, has two problems. It fires on short blips that don't matter, and it misses slow, steady problems that stay just under the threshold but burn through the error budget over days.
+X: Burn rate measures how fast you're using the error budget compared with the allowed pace. If your SLO is 99.9 percent success over thirty days, a burn rate of one uses exactly the budget in thirty days. A burn rate of fourteen point four would use two percent of the monthly budget in one hour, which is serious.
+X: Multi-window, multi-burn-rate alerting, described in Google's SRE workbook, combines a fast alert and a slow one. A page fires when the burn rate is high over both a long window, like one hour, and a short window, like five minutes; the long window proves it's significant, and the short window proves it's still happening, so the alert clears quickly after recovery. A ticket-level alert fires for a lower burn rate over six hours or a day, catching slow leaks.
+X: The benefit is that alerts map to user impact and the SLO the business agreed. People get woken up for things that threaten the budget, not for every spike.
+X: You need an SLI defined as good events over total events, like successful requests under a latency target. Datadog, Grafana and most monitoring tools have built-in SLO and burn-rate alert features, so the hard work is choosing good SLIs, not the maths.
+@p17-1008
+S: obx
+D: A
+T: How do you capture and debug JavaScript errors in production with source maps?
+K: front end error tracking, javascript errors production, source maps, sentry, upload source maps, minified stack trace
+X: Production JavaScript is minified, so a raw error stack trace points to line one, column fifty thousand of a bundle with random names, which is useless. Source maps map those positions back to the original TypeScript files and line numbers.
+X: The setup has a few parts. First, capture errors: an error tracking tool like Sentry, Datadog RUM or Application Insights' JavaScript SDK listens for unhandled errors and promise rejections, and frameworks have hooks too, like a React error boundary or Angular's ErrorHandler, to report errors that the framework catches. Each report includes the browser, the route, the release version and recent user actions as breadcrumbs.
+X: Second, generate source maps in the production build, but don't serve them publicly if you don't want your source readable. Instead, upload them to the error tracking tool during the pipeline, tagged with the same release version as the deployed bundle. The tool then shows readable stack traces.
+X: Third, link errors to releases, so you can see that a new error started with version 2.4, and connect front-end errors to back-end traces by propagating trace headers on API calls.
+X: Be careful with privacy: scrub form values, tokens and personal data from error payloads and breadcrumbs before they leave the browser.
+X: In our React shell with Vite, the pipeline uploads hidden source maps per release. When a sub-app started failing for one browser version, the readable stack trace pointed straight to an unsupported API call, which saved hours of guessing.
+@p17-1009
+S: obx
+D: A
+T: What is eBPF, and why is it used for observability?
+K: ebpf, ebpf observability, kernel tracing, cilium hubble, pixie, zero instrumentation monitoring
+X: eBPF lets small, verified programs run safely inside the Linux kernel, attached to events like system calls, network packets or function calls, without changing kernel code or restarting anything. For observability, it means you can see what processes are doing from the outside, without adding code to the application.
+X: What it can show: network flows between pods, including latency and dropped connections; HTTP and gRPC requests parsed at the kernel level; DNS lookups; file and disk activity; CPU profiles across all processes; and security events like unexpected process launches.
+X: Tools built on it include Cilium with Hubble for Kubernetes network visibility, Pixie and Grafana Beyla for automatic request metrics and traces, Parca and other continuous profilers, Falco for runtime security, and the Datadog and other vendor agents, which use it for network monitoring.
+X: The advantages are no code changes, very low overhead, and visibility into things applications don't report, like a connection dropped by the network or a slow DNS lookup.
+X: The limits are real too. It's Linux only and needs a recent kernel and privileges. It sees bytes and calls, not business context, so it can't tell you which study or order a request belonged to. Encrypted traffic is harder to inspect, needing hooks into TLS libraries.
+X: So I see eBPF as a complement to OpenTelemetry, not a replacement. It gives a baseline for every workload in a cluster, including ones nobody instrumented, while application instrumentation adds the business meaning.
+@p17-1010
+S: obx
+D: A
+T: What does 99.9 percent availability mean in downtime, and how do dependencies affect it?
+K: availability nines, 99.9 uptime downtime per month, sla calculation, composite availability, dependency availability maths
+X: Each extra nine cuts allowed downtime by ten. Ninety-nine percent allows about seven hours of downtime a month. 99.9 percent, three nines, allows about forty-three minutes a month or under nine hours a year. 99.95 allows about twenty-two minutes a month, and 99.99, four nines, only about four minutes a month, which is less than one manual deployment going wrong.
+X: Dependencies multiply. If a request needs three services in series, each 99.9 percent available, the combined availability is roughly 99.9 times 99.9 times 99.9, which is about 99.7 percent. That means you can't promise a higher SLA than your critical dependencies allow, unless you remove the dependency from the critical path.
+X: Redundancy works the other way. Two independent instances, each 99 percent available, behind a load balancer give about 99.99 percent in theory, because both must fail together. In practice, shared failure causes like the same bad deployment, the same database or the same region reduce that benefit a lot.
+X: So to improve availability, make fewer things critical: cache data, use queues so a downstream outage delays work instead of failing requests, degrade gracefully when an optional service is down, and run across zones.
+X: Also be precise about what availability measures. Is it uptime of a health endpoint, or successful user requests? Request-based SLIs are more honest. And scheduled maintenance windows often aren't counted in contractual SLAs, but users still feel them, which is one more reason to aim for zero-downtime releases.
+@p17-1011
+S: obx
+D: A
+T: How do you change log levels at runtime without redeploying?
+K: dynamic log level, change log level runtime, serilog LoggingLevelSwitch, debug logging production, reloadOnChange logging
+X: During an incident, you often want detailed debug logs from one component, but production runs at Information or Warning level to control volume and cost. Redeploying to change a log level is slow and risky, so the level should be changeable at runtime.
+X: In ASP.NET Core, logging configuration reloads automatically when the configuration source changes. If levels come from appsettings with reload enabled, or from a central store like Azure App Configuration or a Kubernetes ConfigMap that the app watches, changing a category's level takes effect within seconds. Serilog supports the same through a LoggingLevelSwitch, which can be exposed through a protected admin endpoint, and it can read level overrides from configuration.
+X: In Node, pino lets you change the logger's level property at runtime, and in Python, logging.getLogger with setLevel can be called from a protected admin endpoint or a signal handler.
+X: A few practices make this safe. Change the level for a specific category or namespace, not globally, so you don't flood the system. Add an automatic expiry, so debug logging turns off after, say, thirty minutes even if someone forgets. Protect the admin endpoint with strong authorization and audit who changed what. And make sure debug logs still don't contain secrets or personal data, since they will be written in production.
+X: Combining this with sampling helps too: debug logs for one tenant or one request header rather than all traffic. In our services, a temporary category-level override has helped diagnose integration issues without a release, which matters a lot when every release needs validation.
+@p17-1012
+S: obx
+D: A
+T: How do you monitor third-party APIs and external dependencies?
+K: monitor third party api, external dependency monitoring, vendor api monitoring, dependency health, outbound call metrics
+X: Many production incidents start outside your system: a partner API slows down, a payment provider has an outage, or a certificate on their side expires. You need to know quickly whether the problem is yours or theirs, and ideally before your users tell you.
+X: Start with outbound telemetry. Every external call should produce metrics and spans: duration, status codes, timeouts and retries per dependency. HttpClient instrumentation in OpenTelemetry gives this automatically, tagged by host. Dashboards per dependency show latency percentiles and error rates, and you can compare them with the vendor's own status page.
+X: Add synthetic checks for critical dependencies: a scheduled call to a harmless endpoint, from where your services run, so you notice problems even when there's no traffic. Monitor certificate expiry dates and DNS resolution for external hosts too.
+X: Alert on your user impact first, then on the dependency: an alert saying the partner API error rate is above ten percent for five minutes, plus circuit breaker open events, helps on-call people go straight to the cause.
+X: Know the contract: rate limits, timeouts, maintenance windows and support contacts belong in the runbook. Log enough about failed calls, like the request id the partner returns, to raise a useful ticket, without logging sensitive payloads.
+X: Design for failure as well: timeouts, retries with backoff, circuit breakers and fallbacks. In our integrations with external partner systems, per-partner dashboards and request ids in logs turned arguments about whose fault something was into a quick, factual conversation.
+@p17-1013
+S: obx
+D: A
+T: How do you read a trace waterfall to find where the time is spent?
+K: trace waterfall, read distributed trace, critical path trace, find slow span, span timeline analysis
+X: A trace waterfall shows every span of a request on a timeline: the root span at the top, child spans indented, and each bar's length showing its duration. Reading it well is a quick way to find the real cause of slowness.
+X: First, look at the root span's duration and compare it with what's typical, so you know you're looking at a representative slow trace. Exemplars from a latency chart or a filter for slow traces help find one.
+X: Second, follow the critical path: the chain of spans that actually determined the end time. A long span that runs in parallel with others may not matter, while a short span repeated many times in sequence often does.
+X: Common patterns jump out visually. A staircase of many small database or HTTP spans one after another is an N plus one problem. A big gap where no child span exists means time spent in the service itself, like CPU work, lock waits, garbage collection or thread pool starvation, or an uninstrumented call. Spans that could run in parallel but run sequentially suggest missing concurrency. A span that waits a long time before starting, like a message sitting in a queue, shows backlog.
+X: Then check span attributes and events: the SQL statement, retry counts, cache hit or miss, response size.
+X: Finally, compare with a fast trace for the same endpoint. The difference between the two usually points straight at the cause. In our services, the gap pattern once led us to thread pool starvation from a synchronous call inside async code.
+@p17-1014
+S: obx
+D: A
+T: How do audit logs differ from application logs, and how long should you keep each?
+K: audit log vs application log, log retention policy, how long keep logs, compliance logging, immutable audit trail
+X: Application logs are for engineers: diagnosing errors, understanding behaviour and performance. They're high volume, can be sampled or dropped, and usually only need to be kept for days or weeks, because nobody investigates a debug log from last year.
+X: Audit logs are for accountability: who did what, to which record, when, and sometimes why. They're a business and compliance record, so they must be complete, accurate and tamper-evident, and kept for as long as regulations or contracts require, which can be many years in regulated industries.
+X: That difference drives the design. Audit records shouldn't depend on the logging pipeline, which may drop messages under load. They're usually written in the same database transaction as the change, or through an outbox, so a change can't happen without its audit record. They're append-only, with permissions that stop even administrators from editing them, and ideally protected with hashing or write-once storage. They contain old and new values and the user identity, and they're designed to be queried by business users and auditors.
+X: Application logs go to tools like Splunk, Datadog or CloudWatch with retention set by cost and need, often thirty to ninety days hot, with older data archived cheaply if required.
+X: Both need data protection: personal data in application logs should be minimised or masked, while audit logs, which may need personal data, require strict access control.
+X: In a GxP system, the audit trail is a validated feature of the product, not a side effect of logging, and treating it that way avoids a lot of findings.
+@p17-1015
+S: obx
+D: A
+T: How do you add observability to AWS Lambda functions?
+K: lambda observability, lambda powertools, lambda tracing, lambda logs metrics, cloudwatch lambda insights, otel lambda
+X: Lambda functions are short-lived and there's no server to install an agent on, so observability is built into the function and the platform.
+X: Logs go to CloudWatch Logs automatically. Write structured JSON logs including the request id and a correlation id, and use the advanced logging controls to set JSON format and log levels without code changes. Set a log retention period, because the default is to keep logs forever.
+X: Metrics come from the platform for free: invocations, errors, duration, throttles, concurrent executions, and for queue triggers, iterator age or queue metrics. Custom business metrics are best written with the Embedded Metric Format, which turns log lines into metrics without extra API calls.
+X: Tracing can use X-Ray, enabled with one setting, or OpenTelemetry through the AWS Distro for OpenTelemetry Lambda layer, which can send to X-Ray or to a vendor like Datadog. Trace context should flow from API Gateway or the message attributes so a request is traceable end to end.
+X: Powertools for AWS Lambda, available for Python, TypeScript, .NET and Java, packages all of this: structured logging with context, metrics with EMF, tracing helpers, plus idempotency and batch failure handling.
+X: Alerts I always set: error rate, throttles, duration close to the timeout, dead-letter queue depth, and iterator age for streams. Lambda Insights adds memory and CPU detail if needed.
+X: Cold starts deserve a dashboard too, because a sudden increase in init duration after a dependency upgrade is a common surprise.
+@p17-1016
+S: msa
+D: A
+T: What is the inbox pattern for processing each message only once?
+K: inbox pattern, inbox table, processed messages table, duplicate message handling, at least once delivery consumer
+X: Most brokers, like RabbitMQ, SQS and Service Bus, deliver messages at least once. A consumer may receive the same message twice after a timeout, a lost acknowledgement or a redelivery. If processing has side effects, like reserving stock or sending an email, duplicates cause real damage.
+X: The inbox pattern makes the consumer idempotent. Every message carries a unique message id. The consumer has an inbox table, or processed messages table, keyed by that id. When a message arrives, in one database transaction the consumer inserts the message id into the inbox and performs its business changes. If the insert fails because the id already exists, the message was already processed, so the consumer just acknowledges it and does nothing else. Because both happen in one transaction, you can't end up with the change done but not recorded, or recorded but not done.
+X: It pairs naturally with the outbox pattern on the producer side: the outbox guarantees the message is published, and the inbox guarantees it's processed once.
+X: Details to handle: clean old inbox rows after a retention period longer than any possible redelivery; and for side effects outside the database, like calling an external API, pass an idempotency key so the other system can also deduplicate.
+X: Libraries like MassTransit and NServiceBus include inbox and outbox support. In our RabbitMQ consumers, a processed message table per database made retries from the dead-letter flow safe, because replaying a message twice simply has no effect the second time.
+@p17-1017
+S: msa
+D: A
+T: How do you implement a distributed lock, and when should you avoid one?
+K: distributed lock, redis lock, redlock, sql application lock, sp_getapplock, lease lock, fencing token
+X: A distributed lock makes sure only one instance across many servers does something at a time, like running a scheduled job, refreshing a shared token or processing one customer's batch.
+X: Common implementations: Redis with SET using NX and an expiry, where the value is a unique token so only the owner can release it; SQL Server's sp_getapplock, which is simple if you already have a database and is released automatically with the session or transaction; blob leases in Azure Storage; DynamoDB conditional writes; or ZooKeeper and etcd for stronger guarantees. Libraries like DistributedLock for .NET wrap several of these.
+X: The hard part is that locks expire. If the holder pauses, for example a long garbage collection or network delay, its lock can expire while it still thinks it owns it, and a second instance starts the same work. The fix is a fencing token: an increasing number issued with each lock, which the protected resource checks, rejecting writes with an older token. Redis-based locks can't fully guarantee safety without that.
+X: So I avoid distributed locks where possible. Often a better design exists: a database unique constraint, optimistic concurrency with a row version, partitioning work so each key always goes to one consumer, a single active consumer queue, or a scheduler with built-in clustering, like Quartz.NET with a clustered job store.
+X: When I do use one, I treat it as an efficiency mechanism, preventing duplicate work, and make the work itself idempotent, so a rare double run is still safe.
+@p17-1018
+S: msa
+D: A
+T: Should microservices share common libraries, and what should go in them?
+K: shared libraries microservices, common nuget package, shared code between services, chassis library, coupling through shared library
+X: Sharing code across services saves duplication, but a shared library is also a form of coupling. If every service must upgrade together when it changes, you've built a distributed monolith through a NuGet or npm package.
+X: What's good to share is technical, cross-cutting plumbing that changes rarely: logging and OpenTelemetry setup, standard health checks, authentication configuration, a resilient HTTP client setup, error response formats, and messaging conventions. This is often called a service chassis, and it makes services consistent.
+X: What shouldn't be shared is domain logic and domain models. If two services share a customer entity class, a change for one forces a change in the other, and the service boundaries become meaningless. Each service should own its models; for contracts between services, share schemas or generated clients, versioned carefully, rather than internal classes.
+X: Practices that keep sharing healthy. Version libraries with semantic versioning and keep breaking changes rare. Don't force simultaneous upgrades; services should be able to lag behind for a while. Keep packages small and focused, rather than one giant common package. Avoid heavy transitive dependencies that dictate framework versions. Have a clear owner who reviews changes.
+X: In our front-end work, shared npm packages on the Azure DevOps feed hold the design system, API client and auth helpers for the React shell and sub-apps. They're versioned independently, and a sub-app can stay on an older version until its team is ready, which avoids coordinated big-bang upgrades.
+@p17-1019
+S: msa
+D: A
+T: How does request-reply over a message broker work?
+K: request reply messaging, rpc over rabbitmq, reply queue, correlation id messaging, async request response
+X: Sometimes you want the decoupling of a broker but still need an answer, for example asking a pricing service to calculate a quote. Request-reply over messaging does this.
+X: The requester sends a message to the service's request queue with two extra properties: a reply-to address, which is a queue where it listens for answers, and a correlation id that's unique to the request. The responder processes the message and sends the result to the reply-to queue with the same correlation id. The requester matches the reply to the waiting request by correlation id.
+X: The reply queue can be one temporary exclusive queue per requester instance, or RabbitMQ's direct reply-to feature, which avoids creating queues. In Azure Service Bus, sessions are often used, with the session id matching the request.
+X: Important points. Always set a timeout, because a reply may never arrive. Messages can be delivered twice, so the responder should be idempotent. If the requesting instance restarts, pending replies are lost, so this suits short, interactive requests, not long processes.
+X: It's worth asking whether you really need it. If the caller blocks waiting for the reply, you get the latency of the broker and most of the coupling of a direct call. For real-time answers, a direct HTTP or gRPC call is usually simpler. Request-reply over a broker makes sense when the responder must sit behind the broker, for load levelling or network reasons, or when the reply can be processed asynchronously, like an event updating status later.
+@p17-1020
+S: msa
+D: A
+T: What is the competing consumers pattern?
+K: competing consumers, multiple consumers one queue, scale message processing, work queue pattern, prefetch count
+X: Competing consumers means several instances of a consumer read from the same queue, and each message goes to only one of them. It's the standard way to scale background processing: if the queue is growing, add more consumers.
+X: The broker handles distribution. RabbitMQ delivers messages round-robin to consumers on the same queue, limited by each consumer's prefetch count. SQS hands messages to whichever poller asks, hiding them for the visibility timeout. Service Bus uses peek-lock with similar behaviour, and in Kubernetes, KEDA can scale consumer pods based on queue length.
+X: It brings a few consequences. Order isn't guaranteed, because two consumers process messages in parallel, so if order matters per entity, you need partitioning, like Service Bus sessions, SQS FIFO message groups or a consistent hash exchange, so all messages for one key go to one consumer. Messages can be redelivered if a consumer crashes, so processing must be idempotent. Poison messages that always fail need a retry limit and a dead-letter queue, or they block a consumer forever.
+X: Prefetch needs tuning. A high prefetch is efficient for fast, small messages but can leave one busy consumer holding many messages while others sit idle; for slow messages, a prefetch of one or a few spreads work fairly.
+X: Our notification and data processing workers use this pattern on RabbitMQ, with multiple worker instances per queue, a low prefetch for heavy messages, and retry with a dead-letter exchange, so scaling is just adding instances.
+@p17-1021
+S: msa
+D: A
+T: What is the claim check pattern for large messages?
+K: claim check pattern, large message payload, store payload in blob, message size limit, reference message
+X: Message brokers have size limits, like 256 kilobytes for SQS and Service Bus standard, and even where they allow larger messages, big payloads slow down the broker and use expensive memory. The claim check pattern avoids putting large data in the message.
+X: The producer stores the large payload in external storage, such as S3, Azure Blob Storage or a database table, and sends a small message containing a reference, the claim check, like the object key, plus useful metadata such as type, size and a hash. The consumer reads the message, fetches the payload using the reference and processes it.
+X: Things to get right. Write the payload before sending the message, so the consumer never gets a reference to something missing. Decide who deletes the payload: a lifecycle rule that expires objects after a few days is simpler than tracking when every consumer has finished. Secure the storage, since the payload may contain sensitive data, using encryption and access limited to the producer and consumers, or short-lived presigned URLs. Include a checksum so the consumer can verify the content.
+X: The Amazon SQS extended client library does this automatically for Java and Python, and similar helpers exist for other SDKs.
+X: A natural example is file processing: an uploaded file lands in storage, and a message with its location triggers the import job. In our data transfer flows, large extracts are written to storage and only the reference and metadata travel through the queue, which keeps the broker fast and messages easy to inspect.
+@p17-1022
+S: msa
+D: A
+T: How do you propagate timeouts and deadlines across a chain of service calls?
+K: deadline propagation, timeout budget, cascading timeouts, grpc deadline, request timeout across services
+X: When service A calls B, which calls C, each with its own timeout, the timeouts often don't add up. If A gives up after two seconds but B waits five seconds for C, B and C keep working on a request nobody is waiting for, wasting capacity exactly when the system is under stress.
+X: Deadline propagation fixes this by passing the remaining time budget down the chain. The edge sets a deadline for the whole request, and each service uses whatever is left, minus a small margin, as the timeout for its own downstream calls. If little time remains, it fails fast instead of starting work that can't finish.
+X: gRPC has this built in: the client sets a deadline, it travels in the request metadata, and the server's cancellation token fires when it expires. With HTTP, you can pass a custom header with the deadline or remaining milliseconds and convert it into a cancellation token.
+X: In .NET, the important part is honouring cancellation: pass the request's cancellation token through to database queries and HTTP calls, so work actually stops. Combining it with a timeout using a linked cancellation token source keeps the code simple.
+X: Some general rules: timeouts should get shorter as you go deeper in the chain; retries must fit inside the remaining budget, or they make things worse; and queued messages should carry an expiry, so a consumer doesn't process a request that's already stale.
+X: This is one of those details that turns a small slowdown into a full outage if ignored, because abandoned work keeps piling up.
+@p17-1023
+S: msa
+D: A
+T: How do you invalidate caches across services when data changes?
+K: distributed cache invalidation, cache invalidation events, redis pub sub invalidation, stale cache microservices, cache across instances
+X: When several instances or services cache the same data, a change in one place must reach all the caches, or users see stale data. There are a few approaches, each with trade-offs.
+X: The simplest is short expiry times. Data is allowed to be stale for a known period, like sixty seconds, and no invalidation is needed. For a lot of reference data, that's good enough.
+X: Event-based invalidation is the next level. The service that owns the data publishes an event when it changes, like product updated, and every service that caches it removes or refreshes that entry. With a message broker, each instance needs its own subscription, not a shared queue, or only one instance hears the event. Redis pub/sub or keyspace notifications work well for in-memory caches across instances.
+X: A shared distributed cache like Redis avoids the problem for instance-local copies, because all instances read the same entry, and the owner updates or deletes it on change. A two-level cache, with memory in front of Redis, still needs invalidation messages for the memory level. HybridCache in .NET 9 supports this layering with tag-based invalidation.
+X: Version stamps are another option: include a version in the cache key, and bump the version when data changes, so old entries are simply never read again.
+X: Always keep expiry as a safety net, since invalidation messages can be lost. In our IIS web farm, configuration data is cached in memory per node, with Redis pub/sub invalidation messages and a short expiry as a backup, which keeps all nodes consistent within seconds.
+@p17-1024
+S: msa
+D: A
+T: What is the tolerant reader pattern?
+K: tolerant reader, robustness principle, ignore unknown fields, backward compatible consumer, postel law api
+X: The tolerant reader pattern says a consumer of an API or message should be strict only about what it actually needs and ignore everything else. It's an application of the robustness principle: be conservative in what you send and liberal in what you accept.
+X: In practice, a tolerant reader ignores unknown fields instead of failing, so the producer can add fields without breaking anyone. It reads only the fields it uses, rather than mapping the whole payload into a strict model. It handles missing optional fields with sensible defaults. And for enums, it has a fallback for unknown values, because a new status value from the producer shouldn't crash the consumer.
+X: Most serializers support this. System.Text.Json ignores unknown properties by default, though .NET 8 added an option to disallow them, which you should leave off for external contracts. In TypeScript, a runtime validator like Zod should be configured to strip unknown keys rather than reject them.
+X: The pattern makes independent deployment possible. A producer can add a field, deploy, and consumers update later when they want to use it. Combined with additive-only changes from producers, versioning becomes rare.
+X: There's a balance though. Being tolerant doesn't mean accepting invalid data silently: required fields and business rules must still be validated, and unknown enum values should be logged so you notice them.
+X: Our front-end sub-apps consume the same APIs at different release cadences. Tolerant parsing with safe defaults means a backend can release a new field without forcing every sub-app to release at the same time.
+@p17-1025
+S: msa
+D: A
+T: What is AsyncAPI, and how do you document event-driven APIs?
+K: asyncapi, document events, event catalog, message contract documentation, openapi for events
+X: OpenAPI documents request-response HTTP APIs, but it doesn't describe events and message queues well. AsyncAPI is the equivalent specification for event-driven systems.
+X: An AsyncAPI document describes the servers, like a RabbitMQ or Kafka broker; the channels, such as queues, topics or exchanges and routing keys; the operations, saying whether the application sends or receives on each channel; and the message payloads with JSON Schema or Avro, plus headers like correlation id and message type. It can also describe security and bindings specific to each protocol.
+X: From that, tools generate human-readable documentation, code models and even boilerplate for producers and consumers. Specifications can be checked into each service's repo and validated in CI like OpenAPI files.
+X: The practical value is discoverability. In an event-driven system, it's surprisingly hard to answer which events exist, who publishes them, who consumes them and what fields they contain. Without documentation, people read code or guess from messages in queues. An event catalog, like EventCatalog or a developer portal such as Backstage, can collect the AsyncAPI files from all services into one browsable place, showing producers and consumers for each event.
+X: Combined with schema compatibility checks, it also supports safe evolution: a change to a message schema shows up in review, and breaking changes can fail the build.
+X: For a team with many RabbitMQ queues built up over years, I'd start small: document the most widely consumed events first, with their payload schemas and owners, because that's where unclear contracts cause the most incidents.
+@p17-1026
+S: msa
+D: A
+T: Event notification vs event-carried state transfer: what is the difference?
+K: event notification vs event carried state transfer, thin events vs fat events, event payload design, domain event payload
+X: These are two ways to design the content of events, sometimes called thin and fat events.
+X: An event notification is thin: it says that something happened and gives an id, like order 123 was updated. Consumers that care call back to the owning service's API to get the current details. Events stay small and stable, and consumers always see the latest data. The downsides are extra calls, load on the owner, and runtime coupling: if the owner is down, consumers can't process the event.
+X: Event-carried state transfer is fat: the event contains the relevant data, like the order's status, items and totals. Consumers can update their own local copy without calling back, so they keep working when the owner is down, and queries become local and fast. The downsides are larger messages, more fields that become part of the contract, harder schema evolution, and data duplicated across services that is eventually consistent.
+X: There's also a middle path: include the fields most consumers need, plus the id for anyone who needs more.
+X: Ordering matters with fat events. If a consumer processes an older event after a newer one, it might overwrite fresh data with stale data, so include a version or timestamp and ignore older ones.
+X: I choose based on the consumers. When many services need to keep their own view of reference data, like site or product details, event-carried state transfer reduces chatter and coupling. For sensitive data, a thin notification is safer, since the details stay behind the owner's API with its access controls.
+@p17-1027
+S: msa
+D: A
+T: What is a cell-based architecture?
+K: cell based architecture, cells, blast radius reduction, shuffle sharding, bulkhead at infrastructure level, partitioned deployment
+X: A cell-based architecture splits a system into several independent, complete copies, called cells, each serving a subset of customers or tenants. Each cell has its own application instances, databases, queues and caches. A thin routing layer sends each request to the right cell based on, say, the tenant id.
+X: The main reason is to limit blast radius. A bad deployment, a noisy tenant, a poison message or a database problem affects one cell, not everyone. It's the bulkhead pattern applied to the whole infrastructure. AWS uses this extensively for its own services.
+X: It also helps scaling and operations. Cells have a known maximum size, so you test that size and add new cells as you grow, instead of discovering new limits in one giant deployment. Deployments roll out cell by cell, which works naturally with deployment rings.
+X: The costs are real. More infrastructure to run and pay for. The routing layer must be very simple and highly available, since it's shared. Moving a tenant between cells needs a data migration process. And cross-cell features, like global reporting or search, need separate aggregation.
+X: It fits systems with natural partitioning, like multi-tenant SaaS, where each customer's data is mostly independent.
+X: A per-study database model is a small step in this direction. Each study's data is isolated, so a problem with one study's data or a migration rarely affects others. A full cell design would go further by also splitting the application tier, so a group of studies runs on its own infrastructure.
+@p17-1028
+S: msa
+D: A
+T: How do you share reference data across microservices?
+K: reference data microservices, shared lookup data, master data across services, country codes services, replicate reference data
+X: Reference data is data that many services need but that rarely changes, like countries, currencies, product catalogues, site details or configuration lists. The question is how services get it without coupling to one central database.
+X: Option one is a reference data service with an API. Every service calls it, usually with caching. It keeps one source of truth, but adds a runtime dependency; if the service is slow or down, callers suffer unless their caches are good.
+X: Option two is replication through events. The owning service publishes changes, and each consumer keeps its own local copy, in its own database or cache. Reads are local and fast, and consumers keep working during outages. The cost is eventual consistency and some storage duplication, which for reference data is usually fine.
+X: Option three is shipping static data with the code, as a package or configuration file. For truly static standards, like ISO country codes, this is simplest. It needs a release to change, though.
+X: Avoid a shared database that every service reads directly, because then no one can change the schema safely.
+X: Whatever the approach, be clear about the owner, use stable identifiers that don't change when display names do, and version changes. For data that affects business rules, like a site being closed, decide how quickly consumers must see it, because that drives the choice between caching, events and direct calls.
+X: In our platform, slowly changing configuration is cached per node with invalidation messages, while truly static lists ship with the application.
