@@ -1,0 +1,128 @@
+@p17-25
+Okay, 2 GB is way too big. It's slow to push, slow to pull, slow to start, and the attack surface is bigger. So I'd shrink it step by step.
+
+First I look at what's actually inside. docker history, and a tool called dive, which shows the size of each layer. Mostly the culprits are a full SDK base image, build tools, caches, and random files that shouldn't be there.
+
+The biggest fix is a multi-stage build. You compile in a stage based on the SDK image, and then copy only the published output into a small runtime image. For .NET, that means build with the sdk image and run on the aspnet runtime image, or an Alpine or chiselled Ubuntu variant, which can be around 100 MB or even less. Then a dockerignore file, so bin, obj, node_modules, the git folder and test data never even enter the build context. If you install packages, combine them in one RUN with no-install-recommends and clean the cache in the same layer, because deleting files in a later layer doesn't reduce anything. And don't copy big data files or models into the image, mount them or download at runtime.
+
+For .NET you can go further with trimming, a self-contained single file, or even Native AOT if the app suits it.
+
+After that I scan the smaller image and make sure startup and tests still pass. Usually you end up at a fraction of the original size.
+
+@p17-26
+So in blue-green you run two identical production environments. Blue is what's live right now, green is the new version. You deploy and test the new version on green while blue keeps serving users. Once green looks good, you switch all the traffic from blue to green in one go, usually at the load balancer or DNS. And if something goes wrong, you just switch back to blue, because it's still running there.
+
+What you get is near-zero downtime, instant rollback, and you can test the real production setup before any user sees it.
+
+What it costs you is double capacity during the switch. And honestly the database is the hard part. Both versions usually share one database, so schema changes have to be backward compatible. We do it the expand-and-contract way, add new columns first, deploy code that works with both, and drop old columns only in a later release.
+
+On AWS, ECS supports blue-green through CodeDeploy. You have two target groups behind the load balancer, a test listener, and automatic rollback on CloudWatch alarms. In Kubernetes you can do it by switching a Service's selector between two deployments.
+
+And just to compare, canary is different, there you shift traffic gradually, like 10 percent first. Rolling is where instances get replaced one by one. Blue-green is the all-at-once switch with a ready fallback.
+
+@p17-27
+For automatic rollback you basically need two things. A reliable signal that the deployment is bad, and a fast, safe way to go back to the last good version.
+
+For the way back, we build once and keep every versioned artifact or image. So rollback means redeploying the previous version, never rebuilding anything. And database changes are kept backward compatible, so the old code still works with the new schema. Otherwise rollback is just on paper.
+
+For the signal, I use a few checks together. Readiness and health checks fail the deployment if the new instances don't start. Smoke tests run right after deployment against the key endpoints. Then during a bake period, monitoring alarms watch error rate and latency against the baseline.
+
+Then the tools do the actual work. In ECS, the deployment circuit breaker with rollback enabled goes back to the last stable task definition if tasks don't get healthy, and CodeDeploy blue-green can roll back on CloudWatch alarms. In Kubernetes, rollout undo, and tools like Argo Rollouts automate canary analysis. In Azure DevOps, a post-deployment gate can query monitoring, and a failure stage redeploys the previous release.
+
+Feature flags help too, so a risky feature can be switched off without any deployment. In our releases we always keep the previous tagged release ready, and [once we rolled back a UAT release within 15 minutes] when a setting was missing. So that's how we handle it.
+
+@p17-28
+So I follow the test pyramid, but adjusted a bit for microservices. Lots of fast unit tests, a solid layer of integration and contract tests, and only a few end-to-end tests.
+
+Unit tests cover business logic on its own, validators, domain rules, handlers, using xUnit or NUnit, with Moq or fakes for dependencies. They run in seconds on every build. I focus on behaviour and edge cases, I'm not trying to mock every single line.
+
+Integration tests check the service with its real dependencies. In .NET, WebApplicationFactory hosts the API in memory, and Testcontainers starts a real SQL Server, PostgreSQL or RabbitMQ in Docker. So I'm testing real queries, real migrations, real message handling, not mocks pretending.
+
+Then contract tests for the boundaries between services. With Pact, the consumer writes down what it expects from an API, and the provider's pipeline verifies it. So a breaking change gets caught before deployment, without spinning up all the services together.
+
+End-to-end tests with Playwright, only for a few critical user journeys in a deployed environment, because honestly they're slow and fragile.
+
+Around all this, performance tests for the key endpoints, security scans, and SonarQube quality gates on coverage of new code.
+
+In our IRT, since it's regulated, there's formal verification on top. Like for the CSV import feature, every rule has a unit test matching it. That's basically my strategy.
+
+@p17-29
+I go in a fixed order. Scope it, find the slow step, get the service back, and then fix the root cause properly.
+
+Scope first. Is it every endpoint or just one? All users or some? Since when exactly? And what changed around that time, a deployment, a config change, data growth, a traffic spike, or something in a dependency?
+
+Then I find where those 5 seconds are going. Distributed traces break the request into spans, so I can see if it's the database, a downstream API, a queue, or our own code. If it's the database, I go to Query Store or the slow query log, find the query whose duration jumped, and look at its plan. Usually it's a plan change from parameter sniffing, a missing index after some new filter, lock blocking, or just a table that grew. If it's the application, I look for thread pool starvation from sync-over-async, connection pool exhaustion, GC pauses, or a new N+1 query. If it's a downstream call, I check its latency and whether our timeouts and retries are making it worse.
+
+To get service back quickly, I roll back the bad release, scale out, or force the last good query plan.
+
+And then the real fix. [In March 2025, our shipments API went from about 200 milliseconds to 3 seconds because of parameter sniffing. I forced the good plan first, then fixed the index.] So that's how I'd approach it.
+
+@p17-30
+If there are 500s but nothing in our logs, my first thought is, the error is happening before or outside our code, or our logging is losing it. So I go from the outside in.
+
+First I confirm where the 500 is actually coming from. I check the response headers and body, and the load balancer or gateway logs. An ALB giving 502 or 503, or an API Gateway integration error, is a different thing from a 500 our app generated. On IIS, a 500.30 or 502.5 means the ASP.NET Core app failed to start, and that sits in the Windows event log, not in our app logs.
+
+Then I check the hops in between, reverse proxy, ingress, a WAF, or the gateway timing out. Their access logs show which upstream actually answered.
+
+Then, is our logging even working? A crash at startup happens before logging is configured. Some exception middleware might return 500 without logging anything. Logs can get dropped because the sink is down, or buffered and lost when the container dies, or filtered out by a wrong log level. And a process killed for memory leaves no log at all.
+
+I also check the container or host, restarts, exit codes, out-of-memory kills.
+
+Once I find it, I fix the cause and the visibility both. Global exception logging, startup logging to console, and correlation ids returned to users, so next time it's not a mystery.
+
+@p17-31
+When it only happens in production, I stop guessing and focus on what's different between production and my machine.
+
+First, evidence from production itself. Logs and traces filtered by correlation id for the failing requests, the exact time, the user, the data involved, the deployed version, the environment. And patterns, does it happen for one site, one study, one browser, or only under load?
+
+Then I compare the differences. Data is the big one, production has volumes and weird edge cases, special characters, nulls, very old records, that test data just doesn't have. Configuration, maybe some setting, feature flag or secret is different. Infrastructure, several instances instead of one, a load balancer, time zones, culture settings, Linux instead of Windows. Concurrency, race conditions only show up under real parallel load. And dependencies, real third-party systems don't behave like mocks.
+
+To reproduce, I copy the exact request, use masked production data in a lower environment, match the config, and use load tests for concurrency issues. If it still won't reproduce, I add targeted logging or metrics around the suspected code, release that, and wait for the next occurrence. For memory or CPU issues, I take a dump from production.
+
+[Once, a date filter bug showed up only for US sites, because I'd tested only in Indian time. I fixed it by storing everything in UTC.] That's the kind of thing you only learn the hard way.
+
+@p17-32
+So centralised logging means every service sends its logs to one searchable place, so I can follow one request across all of them.
+
+There are basically four pieces. One is structured logs. Each service writes JSON with the same fields, timestamp, level, service name, environment, version, message, exception, and most importantly a correlation or trace id. In .NET, I use Serilog or the built-in logger with message templates.
+
+Second is correlation. The first service generates a trace id, or reads it from the incoming request, and every outgoing HTTP call and every message carries it in a header. With OpenTelemetry and W3C trace context, this happens automatically, and the same id links logs and traces.
+
+Then collection and shipping. Either services write to stdout and an agent picks it up, like Fluent Bit, the CloudWatch agent or the Datadog agent, or they ship directly through a sink. I prefer agents, because the app doesn't block if the log platform is slow.
+
+And last, the central store and tools, Elasticsearch with Kibana, Splunk, Datadog, CloudWatch Logs or Azure Log Analytics, with search, dashboards, alerts and retention rules.
+
+One more thing, we mask personal data and secrets before logging. In our CIRT platform, Serilog sends logs to Splunk, and the correlation id in each message lets support trace one request across services. That's how we've done it.
+
+@p17-33
+See, with different stacks, I won't force one logging library on everybody. What I standardise is the format, the correlation and the pipeline.
+
+First, a shared logging standard every team follows. JSON output, a common set of field names like timestamp, level, service.name, environment, version, trace_id, span_id and message, and agreed log levels. If you pick a known schema, like OpenTelemetry's semantic conventions or the Elastic Common Schema, nobody wastes time arguing about names.
+
+Then OpenTelemetry as the common layer. It has SDKs for .NET, Java, Node, Python, Go. It uses W3C trace context headers, so a trace started in a .NET service just continues in the Java service, and every log line carries the same trace id. Each team keeps its own library, Serilog or ILogger in .NET, Logback or Log4j2 with a JSON encoder in Java, pino in Node.
+
+Then collection happens outside the apps. Services write to stdout, and the OpenTelemetry Collector or Fluent Bit collects, enriches, masks and forwards everything to one backend, Elastic, Splunk, Datadog or CloudWatch. And if we change backend later, no service needs to change.
+
+Last is a bit of governance. A shared starter package or template per stack, and a pipeline check or dashboard that flags services missing trace ids. That way five teams stay consistent without anyone being forced into one language.
+
+@p17-34
+Both clouds have managed services for this, and honestly they map quite closely.
+
+On AWS, the core is CloudWatch Logs. ECS, Lambda and EKS send logs there, through the awslogs driver, the Lambda runtime, or Fluent Bit. Logs go into log groups, you search them with CloudWatch Logs Insights, and you can turn them into metrics and alarms. For tracing there's X-Ray, or the AWS Distro for OpenTelemetry. If you need heavy search and dashboards, Amazon OpenSearch Service gives you a managed Elasticsearch-style stack, usually fed by subscription filters or Kinesis Data Firehose. S3 for cheap long-term archive, queried with Athena. And CloudTrail is the audit log of AWS API calls.
+
+On Azure, it's Azure Monitor with a Log Analytics workspace. Application Insights collects application logs, requests, dependencies and traces, and it can use OpenTelemetry now. Everything is queried with KQL, the Kusto query language, with workbooks for dashboards and alert rules. Diagnostic settings push platform logs from things like App Service and AKS into the workspace, and Container Insights covers AKS.
+
+A lot of teams also use third-party platforms that work across clouds, like Datadog, Splunk, Elastic Cloud or Grafana Loki.
+
+In our on-premise CIRT platform we use Splunk, and our newest services use OpenTelemetry with Datadog. So we've actually got a bit of both.
+
+@p17-35
+For me it depends on how many services we have, how much control we need, and honestly how strong the team is on operations.
+
+Azure App Service, what people call Web App, is a fully managed platform for web apps and APIs. You deploy code or a container, and Azure handles servers, patching, scaling, TLS certificates, and deployment slots for zero-downtime swaps. It plugs into Azure AD, Key Vault and Application Insights very easily. It's ideal when you have a handful of web apps or APIs, a small team, or you want to go live fast without much ops work.
+
+AKS is managed Kubernetes. You get a lot more control and flexibility. Many microservices with complex networking, sidecars and service meshes, custom scaling with KEDA based on queue length, background workers, stateful workloads, GPU nodes, portability across clouds. But you need Kubernetes skills to handle cluster upgrades, node pools, ingress, security policies, monitoring, all of that.
+
+There's also a middle option, Azure Container Apps. It runs containers with Kubernetes-style features like KEDA scaling and Dapr, but you don't manage a cluster.
+
+So my rule of thumb is, a few web apps or APIs, go with App Service. Lots of containerised services and you have a platform team, go AKS. Containers but no appetite for cluster management, look at Container Apps. That's how I'd decide.

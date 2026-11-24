@@ -1,0 +1,119 @@
+@p17-1
+Sure. So I'm Pradeep, and I'm mainly a backend person, C# and .NET, but I do a fair bit of front end also. Total experience is around five and a half years.
+
+I started my career at DXC Technology. There I worked on C# and .NET Framework solutions on SharePoint, some integrations, and a lot of production support, which honestly taught me how to debug under pressure.
+
+Since July 2022 I'm with IQVIA, working on IRT. It's a regulated clinical-trial platform, so it handles patient randomisation, drug supply, shipments, eConsent status, drug accountability, all of that, for global trials. Day to day I build ASP.NET Core APIs and services on .NET 6 to 10, with EF Core, SQL Server, RabbitMQ and Redis. On the UI side I work on React with TypeScript and some Angular screens. Our CIRT platform runs on-premise, and apart from that I've worked on IQVIA's newer services on AWS, like ECS, Lambda and DynamoDB.
+
+The thing I'm most proud of is the CIRT MCP server. I designed and built it alone in .NET 8. It gives AI agents around 77 tools to run our builds, releases and multi-node deployments, and it brought deployment time down from 6 hours to 2, and people needed from 6 to just 1.
+
+I also own release integration and production root-cause analysis in my team. So now I'm looking for a senior backend role where I can own the design end to end.
+
+@p17-2
+So for me, boundaries come from the business, not from technical layers or tables. Like, I won't make a "database service" and a "validation service". I use domain-driven design thinking, basically finding bounded contexts, where a word like "shipment" or "subject" has one clear meaning and one team owns the rules around it.
+
+Then I check a few things. Who owns the data? Each service should own its own data, and nobody else should be writing into its tables. Then, what changes together? If two things always go out in the same release, honestly they probably belong in one service. Then I look at the communication. If two services need lots of chatty synchronous calls just to finish one request, the boundary is wrong somewhere. And team ownership, one team should be able to own and deploy the service on its own.
+
+One thing I'm careful about is not going too small. Nano-services with one table each give you network calls, distributed transactions and ops cost, and no real benefit.
+
+In our IRT, if you look at it, randomisation, supply and shipments, drug accountability and notifications are natural boundaries, because each one has its own rules, its own data and its own users. And when I'm not sure, I start with a well-structured modular monolith and split a module out only when there's a clear reason, like independent scaling or a separate team. That's usually my approach.
+
+@p17-3
+Okay, so when A calls B and B calls C and things get slow, two things I do. One, prove where the time is actually going. Two, stop the slowness from spreading to A and B.
+
+For the first part, I go to distributed tracing with the correlation id. The trace shows every hop with its duration, so I can clearly see A is waiting on B and B is waiting on C. Then I open C's own metrics, latency percentiles, error rate, CPU, memory, thread pool, database time, and whatever C itself is calling. Mostly the cause is in C's dependency, like a slow query, some lock, a missing index or an external API. Or it's plain saturation after a traffic jump or a recent release.
+
+While C is being fixed, I protect the callers. Every call should have a timeout, so B doesn't wait forever. Retries are limited, with backoff and jitter, otherwise we just hammer C harder. A circuit breaker on B's calls to C fails fast when C is unhealthy, and B gives a fallback or a clear error. And bulkheads, so C's slowness doesn't eat up all of B's threads or connections.
+
+Then longer term I ask, does this chain even need to be synchronous? If B is only informing C about something, put a message on a queue and the dependency is gone. So yeah, that's how I'd handle it.
+
+@p17-4
+See, a circuit breaker is basically: if a dependency is clearly failing, stop calling it for some time and fail fast, instead of piling up slow requests.
+
+It has three states. Closed is normal, calls go through and failures are counted. When failures cross a threshold, say more than half the calls fail within 30 seconds, with at least 20 calls, the breaker opens. While it's open, calls fail immediately, we don't even touch the dependency. After a break duration it goes half-open and lets a few trial calls through. If they work, it closes again. If not, back to open.
+
+In .NET I use Polly, which is now built into Microsoft.Extensions.Http.Resilience. On a typed HttpClient I add a resilience pipeline with a timeout, a retry with exponential backoff and jitter, and the circuit breaker, in that order, so retries happen inside the breaker's view. Then I tune failure ratio, sampling duration, minimum throughput and break duration.
+
+When the circuit is open, the caller gets a BrokenCircuitException. I handle that with a fallback, like cached data, a default value, or a clear 503 to the client. And I log state changes and push metrics, so we get an alert when a breaker opens.
+
+One thing I learned is to count only real failures, like timeouts and 5xx. If you count 404s or validation errors, the breaker opens for no reason. That's pretty much how I implement it.
+
+@p17-5
+So I think about it in layers. But for authentication specifically, my answer is OAuth 2.0 and OpenID Connect, with JWT access tokens from one central identity provider. Never a home-grown login inside each service.
+
+For users, the front end signs in through the identity provider with authorization code flow plus PKCE. The provider gives a short-lived access token, a JWT, and every API validates it, I mean the signature against the provider's public keys, the issuer, the audience and the expiry. Then authorization happens inside each service with roles, scopes or policies, because only that service really knows its own rules.
+
+For service-to-service calls we use client credentials flow. So each service has its own identity and only the scopes it needs. On top of that, mutual TLS or a service mesh can encrypt and authenticate traffic inside the network.
+
+Then there's the rest around it. API gateway for rate limiting and one entry point, HTTPS everywhere, secrets in a vault, least privilege on the databases, input validation, audit logging.
+
+In our IRT, Keycloak is the identity provider. The React app uses OIDC, our newer .NET APIs validate Keycloak JWTs with the bearer handler, and permissions come from role, module and action rules. So that's how we've set it up.
+
+@p17-6
+Backend, always. It has to be enforced in the API, normally in the middleware. The front end only helps the user sign in and carries the token. Because, see, you can't trust the client. Anybody can change JavaScript in the browser or just call the API directly from Postman.
+
+So how it works in practice. The front end redirects the user to the identity provider, gets the tokens back, stores them safely, and attaches the access token on every API call, like with an axios interceptor in React or an HTTP interceptor in Angular. It can hide menus the user can't access, but that's just user experience, it's not security.
+
+In the backend, ASP.NET Core's authentication middleware validates the JWT on every request, before any controller even runs, and builds the user's identity. After that authorization kicks in, roles and policies on the endpoints, and sometimes resource-level checks in business logic, like "can this user actually see this site's data".
+
+An API gateway can also validate tokens early and throw out bad traffic. But each service still validates the token itself, defence in depth basically.
+
+In our IRT, the React app uses Keycloak with OIDC, and every new .NET API validates the JWT in middleware, with role and module checks done through policies. So the answer is middleware in the backend, with the front end just helping.
+
+@p17-7
+Okay, so idempotent means if you do the operation ten times, the effect is the same as doing it once. GET, PUT and DELETE are idempotent by definition. POST is not, and honestly POST is where all the trouble comes, retries and double clicks creating duplicate orders or payments.
+
+The standard way is an idempotency key. The client generates a unique key, like a GUID, and sends it in a header, say Idempotency-Key. On the server, before doing any work, I check a store for that key. If it's new, I mark it in progress, do the work, and save the response against the key. If the same key comes again, I just return the saved response, I don't do the work again. If it's still in progress, I return 409. And keys expire after some time, maybe 24 hours.
+
+The check has to be atomic, that's the part people miss. A unique constraint in the database, or Redis SET with NX, so two parallel requests can't both pass. Ideally the key gets saved in the same transaction as the business change.
+
+I also keep database constraints as the last safety net. In our IRT I used exactly this for re-randomisation. Idempotency key from the UI, plus a unique constraint of one assignment per subject per stage. So even if there's a retry, the subject can never get randomised twice. That's how we handled it.
+
+@p17-8
+That's what we call a captive dependency. See, a singleton lives for the whole application. So if it takes a scoped service in its constructor, that scoped instance gets captured and lives forever too, instead of living for one request.
+
+And the drawbacks are pretty serious. DbContext is scoped, right? So a captured DbContext gets shared across all requests and all threads. DbContext isn't thread-safe, so you start seeing random concurrency exceptions, stale cached entities, memory growing because of change tracking, and in the worst case one user's data leaking into another user's request. Anything request-specific, like the current user, would be wrong for everybody after the first request.
+
+ASP.NET Core does protect you in development. Scope validation is on, and you get an error like "Cannot consume scoped service from singleton". But in production that check is off by default, so if you didn't test properly, it can slip through.
+
+Fix depends on the case. If the consumer doesn't really need to be a singleton, just make it scoped. If it has to be a singleton, like a background service, inject IServiceScopeFactory, create a scope for each unit of work, resolve the scoped service inside it, and dispose the scope after. For DbContext specifically, IDbContextFactory is a clean option.
+
+And in our projects I always turn on ValidateScopes and ValidateOnBuild, so these mistakes fail at startup itself.
+
+@p17-9
+Yes, I have. Most of my work is .NET, honestly, but I've built Node.js services in TypeScript, like a build-log summariser for our deployment tooling. And I work on our React with TypeScript front end, which is replacing the older ASP.NET MVC and Angular screens, module by module.
+
+For state in a big React app, the first thing is to stop treating all state the same. There are different kinds and they need different tools. Server state, meaning data from APIs, I put in a data-fetching library like React Query or RTK Query, because you get caching, loading states, refetching, invalidation for free. Global client state, like the logged-in user, the selected study, UI preferences, that goes into Redux Toolkit or a small store like Zustand. Local stuff, like whether a dialog is open, just stays in useState in the component. Forms go into something like React Hook Form. And filters and paging I keep in the URL query string, so links can be shared.
+
+The mistakes I try to avoid are dumping everything into Redux, and putting fast-changing values into one big Context, because then every consumer re-renders.
+
+In our React shell, we use Redux Toolkit for shared state, with a slice per feature module, and axios with interceptors for the API calls. That way each npm feature package stays independent. So that's how we manage it.
+
+@p17-10
+They're actually for different things. useState stores state, a value that belongs to the component, and when you change it through the setter, React re-renders. useMemo doesn't store state at all. It just caches the result of some calculation between renders, and recalculates only when its dependencies change.
+
+Let me take an example. With useState, I take count and setCount from useState with zero, and when I call setCount, the component re-renders with the new value. With useMemo, I'd write something like a total that reduces over items, with items in the dependency array, and React keeps giving me the old total until items actually changes.
+
+Where do I use useMemo? Mainly two places. One is expensive calculations, like filtering or sorting a few thousand rows. The other is keeping the same object or array reference between renders, so a child wrapped in React.memo, or a useEffect dependency, doesn't think it got a new value every time.
+
+The common mistake I see is people putting useMemo everywhere. It has its own cost and the code gets harder to read, so I add it only when the profiler shows a slow calculation or extra re-renders. Another mistake is storing derived values in useState and syncing them with useEffect. It's simpler to just calculate during render, with useMemo if it's heavy. That's the difference in short.
+
+@p17-11
+First thing, I measure. React DevTools Profiler, and the highlight updates option, to see which components are re-rendering and why. Because optimising without measuring, honestly, mostly just adds complexity.
+
+Then I pick the right fix. Keep state close to where it's used, so typing in one input doesn't re-render the whole page. Wrap pure, expensive children in React.memo so they skip rendering when props haven't changed. But then the props need to be stable, so useCallback for functions and useMemo for objects and arrays going into those memoised children, because a new function on every render just breaks memo. If there's a big Context, I split it, or move fast-changing values into a store with selectors, like Redux Toolkit or Zustand, so components only subscribe to what they need. Stable keys in lists, never the array index if items can move. And for really long lists, virtualisation, so only the visible rows render.
+
+One more small thing, don't define components inside other components. That remounts them every single time.
+
+In our React shell, we had a drug accountability grid that was slow because every keystroke in a filter re-rendered all the rows. [Moving the filter state down, memoising the row component and virtualising the grid made typing smooth again.] So that's the kind of thing I do.
+
+@p17-12
+So code splitting is breaking one big JavaScript bundle into smaller chunks. Lazy loading is downloading a chunk only when it's actually needed. Put together, the first page load becomes much faster.
+
+In React I use React.lazy with a dynamic import, like a Reports component that's lazily imported from its own file, and wrap it in Suspense with a spinner as fallback. Where it helps most is route-level splitting. Each page is its own chunk, so the login page doesn't download the reporting module. I also lazy load heavy things that aren't visible at first, like charts, rich text editors, big dialogs. Vite and webpack create the chunks automatically from the dynamic imports. I put an error boundary around lazy parts, because a chunk download can fail right after a deployment. And sometimes I prefetch the likely next page on hover.
+
+In Angular, it's built into the router. loadChildren for a feature module, loadComponent for a standalone component, and now the defer blocks in templates also.
+
+After that I check the result with the bundle analyser and Lighthouse, just to confirm it actually got smaller.
+
+In our React shell, each feature module is a separate npm package, and the shell lazy loads each one by route. So a site user who never opens drug accountability never downloads that code at all. That's how we did it.

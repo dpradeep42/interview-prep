@@ -1,0 +1,131 @@
+@p17-13
+See, in production I can't attach a debugger to the user's browser. So I depend on good telemetry and a proper process.
+
+First thing is evidence. Error monitoring, like Sentry or Datadog RUM, captures the JavaScript errors with stack traces mapped back to the TypeScript source, through source maps we upload in the pipeline. You also get the browser, the release version and what the user clicked before the error. In React, an error boundary catches render errors, shows a friendly message and reports it. And for API issues, we return a correlation id in the response headers, so I can jump to the backend logs for that exact request.
+
+Then I try to reproduce. Browser DevTools, the network tab for failing or slow calls, the console for errors, performance tab for long tasks. I try to use the same browser, same role, same data as the user, because mostly that's where the difference is.
+
+Then performance side. Lighthouse, Web Vitals from real users like LCP, INP and CLS, and tools like GTmetrix or WebPageTest, which show slow loading, big bundles or layout shifts.
+
+Honestly, the usual culprits are a chunk loading error right after a release, some browser-specific API, an unhandled null coming from the API, or just a slow endpoint.
+
+After that I either fix forward or roll back, and add a test so it doesn't come back. That's usually my approach.
+
+@p17-14
+So GTmetrix is an online tool that tests how fast a web page loads, and more importantly tells you why it's slow. You give it a URL, it loads the page in a real browser from a test location and device you choose, and then you get a performance grade and a detailed report.
+
+The report is built on Google Lighthouse underneath. It shows the Web Vitals, like Largest Contentful Paint, which is basically when the main content shows up, Total Blocking Time, and Cumulative Layout Shift, which is things jumping around on the page. The part I find most useful is the waterfall chart. It shows every request the page makes, in order, with size and timing, so you can spot that one huge image, a slow API call, render-blocking scripts, or just too many requests. It also gives specific suggestions, like compress images, enable caching, reduce unused JavaScript. And you can track a page over time and get alerts when it gets slower.
+
+It's similar to PageSpeed Insights and WebPageTest. One limitation though, it tests public URLs from its own servers. So for an internal app behind a login, like ours, I'd rather use Lighthouse in Chrome DevTools or in the CI pipeline, plus real-user monitoring.
+
+I mostly use these after a release, just to check bundle sizes and load times haven't gone worse.
+
+@p17-15
+Yes, I have. Apart from .NET, I've built Python services, like a FastAPI service that pre-validates vendor files, and the retrieval service behind the RAG system I built for Copilot and Cursor.
+
+If I'm designing a Python microservice, I'd go with FastAPI. It's async, it's fast, and it uses type hints with Pydantic, so request validation and OpenAPI docs come almost free. Structure-wise I keep it layered, routers for the HTTP endpoints, a service layer for business logic, and a repository layer for data access, using SQLAlchemy with async drivers, or psycopg directly. For dependency injection, FastAPI's Depends, for things like the DB session and the current user.
+
+Config comes from environment variables through pydantic-settings, so the same image runs in every environment. Logs are structured JSON, with the correlation id picked from the request header. Authentication validates JWTs from the identity provider. And any background work, I'd push to a queue consumer or Celery, I won't do long work inside the request.
+
+On the ops side, health and readiness endpoints, Prometheus or OpenTelemetry for metrics and traces, a slim Docker image, running uvicorn workers behind a load balancer. Testing with pytest and httpx's test client, and Ruff and mypy in the pipeline.
+
+So honestly the principles are the same as in .NET, only the tools change.
+
+@p17-16
+Honestly, I always start by measuring, because the slow part is almost never where you guess.
+
+To find the bottleneck, I use cProfile, or py-spy, which is nice because it attaches to a running process without changing code and gives you a flame graph. If it's a web service, I look at traces and logs first, to see whether the time is going into the database, external calls, or the Python code itself.
+
+Then the fix depends on what I find. If it's I/O, like DB or HTTP calls, I cut down the number of calls, batch them, add indexes, cache results, or use async with asyncio and httpx so calls run in parallel. If it's CPU, like pure Python loops, then better algorithms and data structures, sets and dicts for lookups instead of lists, vectorise with NumPy or pandas, use built-ins, or move the hot path to a compiled library. And because of the GIL, threads won't help CPU work, so there I go for multiprocessing or ProcessPoolExecutor. For memory, generators, so I stream large data instead of loading everything at once.
+
+For web services I also check the server setup. Enough uvicorn or gunicorn workers, connection pooling, and no blocking calls inside async code, because that just freezes the event loop.
+
+And then I measure again, to actually prove it got better. So yeah, measure, fix, measure.
+
+@p17-17
+All three run your code on AWS. The difference is basically how much you manage yourself.
+
+ECS, Elastic Container Service, is AWS's own container orchestrator. You define a task definition with your Docker image, CPU, memory and environment, and an ECS service keeps the desired number of tasks running behind a load balancer. With Fargate you don't even manage servers. It's simple, and it's tightly integrated with IAM, CloudWatch and the load balancers.
+
+EKS is managed Kubernetes. AWS runs the control plane, and you use normal Kubernetes objects, Deployments, Services, Ingress and so on. It's more powerful and portable across clouds, and the ecosystem is huge, Helm, service meshes, all that. But honestly you need more Kubernetes skill and more operational effort.
+
+Lambda is serverless functions. You upload code, it runs in response to events, like an API Gateway request, an S3 upload, an SQS message. It scales automatically, even to zero, and you pay per invocation. The catches are the 15-minute limit, cold starts and less control.
+
+So my rule of thumb is like this. Lambda for event-driven glue and spiky, short tasks. ECS for most containerised APIs and workers when you're on AWS. And EKS when the team already knows Kubernetes or you really need its ecosystem or portability. That's how I'd pick.
+
+@p17-18
+Okay, first I want to know, is it load or is it a problem? In CloudWatch I compare CPU with the request count on the load balancer. If traffic has doubled, maybe it's just a scaling issue. If traffic is normal but CPU jumped, then something changed, so I check for a recent deployment, a config change, or some new type of request coming in.
+
+To protect users quickly, I scale out by bumping the desired task count, and I check auto scaling is actually working and the CPU target isn't set too high. If a release caused it, I just roll back to the previous task definition revision.
+
+Then root cause. Container Insights shows CPU per task. If only one task is hot, it might be stuck in a loop or a retry storm. Traces and logs tell me which endpoints got slower. For .NET, I use dotnet-counters for CPU, garbage collection and thread pool queue length, and dotnet-trace to get a CPU profile, which points to the hot method. Usually it's one of these, a new inefficient code path, heavy JSON serialisation, too much logging, regex backtracking, GC pressure from big allocations, or thread pool starvation from sync-over-async code.
+
+After that I fix the cause, load test the fix, and tune auto scaling and alarms, so next time we scale out before latency suffers. That's how I'd go about it.
+
+@p17-19
+So when a task keeps starting and stopping, that's ECS replacing tasks that either exit or fail health checks. My job is to find why it stops.
+
+First place I look is the stopped task's details. In the console or with describe-tasks, every stopped task has a stopped reason and an exit code. "Essential container exited" with exit code 1 usually means the app crashed at startup. Exit code 137 means it got killed, mostly out of memory, and you'll see OutOfMemoryError. "Task failed ELB health checks" means it started but the load balancer marked it unhealthy. And "CannotPullContainerError" is an image or permission problem.
+
+Then the logs, in CloudWatch Logs for that task, just before it stopped. Startup crashes, honestly nine times out of ten, are a missing environment variable, a secret the task role can't read, a wrong connection string or a port mismatch.
+
+Then health checks. If the app is slow to start, the grace period might be too short and ECS kills it before it's even ready. I check the health check path, the expected status code, the timeouts, and that the container is listening on the right port.
+
+And resources, memory limit too low or CPU too small for startup.
+
+The deployment circuit breaker can roll back automatically, which helps. Once it's fixed, I add a startup configuration check, so next time the failure is obvious in the logs.
+
+@p17-20
+Yes, I have. In IQVIA's newer services on AWS, I've worked with RDS for SQL Server, for relational data where you need transactions and joins, and DynamoDB for simpler, high-volume lookups, like status and event data. Our main CIRT platform itself is on on-premise SQL Server, just to be clear.
+
+Now the partition key. In DynamoDB, it's the attribute DynamoDB uses to decide where an item physically lives. It hashes the partition key value and puts the item in one of many partitions. Every item must have it, and if the table has only a partition key, it has to be unique, like an order id.
+
+You can also have a sort key. Then the primary key is the combination of both, and many items can share the same partition key, stored together and sorted by the sort key. Let me take an example, partition key is shipmentId and sort key is the event timestamp. Then I can query all events for one shipment in time order with one query.
+
+The partition key matters a lot for performance. Each partition has throughput limits, so you want many distinct values with evenly spread traffic. If you pick something like "status" with only a few values, you get hot partitions and throttling. And queries need the partition key, without it you're doing a scan, which is slow and expensive. So that's the idea.
+
+@p17-21
+So in DynamoDB you design keys from your access patterns, not from your entities. Because you can only query efficiently by key, that's the whole game.
+
+What I do first is list every access pattern. Get shipment by id, list events for a shipment in time order, list shipments for a site by status, like that. Then I design the partition key and sort key to answer those.
+
+The partition key needs high cardinality and even traffic, like a shipment id or customer id, so load spreads across partitions. Low-cardinality keys like status or date, I avoid, they create hot partitions. If one key is naturally very busy, I use write sharding, basically add a suffix like a random number from 1 to 10, and query all the shards in parallel.
+
+The sort key gives you ordering and range queries. I often use composite values, like EVENT, a hash sign and then the timestamp, so begins_with and between work nicely.
+
+For other access patterns I add global secondary indexes with their own partition and sort keys, keeping in mind they're eventually consistent. A lot of teams go with single-table design, where related entities sit in one table with generic keys like PK and SK, so one query fetches a whole aggregate.
+
+And then TTL to expire old items, and on-demand capacity if the traffic is unpredictable. That's usually how I approach it.
+
+@p17-22
+Honestly, it depends on what I'm caching, and usually there are a few layers.
+
+For application data, like reference data, config, sessions or expensive query results, I use ElastiCache, normally with the Redis or Valkey engine, because you get rich data types, expiry, persistence and replication. The pattern is cache-aside. Service checks Redis first, on a miss it reads the database, stores the value with a TTL and returns it. On writes, I update the database and then delete the cache key, so the next read refreshes it. I add a bit of random jitter to TTLs so lots of keys don't expire together, and use a lock or single-flight on hot keys so we don't get a stampede.
+
+For static content and cacheable API responses at the edge, CloudFront, which caches close to the users. API Gateway has its own response cache also. For DynamoDB there's DAX, which is a microsecond read cache. And inside each service, a small in-memory cache like IMemoryCache in .NET is the fastest layer, for data that hardly changes.
+
+What I don't cache is equally important. Anything that has to be strongly consistent, or user-specific data without a proper key.
+
+In our CIRT platform, which runs on-premise, Redis caches study configuration and it gets refreshed by RabbitMQ events. So that's how we use it.
+
+@p17-23
+Yes, I do. It's part of AWS Systems Manager. Basically a managed, central place to keep configuration values for your apps, URLs, feature flags, timeouts, connection settings, outside the code and outside the container image.
+
+Parameters are organised in a hierarchy, like slash myapp, slash prod, slash Database, slash Timeout. So I can load all settings for one service and environment in one call, by path. There are three types, String, StringList, and SecureString, which is encrypted with a KMS key, so you can keep sensitive values too. Access is through IAM, so each service's role reads only its own path. Every change is versioned, so you can see history and roll back, and changes can trigger events through EventBridge.
+
+There's a standard tier which is free, values up to 4 KB, and an advanced tier with bigger values and parameter policies like expiry.
+
+In .NET I use the Amazon.Extensions.Configuration.SystemsManager package. Then Parameter Store just becomes a normal configuration source, bound to the options pattern, with optional reload. In ECS you can also inject parameters as environment variables in the task definition.
+
+In IQVIA's newer services on AWS that I've worked on, settings live in Parameter Store. It's kind of the same role that Azure DevOps variable groups play for our on-premise CIRT releases.
+
+@p17-24
+Both keep values outside your code and both can encrypt with KMS. But they're built for different jobs.
+
+Parameter Store is mainly for configuration. Plain strings and SecureStrings in a hierarchy, with versioning and IAM access. Standard tier is free, so it's great when you have lots of settings, URLs, timeouts, feature flags. You can put secrets in it as SecureString, but there's no built-in rotation.
+
+Secrets Manager is made for secrets, like database passwords, API keys, SFTP credentials. The big advantage is automatic rotation. For RDS and other databases, it can rotate the password on a schedule using a Lambda function, and it updates both the database and the secret, so nobody touches the password at all. It also has cross-region replication, resource policies for cross-account access, and random password generation. But it costs per secret per month, plus API calls.
+
+So the way I decide is simple. Configuration goes in Parameter Store, real secrets go in Secrets Manager, especially anything that should rotate. Apps read both at runtime with their IAM role, and cache the values so we don't hit throttling or extra cost.
+
+In our AWS services, database credentials sit in Secrets Manager with rotation, and normal settings sit in Parameter Store. That's how we've split it.

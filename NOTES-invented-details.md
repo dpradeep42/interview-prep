@@ -994,11 +994,11 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p17-11** How do you prevent unnecessary re-renders in a React application?
   - Moving the filter state down, memoising the row component and virtualising the grid made typing smooth again.
 - **p17-27** When you deploy to production through CI/CD, how do you implement automatic rollback if something goes wrong?
-  - rolled back a UAT release within 15 minutes
+  - once we rolled back a UAT release within 15 minutes
 - **p17-29** A production API that took 200 ms now takes 5 seconds. How do you troubleshoot it?
-  - In March 2025, our shipments API went from about 200 milliseconds to 3 seconds because of parameter sniffing; I forced the good plan, then fixed the index.
+  - In March 2025, our shipments API went from about 200 milliseconds to 3 seconds because of parameter sniffing. I forced the good plan first, then fixed the index.
 - **p17-31** A production issue can't be reproduced locally. What is your approach?
-  - Once, a date filter bug appeared only for US sites, because I'd tested only in Indian time; I fixed it by storing everything in UTC.
+  - Once, a date filter bug showed up only for US sites, because I'd tested only in Indian time. I fixed it by storing everything in UTC.
 - **p17-44** Database per service or shared database: which do you prefer and why?
   - about 560
 - **p17-60** How do you handle a long-running operation in an API?
