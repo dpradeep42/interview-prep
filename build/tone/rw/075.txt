@@ -1,0 +1,181 @@
+@p17-888 | Cognito user pools vs identity pools: what is the difference?
+So Amazon Cognito has two parts, and people mix them up all the time.
+
+User pools are a user directory and an OpenID Connect identity provider. They handle sign-up, sign-in, password policies, MFA, account recovery, and federation with external providers like Entra ID, Google or SAML providers. After login, users get JWTs, an ID token, an access token and a refresh token. APIs validate those tokens, like with a JWT authorizer in API Gateway, or JWT bearer authentication in ASP.NET Core using the user pool's issuer and JWKS. Cognito gives you a hosted login UI, now called managed login, or you can build your own UI with the SDK.
+
+Identity pools, or federated identities, take a token from a user pool or another identity provider and exchange it for temporary AWS credentials, through IAM roles. That lets a client app, say a mobile app, call AWS services directly, upload to S3 or read DynamoDB, with permissions scoped per user, without a backend in between. They can also give limited guest access.
+
+The simple way I put it, user pools answer "who is this user?" and issue app tokens, identity pools answer "which AWS permissions does this user get?"
+
+Most web apps with their own backend only need a user pool. Identity pools are useful when the front end talks straight to AWS services.
+
+Things to think about, Cognito's customisation and some features are more limited than full identity products like Keycloak or Entra ID. And migrating users out later can be hard, because password hashes can't be exported. So for a large system the choice really deserves some thought up front.
+
+@p17-889 | How do ECS services find each other with Service Connect or Cloud Map?
+In ECS, tasks start and stop with changing IP addresses, so services need a way to find each other without hard-coded addresses.
+
+You've got a few choices. An internal load balancer, put an internal ALB in front of each service and call it by DNS name. Simple, gives you health checks and load balancing, but it adds cost per load balancer and an extra network hop.
+
+Cloud Map service discovery. ECS registers each task's IP in AWS Cloud Map, which creates DNS records, like orders dot internal dot local, in a private hosted zone. Callers resolve the name and get task IPs. No load balancer, but clients have to deal with DNS caching and picking healthy instances, and there's no built-in retry or metrics.
+
+ECS Service Connect is the newer, recommended approach. ECS injects a managed Envoy proxy sidecar into each task. Services get simple names, like http colon orders on port 8080, and the proxy does load balancing across healthy tasks, retries and outlier detection, and publishes traffic metrics, request counts, latency, errors, to CloudWatch for each service, without code changes. It's built on Cloud Map namespaces underneath.
+
+How I'd choose, Service Connect for service-to-service calls inside ECS, an ALB for traffic coming from outside or from other platforms, and for complex cross-platform meshes a full service mesh, though that adds a lot of operational complexity.
+
+Whatever the discovery method, the calling code still needs timeouts, retries with backoff for idempotent calls and circuit breakers, and it has to propagate correlation and trace context, so requests can be followed across services in IQVIA's newer AWS services.
+
+@p17-890 | How do you debug a running ECS container with ECS Exec?
+Sometimes you need to look inside a running container, check files, environment, DNS resolution or connectivity to a database, especially on Fargate where there's no host to SSH into. That's what ECS Exec is for.
+
+How it works, it uses Systems Manager Session Manager. When you enable it on the service or task, ECS adds an SSM agent to the task. Then you run the aws ecs execute-command with the cluster, task, container and a command like bin slash sh, with the interactive flag, and you get a shell or run a single command. No inbound ports, no SSH keys, no bastion host.
+
+Requirements, enable execute command on the service, give the task role permissions for SSM messages, make sure the task can reach the SSM endpoints, through a NAT gateway or VPC interface endpoints, and install the Session Manager plugin locally. If the image has no shell, like distroless or chiseled images, you can only run binaries that exist in the image, so you need other debugging approaches. That one surprises people the first time.
+
+Security and audit, access is controlled by IAM, so only specific roles can execute commands, ideally only in non-production, or through a break-glass process in production. Sessions can be logged to CloudWatch Logs or S3 and they're recorded in CloudTrail, which matters in regulated environments.
+
+My rule is use it for investigation, not for fixing things by hand. Changes inside a container are lost on restart and they create drift. Once I find the problem, the fix goes through code or config and a normal deployment.
+
+It's basically the AWS equivalent of kubectl exec in Kubernetes.
+
+@p17-891 | How do you publish custom CloudWatch metrics efficiently with Embedded Metric Format?
+There are two main ways to send custom metrics, like orders processed or job duration, to CloudWatch.
+
+The PutMetricData API, where the application calls CloudWatch directly. It works, but every call is a network request with latency and cost, and you need batching and error handling, which is awkward in Lambda.
+
+Embedded Metric Format, EMF. The application writes a structured JSON log line with a special aws section describing which fields are metrics, their units and dimensions. CloudWatch Logs extracts the metrics from those log events automatically and asynchronously. No extra API calls, no latency added to the request, and the same log line carries high-cardinality context, like request id or study id, which you can query in Logs Insights without making them metric dimensions. Honestly it's a really neat trick.
+
+To use it, Powertools for AWS Lambda, for .NET, Python and TypeScript, has a Metrics utility that writes EMF. The aws-embedded-metrics libraries do it for other workloads. On ECS, logs go to CloudWatch through the awslogs driver or the CloudWatch agent, which handles EMF too.
+
+Dimensions and cost, each unique combination of metric name and dimension values is a separate custom metric, billed monthly. So keep dimensions low-cardinality, service, environment, operation, never user ids or request ids. That's where the bill can blow up.
+
+If the organisation uses OpenTelemetry and a vendor like Datadog, metrics go through the OpenTelemetry SDK and collector instead, which keeps the code vendor-neutral. EMF is the simplest choice when CloudWatch is the main monitoring tool.
+
+@p17-892 | What are the disaster recovery strategies on AWS: backup and restore, pilot light, warm standby, multi-site?
+AWS describes four disaster recovery strategies, and basically each one trades cost against recovery time, the RTO, and data loss, the RPO.
+
+Backup and restore. Regularly back up data, with AWS Backup, snapshots and S3 cross-region replication, and keep the infrastructure as code. In a disaster, recreate the infrastructure in another region and restore the data. Cheapest, but RTO is hours and RPO depends on how often you back up.
+
+Pilot light. Core data's continuously replicated to the recovery region, like an Aurora global database or a cross-region read replica, while compute is off or minimal. In a disaster, you scale up compute from templates and switch traffic. RTO in tens of minutes.
+
+Warm standby. A scaled-down but fully working copy runs in the recovery region, with data replicated. It can serve traffic right after scaling up. RTO in minutes, higher cost.
+
+Multi-site active-active. Full capacity in two or more regions, both serving traffic, with Route 53 or Global Accelerator routing users. Near-zero RTO, but the highest cost and complexity, especially with data conflicts between regions.
+
+How to choose, start from the business. How long can the system be down, and how much data can you lose? Clinical systems that sites use to randomise patients need short RTO and near-zero RPO for transactional data, while reporting systems can tolerate more.
+
+What makes any strategy actually work, everything as code so environments can be rebuilt, automated and tested runbooks, regular DR drills, including failing back, monitoring replication lag, and remembering dependencies like DNS, certificates, secrets and third-party allow-lists in the recovery region. People forget the allow-lists, from what I've seen.
+
+@p17-893 | How do EC2 Auto Scaling groups and launch templates work?
+Okay, an Auto Scaling group manages a fleet of EC2 instances. It keeps the desired number running, replaces unhealthy ones, spreads them across Availability Zones, and scales in and out.
+
+A launch template defines how each instance is created, the AMI, instance type, security groups, IAM instance profile, a user data script for bootstrapping, storage and tags. Templates are versioned, so you can roll out changes and roll back.
+
+Scaling policies. Target tracking keeps a metric at a target, like average CPU at 50 percent or ALB requests per target at 1,000. That's the simplest and usually the best choice. Step scaling adds or removes instances in steps based on alarm thresholds. Scheduled scaling handles known patterns, like scaling up before business hours. And predictive scaling uses history to scale ahead of expected load.
+
+Health checks, use ELB health checks, not just EC2 status checks, so instances that are running but whose app is broken actually get replaced. That one catches people out.
+
+Deployments, instance refresh replaces instances gradually with a new launch template version, respecting a minimum healthy percentage, with checkpoints and automatic rollback on failure.
+
+Other useful features, lifecycle hooks to run actions when instances launch or terminate, like draining work or copying logs, warm pools of pre-initialised instances for faster scaling, and mixed instance policies combining On-Demand and Spot across several instance types to cut cost.
+
+For a Windows and IIS-based application moved to AWS as-is, an Auto Scaling group behind an ALB with a golden AMI is a reasonable first step, before containerising.
+
+@p17-894 | How do you send email from an application with Amazon SES?
+Amazon SES is AWS's email sending service, used for transactional email like notifications, password resets and reports.
+
+Setup first. Verify the sending domain, and configure DKIM, with the records SES gives you, SPF, and DMARC in DNS. Those prove emails really come from your domain, which is critical for deliverability and staying out of spam folders. A custom MAIL FROM domain aligns SPF properly.
+
+Get out of the sandbox. New accounts can only send to verified addresses with low limits, so you request production access, explaining your use case and how you handle bounces and complaints.
+
+Sending, from .NET I'd use the AWS SDK's SES v2 client with the application's IAM role, or the SMTP interface for existing code that already uses SMTP. Use templates for consistent content, and configuration sets to group sending and track events.
+
+Bounces and complaints. Subscribe to bounce, complaint and delivery events through SNS or EventBridge, process them, and stop sending to addresses that hard bounce or complain. Account-level suppression lists help. High bounce or complaint rates can get the account paused, so this isn't optional.
+
+Reliability, send email asynchronously through a queue, so a slow or failing email call doesn't fail the business transaction, with retries and idempotency so people don't get duplicates.
+
+Security and compliance, keep sensitive data out of email bodies and send links to the secure application instead, and use dedicated IPs or separate configuration sets for different kinds of email if volumes justify it.
+
+And monitoring, delivery, bounce and complaint rates on a dashboard, with alarms.
+
+@p17-895 | What is AWS AppConfig, and how do you use it for feature flags and configuration?
+AWS AppConfig, part of Systems Manager, manages application configuration and feature flags that change at runtime without redeploying code.
+
+What it adds over keeping config in Parameter Store or files. Validation, configurations can have JSON schema or Lambda validators, so an invalid change gets rejected before it's deployed.
+
+Controlled deployments, changes roll out gradually using deployment strategies, like 10 percent of targets every few minutes, with a bake time.
+
+Automatic rollback, tied to CloudWatch alarms. If error rates go up during a config rollout, AppConfig rolls the change back by itself. That's really valuable, because bad config changes cause a lot of outages. I've seen that happen more than bad code, honestly.
+
+Feature flags, a dedicated flag type with on and off flags, attributes, and multi-variant flags for targeting.
+
+How apps read it, the AppConfig Agent, as a Lambda extension, an ECS sidecar or a local process, polls for changes and caches the config, and the app reads it from a local HTTP endpoint, which is fast and cheap. Or use the SDK's configuration data API with session tokens. Apps should cache values and refresh periodically, not call AppConfig on every request.
+
+In .NET, a configuration provider can load AppConfig data into IConfiguration, and IOptionsMonitor picks up the changes.
+
+Compared with Azure, it's similar to Azure App Configuration with its feature manager. Compared with dedicated tools like LaunchDarkly, AppConfig is simpler and cheaper but has less user targeting and analytics.
+
+I'd use it for kill switches, gradual feature rollouts, and operational settings like rate limits or batch sizes that need to change quickly but safely.
+
+@p17-896 | How do cross-account IAM roles and AssumeRole work?
+In a multi-account AWS setup, a workload or a person in one account often needs access to resources in another, like a deployment pipeline in a tools account deploying to production, or a service reading a shared S3 bucket.
+
+The mechanism's role assumption with AWS STS. In the target account, you create an IAM role with two policies. A trust policy saying which principals can assume it, like a specific role in the tools account, and a permissions policy saying what the role can do in the target account.
+
+In the source account, the calling identity needs permission for STS AssumeRole on that role.
+
+The caller calls AssumeRole and gets temporary credentials, valid from 15 minutes to a few hours, and uses them to call services in the target account. The SDKs and CLI profiles can do all that automatically.
+
+Security details I'd mention. Trust specific roles, not the whole account root, unless that's intentional, and add conditions, like requiring MFA for humans, or source identity and session tags for auditing.
+
+External ID, when you let a third party assume a role, require an external ID they have to provide. That protects against the confused deputy problem.
+
+Keep session duration short.
+
+CloudTrail logs the AssumeRole calls and the actions taken with the session, so every action traces back to the original identity.
+
+For people, IAM Identity Center gives single sign-on into multiple accounts with permission sets, which creates and manages these roles for you, so nobody needs long-term IAM users.
+
+And for pipelines, combine it with OIDC federation, so there are no access keys anywhere at all.
+
+@p17-897 | How do you query logs and data in S3 with Athena?
+Athena's a serverless query service that runs SQL directly on files in S3. You pay per amount of data scanned, and there are no servers to manage.
+
+How it works, a table definition in the AWS Glue Data Catalog describes where the data lives in S3, its format and its columns. You create tables with DDL statements, or use Glue crawlers to infer schemas. Then you query with standard SQL, joins, aggregations, the usual.
+
+Common uses, analysing ALB, CloudFront, VPC Flow Logs and CloudTrail logs stored in S3. Like finding which IPs caused a spike of 500 errors, or which role made a config change. Also querying data lake exports for reporting, and ad hoc analysis of exported application data.
+
+Making it fast and cheap. Columnar formats, convert data to Parquet or ORC, compressed. Queries read only the columns they need, which often cuts scanned data by 90 percent or more compared to CSV or JSON.
+
+Partitioning, organise S3 paths by date or other keys, year, month, day, and filter on the partition columns, so Athena skips irrelevant files. Partition projection saves you managing partitions by hand.
+
+Avoid loads of tiny files, combine them into bigger ones.
+
+Select only the columns you need, never select star on big tables. That's how people get surprise bills, trust me.
+
+Governance, workgroups with per-query scan limits and separate result locations control cost, and Lake Formation can handle fine-grained permissions.
+
+It's really useful during incident investigations, when logs in S3 are too big for quick searches elsewhere, and it complements CloudWatch Logs Insights for recent logs.
+
+@p17-898 | Lambda function URLs vs API Gateway: when is a function URL enough?
+A Lambda function URL is a dedicated HTTPS endpoint for a single function, switched on with one setting. Requests go straight to the function, with no API Gateway in between.
+
+What function URLs give you, an HTTPS endpoint with no extra service, no added cost beyond Lambda, longer timeouts, up to the function's 15 minutes, compared to API Gateway's integration timeout, response streaming for large or progressive responses, CORS configuration, and authentication either with IAM, which means SigV4-signed requests, or none, which means public.
+
+What API Gateway adds, custom authorizers including JWT validation against Cognito or another OpenID Connect provider, request validation, throttling and usage plans with API keys, caching in REST APIs, request and response transformations, routing lots of paths to different backends, custom domains with base path mappings, direct WAF integration, and better lifecycle features like stages.
+
+When a function URL's enough, I'd say internal webhooks with signature verification in the function, service-to-service calls using IAM auth, simple single-function backends, or endpoints that need streaming or long processing time. CloudFront can sit in front of a function URL for a custom domain, caching and WAF, with origin access control so only CloudFront can call it.
+
+When I'd use API Gateway, public APIs with several routes, central JWT authentication, per-client throttling, or when the API is a product with documentation and keys.
+
+For an ASP.NET Core API hosted on Lambda, either can work. But for production APIs with multiple consumers I'd still pick API Gateway or an ALB, to get centralised auth and throttling.
+
+@p17-899 | What is Amazon MQ, and when would you use it instead of SQS?
+Amazon MQ is a managed message broker service running Apache ActiveMQ or RabbitMQ. AWS handles provisioning, patching, high availability across Availability Zones, and backups, while applications use the standard broker protocols, AMQP 0-9-1 for RabbitMQ, or MQTT, STOMP or JMS for ActiveMQ.
+
+Why it exists, a lot of existing applications are built on RabbitMQ or ActiveMQ, with exchanges, routing keys, topic patterns, priority queues and existing client libraries. Rewriting them for SQS and SNS takes effort and changes behaviour. Amazon MQ lets you move them to AWS with minimal code changes, really just a new connection string and TLS settings.
+
+When I'd use it. Lift and shift of applications on RabbitMQ, like an on-premise system with RabbitMQ workers, retry queues and dead-letter exchanges, where keeping the same messaging model reduces migration risk. Or when you need protocol-level features SQS doesn't have, complex routing, message priorities, or standard protocols for interoperability with other systems.
+
+When I'd prefer SQS and SNS, or EventBridge, is new cloud-native services. They're serverless, scale without capacity planning, cost nothing when idle, and plug straight into Lambda and other services. Amazon MQ runs on broker instances you size and pay for all the time, and there are throughput limits per broker.
+
+On migration, I think a sensible path for a RabbitMQ-based system is move to Amazon MQ first, keeping everything working, and then gradually move new or simpler flows to SQS, SNS or EventBridge where it makes sense. Doing both changes at once is just asking for trouble.
