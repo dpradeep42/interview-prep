@@ -1,0 +1,107 @@
+@p3-36
+For behavioural questions, I basically use the STAR structure, Situation, Task, Action and Result.
+
+The Situation is one or two sentences of context, just enough to understand the problem. The Task is what I was specifically responsible for. The Action is the longest part, about sixty percent of the answer, and I tell it in the first person, with real technical detail, so it's clear what I personally did, while giving the team credit where it's due. The Result is the outcome with real numbers wherever possible, like time saved, errors reduced, tickets stopped or latency improved, and then what I learned or what changed afterwards.
+
+I keep each story to about two minutes, because longer stories lose the interviewer.
+
+I also keep a small bank of stories that I can adapt to different questions. Like, building the CIRT MCP server, which cut deployments from 6 hours to 2 and from 6 people to 1, works for initiative or innovation questions. The RabbitMQ outage works for production issues and ownership. The CSV bulk import works for delivering a feature end to end. The security fixes work for quality, and mentoring two graduates works for leadership. Having those ready means I can answer clearly instead of searching my memory under pressure, you know.
+
+@p3-37
+Okay, so the situation was, in our team, every release deployment ran across [4 to 6] nodes on our on-premise Azure DevOps Server, and it was mostly manual. Each one needed about 6 people on a call for about 6 hours, following steps, checking each node, and copying logs around. Everyone accepted it as just how releases worked.
+
+Nobody asked me to fix it. But I'd been following the Model Context Protocol, and I saw that AI agents could run these steps if they had the right tools. I wanted to prove it could work, without neglecting my sprint work.
+
+What I did, before spending real time on it, was agree [part of two sprints] with my lead for a prototype, so it was initiative with alignment, not going off on my own. I started with [10] read-only tools, like build status, release status and logs, because they were safe and built trust. I demoed it to the team, collected feedback, and then added write tools, like queuing builds and deploying release stages, with confirmations before risky steps and our existing approval gates unchanged. Each increment had a demo. Over time, it grew into the CIRT MCP server, with about 77 tools, written in C# and packaged so anyone could install it with one command.
+
+In the end, measured on comparable deployments, deployment time went from 6 hours to 2, and the people needed from 6 to 1. Starting small and getting buy-in early is really what got the whole team using it.
+
+@p3-38
+Right, so the situation was, in [mid-2024], shipment status updates from a vendor suddenly stopped reaching our shipment service. There were no errors in our application logs, which made it confusing. Study teams noticed shipments stuck in the wrong status, and that matters because sites depend on it for drug supply.
+
+I was on support duty, so I owned finding the cause, recovering the data, and making sure it couldn't happen silently again.
+
+What I did was start from the symptom. In Splunk and Grafana, our services seemed to be publishing normally, but the queue had received nothing for [about 40 minutes]. In the RabbitMQ management UI, I found that one node had hit its memory high watermark while processing a large vendor file. RabbitMQ had blocked publishers and dropped connections. And then the real cause, our services published without publisher confirms, so they never knew their messages had been lost. To recover, I drained the backlog and replayed the missed window from the vendor files, which was safe because our consumers upsert, so nothing could be duplicated. Then I fixed the root cause. I enabled publisher confirms with retries, tuned memory, added consumer scaling on queue depth, and alerts on memory, blocked connections and the incoming rate dropping to zero.
+
+In the end, all [about 1,200] updates were recovered that same evening, and in the [12 months] since, there's been no silent message loss. I also shared a blameless post-mortem so the whole team learned from it.
+
+@p3-39
+Okay, so the situation was this. [A quarterly release in 2024] carried changes from [5] scrum teams, and the production date was fixed, because a [study go-live] depended on it. [Two days] before formal verification, two problems came up. A shared database script from two teams conflicted, and an integration test was failing.
+
+I was the release integrator, so it was my job to get a complete, validated release ready on time, without cutting corners on quality, which isn't an option in a GxP product.
+
+What I did was track every release item daily, so I knew exactly where each one stood. Instead of long email threads, I got the owners of both conflicting scripts into a [one-hour] session, and we sorted out the conflict together. I worked with the team that owned the failing test to get it fixed the same day. Then I ran the formal verification install overnight, so we didn't lose a day. One lower-priority feature wasn't fully validated yet, so rather than rush it, I went to the product owner with the facts, and we agreed to move it to the next release. My thinking was protect the date by cutting scope, not quality.
+
+In the end, we hit the go-live date, with full FV and UAT evidence for everything we shipped. Getting the right people in one room early honestly saved us more time than anything else did.
+
+@p3-40
+So the situation was, in [2023], I changed the date filter on a shipment report. I tested it carefully, but only in Indian Standard Time, which is where I work. During formal verification, the testers found that shipments created near midnight UTC showed up on the wrong day for [US sites].
+
+It was my change, so it was my bug to own and fix, and I wanted to make sure that kind of mistake couldn't easily happen again.
+
+What I did was raise it myself in the next stand-up, explain the cause, and give a time for the fix. The root cause was that I compared local DateTime values, which only works if everyone is in the same time zone. I changed the logic to store and compare everything in UTC, using DateTimeOffset, and convert to each site's time zone only when displaying it, using TimeZoneInfo. Then I added unit tests for several time zones, with times right around midnight and daylight saving changes, using a fake TimeProvider so the tests are deterministic. I also added a time-zone item to my personal pull request checklist.
+
+In the end, it was fixed within [a day] and caught before UAT, so no users were affected. Since then, honestly, I always ask "where in the world will this run" whenever I touch dates.
+
+@p3-41
+Okay, so the situation was, while designing the CSV bulk import, a senior colleague and I disagreed. He wanted partial imports, save the valid rows and report the invalid ones. I preferred all-or-nothing, so if any row fails, save nothing.
+
+We needed to agree on a design both of us could stand behind, and I wanted the decision made on the merits, not on seniority.
+
+What I did was try to understand his real concern before arguing. It was user frustration. If one bad row out of three hundred blocks everything, users get annoyed. That's valid. Then I wrote down the pros and cons. Partial import is friendlier, but in a GxP system it leaves a study half-configured, makes the audit trail messy, and makes rollback complicated. Then I proposed a third option, a validate-only preview that shows every error in the file, with row, column and reason, before anything is saved, followed by an all-or-nothing save. That way, users fix everything in one go, and the data is always consistent. We took both views to the BA and the QA lead, who understand the users and the validation requirements.
+
+In the end, the team went with the preview plus all-or-nothing approach, and my colleague agreed, because the preview solved his concern about frustration. The feature is in production and works well. Finding the concern behind his position is what got us to something better than either of our original ideas.
+
+@p3-42
+Right, so the situation was, in [2024], [two graduate developers] joined our team. Our IRT system is large and regulated, and they were overwhelmed by the number of services, the domain terms and our release process.
+
+I volunteered to mentor them, and I wanted to get them contributing safely and then working independently as quickly as possible.
+
+What I did was start with a [one-hour] architecture walkthrough, drawing how the services, the database and the messaging fit together, using one real flow end to end. Then I picked small but real stories for them, so their work mattered from day one. For the first [two sprints], we paired. I drove while explaining, then they drove while I guided. After that, I moved to code reviews, but I explained the reason behind each comment, so they learned principles, not just fixes. I showed them how to use Copilot and Cursor safely for writing tests, and how to check the output. And I held a [30-minute] weekly check-in where any question was welcome, because feeling safe to ask is half of learning.
+
+In the end, their first pull requests were merged in [week two], they were working independently within [about two months], and one of them later joined our release verification rotation. For me, it was really rewarding. Good mentoring is kind of a gradual handover, I do, we do, you do.
+
+@p3-43
+Okay, so the situation was, in [2024], a security review and a group of support tickets surfaced three issues in our IRT application. Tokens kept working after logout. Some users with many studies got "request header too long" errors after SSO login. And external links were open to reverse tabnabbing.
+
+I took ownership of all three, and I wanted to fix each root cause and add a guardrail so it stayed fixed.
+
+What I did was prioritise by risk, so logout came first. I shortened access tokens to [15 minutes], revoked refresh tokens on the server at logout, and added a denylist of token ids in Redis that every API checks, which costs only about [1 ms] per request. For the header problem, the SSO cookie held every claim and was [about 13 KB], so I moved the authentication ticket to the server side with ITicketStore, and the cookie dropped to [under 1 KB]. For tabnabbing, I fixed [about 40] links with rel noopener noreferrer, built a shared link component with safe defaults, and added an ESLint rule. Each fix had tests, including a Playwright test that replays an old token after logout and expects a 401, and each went through code review, the SonarQube quality gate and our regulated release process.
+
+In the end, all three passed security retest with no regressions, and the SSO tickets stopped. For me a fix isn't really done until there's a test or rule that stops it coming back.
+
+@p3-44
+So the situation was, when a new clinical study was set up, the study setup team had to type site records into IRT one by one. A study here means one clinical trial set up in our IRT system, with its protocol rules, countries and sites, treatment arms, visit schedule, drug kits and user roles. For a [300-site] study, that took [two to three days], and typos were often found much later.
+
+I owned delivering a CSV bulk import end to end, requirements, design, backend, UI, tests, validation support and release.
+
+What I did, over [three sprints], was agree the validation rules with our BA at the start, so we knew exactly what "valid" meant. On the backend, I built an API that streams the file, so memory stays flat even for [about 10,000] rows, validates in stages, structure, then types and mandatory fields, then duplicates, then business rules, and saves all-or-nothing in one transaction, with an audit entry for every record. A file hash blocks importing the same file twice. On the front end, I built a preview screen that shows every error with its row, column and reason, with a downloadable error report. I wrote unit tests for every rule and Playwright tests for the upload, preview and confirm flow. Then I supported QA through FV and UAT, and wrote a short support runbook for the hand-over.
+
+In the end, it's live in production. A [300-site] setup now takes [under an hour] instead of days, and errors get caught before anything is saved. Owning it end to end taught me a lot about working closely with the BA, QA and the release team.
+
+@p3-45
+Okay, so the situation was, in [2024], during a study transfer, which copies study configuration between environments, a person following a manual checklist noticed that the transfer was about to overwrite a target study that already had randomised subjects. A study here means one clinical trial set up in our IRT system, with its protocol rules, countries and sites, treatment arms, visit schedule, drug kits and user roles. It was caught, but only because someone remembered to check. If it had gone through, it could have affected live trial data.
+
+I wanted to make that mistake impossible, so safety didn't depend on someone's memory.
+
+What I did was propose and build a guard in the backend that runs five checks before any transfer is allowed. The target study's status, so it blocks the transfer if the study is live with subjects or dispensed kits. Version compatibility between source and target. Whether the transfer direction is allowed. That no other transfer is in progress for that study, enforced with a database lock so two transfers can't race. And that the user has the right role and gives a change request reference. It fails closed, so if any check can't be evaluated, the transfer is blocked. Every failure returns a clear reason, so users know what to fix, and every attempt, allowed or blocked, is audited for GxP.
+
+In the end, it was released in [2025], and in its first months it blocked [a handful of] unsafe attempts. Important checklists, I think, belong in code, so the system prevents the risk instead of hoping people catch it.
+
+@p3-46
+Right, so the situation was, in [early 2025], the Model Context Protocol was very new, and nobody on my team had built an MCP server. I wanted to build one to automate our deployments, so I had to learn it quickly, alongside my normal work.
+
+I needed to get from zero to a working, useful prototype fast, and make sure the design was sound before building a lot on top of it.
+
+What I did was keep the learning approach simple. The official source came before anything. I read the MCP specification and the C# SDK samples over [about a week], so I understood the concepts properly, hosts, clients, servers, tools and transports. Then a tiny but real use case. In [two days], I built a prototype with three tools, list builds, get build status and get logs, against a test Azure DevOps project. Then I checked it with real usage. I tried it from both Cursor and Claude Code, which showed me how the model actually chooses tools. I asked a colleague to review the tool design, and iterated on names and descriptions based on what I saw.
+
+In the end, that three-tool prototype became the CIRT MCP server, with about 77 tools, which cut deployments from 6 hours to 2 and from 6 people to 1. I used the same approach later for the .NET 10 upgrade in [early 2026], official documentation, then a small real example, then early feedback.
+
+@p3-47
+Okay, so the situation was, when I started on the deployment automation that became the CIRT MCP server, there was no specification at all. There was just a slow, manual process that everyone disliked, and different people did it slightly differently.
+
+I had to turn that vague problem into a clear plan, so I'd build the right thing, not just something.
+
+What I did was turn the ambiguity into data. I interviewed the [5] people who usually ran deployments, and wrote down every manual step they did, which came to [about 30] steps. Then I ranked those steps by how much time they took and how risky they were, meaning how often mistakes happened. That gave an obvious order. I planned three increments. Read-only tools for status and logs at the start, which were safe and immediately useful. Then build and release creation. Then multi-node deployments, with confirmations before risky steps. After each increment, I demoed it to the team and collected feedback, and I wrote down my assumptions and confirmed them with the people doing the work, rather than guessing.
+
+In the end, the ambiguity became a clear roadmap that everyone understood, and the tool grew to about 77 tools that the team actually uses. Deployments went from 6 hours to 2. Collecting facts and shipping in small steps is really what made it manageable.
