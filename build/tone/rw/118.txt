@@ -1,0 +1,109 @@
+@p5-42
+Okay, so microservices talk to each other in two main ways, and which one you pick really depends on whether the caller needs an answer right away.
+
+Synchronous communication, with REST or gRPC, is request and response. The caller waits for the result. It's simple and intuitive, and it's the right choice when the caller genuinely needs the answer now, like the UI loading a study, or checking whether a subject is eligible. gRPC is useful for high-performance internal calls. The downside is temporal coupling. If the callee is slow or down, the caller is too.
+
+Asynchronous communication uses messages through a broker, like RabbitMQ or Kafka. Commands ask another service to do something, and events announce that something happened, like "shipment dispatched". The producer doesn't wait, and doesn't even need to know who's listening. That decouples services, absorbs traffic spikes and survives temporary outages, but you pay with eventual consistency and harder tracing.
+
+Whatever the style, every contract, API or message, is versioned and kept backward compatible. In our IRT platform, the UI and partners use REST, and workflows between services use RabbitMQ events, with an outbox for reliability. I can explain when we chose Kafka instead.
+
+@p5-43
+The core difference is just whether the caller waits or not.
+
+With synchronous communication, like REST or gRPC, the caller sends a request and waits for the response. It's simple to build and debug, and the caller gets an immediate, definite result. But it creates temporal coupling, both services have to be up at the same time. If the callee is slow, the caller is slow too, and long chains of synchronous calls multiply latency and failure risk.
+
+With asynchronous messaging, through queues or event streams, the sender publishes a message and moves on. The receiver processes it when it can. That decouples services, so if the receiver is down, messages wait safely in the queue. It absorbs load spikes, and new consumers can subscribe without changing the producer. What you pay is eventual consistency, because the result isn't immediate, more complex error handling with retries, dead-letter queues and idempotency, and harder end-to-end tracing.
+
+My rule is pretty simple. Synchronous when the user or caller needs the answer now, asynchronous for everything that can happen in the background. In our platform, creating a shipment is a REST call, but notifying the vendor and updating inventory happen through RabbitMQ events. I can explain how we trace those flows.
+
+@p5-44
+Service discovery is how services find each other's current network address, when instances are constantly starting, stopping and moving around.
+
+In a cloud or container setup, you can't hard-code IP addresses. Containers are replaced on every deployment, scaled up and down automatically, and restarted on failure, and each time they may get a new IP. Service discovery solves this with a registry that tracks healthy instances, and a stable name that callers use.
+
+Two approaches are common. Server-side discovery through a load balancer, where callers use a stable DNS name for the load balancer, which knows the healthy targets. In AWS, that's an internal Application Load Balancer in front of ECS services. And DNS-based discovery built into the platform. In Kubernetes, a Service gives a stable DNS name, and in ECS, Service Connect or Cloud Map registers tasks automatically. There's also client-side discovery, where the client asks a registry and picks an instance itself, which was common with tools like Consul or Eureka.
+
+In CIRT, which is on-prem, services basically find each other through stable DNS names in configuration, backed by internal load balancers, and IQVIA's newer services on AWS use ECS service registration, with health checks removing unhealthy instances. I can explain how health checks feed into it.
+
+@p5-45
+Retries are useful, but honestly, retrying everything can turn a small problem into a big one.
+
+I worry about three dangers. Non-idempotent operations, for one. If a POST to create a shipment timed out, it may have actually succeeded. Retrying it blindly can create a duplicate. So I only retry operations that are idempotent, or made idempotent with an idempotency key. Then permanent errors. A 400 validation error, a 401 or a 404 won't succeed the second time, so retrying just wastes time and resources and delays the real error. And retry storms. If a service is struggling and every client retries aggressively, the load multiplies, and the struggling service can never recover. With several layers each retrying three times, one request can become dozens.
+
+So I retry only transient errors, like timeouts, 503s, 429s and network failures. I use exponential backoff with jitter, so clients don't retry in sync, a small maximum number of attempts, and a circuit breaker to stop retrying a service that's clearly down. And I retry at one layer only, not at every level.
+
+That's how our vendor API calls are configured with the standard resilience handler. I can explain how jitter helps.
+
+@p5-46
+Bulkhead isolation is a resilience pattern that stops one failing dependency from taking down everything else. The name comes from ships, which are divided into watertight compartments, so a leak in one doesn't sink the whole ship.
+
+In software, the problem is shared resources. Say a service calls three dependencies, and one becomes very slow. Requests to it pile up and hold threads, connections or memory. Eventually the whole service runs out, and even requests that don't need the slow dependency start failing. A bulkhead gives each dependency its own limited pool of resources, like a maximum number of concurrent calls, a separate connection pool, or a separate queue. When one dependency's pool is full, extra calls to it fail fast, or queue briefly, but other dependencies keep working normally.
+
+In .NET, Polly's concurrency limiter, or the rate limiter strategy, implements this per HttpClient. At the infrastructure level, running separate worker services per queue is also kind of a bulkhead.
+
+In our platform, slow vendor SFTP transfers run in their own worker service with their own limits, so a slow vendor never affects randomisation or the main API. I can explain how it combines with circuit breakers.
+
+@p5-47
+Distributed tracing is basically being able to follow a single request as it travels through multiple services, and see where time is spent and where errors happen.
+
+Each incoming request gets a trace id. Every service that handles part of it records a span, a timed unit of work, like "handle HTTP request", "query database" or "publish message", with the trace id and a parent span id. The trace context is passed along between services in headers, using the W3C traceparent standard, and in message headers for queues. The spans are sent to a tracing backend, like AWS X-Ray, Jaeger or Grafana Tempo, which puts them back together into a timeline, a waterfall view showing every hop and how long it took.
+
+In .NET, OpenTelemetry is the standard way to do this. ASP.NET Core, HttpClient and many libraries already create spans automatically through Activity, so you mostly add the exporter and a few custom spans.
+
+Before full tracing, we solved the most painful part with our correlation-id middleware in [2024], which links logs across our [4] services. Tracing adds timing on top of that, so you can see, say, that a slow request was waiting on one database query in one service. I can explain how logs and traces connect.
+
+@p5-48
+Eventual consistency means that when data changes in one service, other services will see the change, just not instantly. After a short delay, everything lines up.
+
+In a microservices system, each service owns its data, and they share changes through events. When the shipment service marks a shipment as dispatched, it publishes an event, and the inventory and notification services update their own data when they process it, maybe a few hundred milliseconds later. During that window, different services can show slightly different states. We accept that in exchange for availability and loose coupling, because the alternative, distributed transactions across services, is slow and fragile.
+
+The thing is, you have to design for it. Use clear intermediate states, like Pending or Processing, so users understand that something is in progress. Make consumers idempotent, because events can arrive twice. Handle out-of-order events, with version numbers, say. And monitor for messages that fail, so nothing stays inconsistent forever.
+
+In our IRT platform, the UI shows a shipment as "Requested" until the vendor confirms it, rather than pretending it's instant. And dead-letter queue alarms mean stuck events actually get investigated. I can explain where we still need strong consistency.
+
+@p5-49
+Failures between services are normal in a distributed system, so I design for them at a few levels.
+
+For synchronous calls, a timeout on every call, so nothing hangs forever. Retries with exponential backoff and jitter, only for transient errors and idempotent operations. A circuit breaker, so we stop calling a service that's clearly down and fail fast instead. And a fallback where it makes sense, like serving cached reference data.
+
+For workflows that don't need an immediate answer, I prefer asynchronous messaging with durable queues. If the consumer is down, messages wait. Failed messages are retried a limited number of times and then moved to a dead-letter queue, so they're not lost and don't block the queue. Consumers are idempotent, so redelivered messages are safe. For multi-step business processes across services, a saga coordinates the steps, and compensating actions undo earlier steps if a later one fails.
+
+And all of this needs monitoring, alerts on error rates, circuit breaker state, queue depth and dead-letter queues.
+
+I learned this the hard way. In [mid-2024], RabbitMQ hit a memory alarm, and because we published without confirms, [about 1,200] shipment status updates were lost silently over [about 40 minutes]. We recovered by replaying the vendor files, and fixed it for good with publisher confirms, retries and alerts. I can walk through that story.
+
+@p5-50
+Versioning microservices is really about letting each service evolve without breaking the others, because they're deployed independently.
+
+For APIs, I version in the URL or a header, like slash api slash v2, and stay backward compatible within a version. Additive changes, like new optional fields or new endpoints, are fine. Removing or renaming fields, or changing their meaning, is breaking, and needs a new version. The old version stays available, is marked deprecated, and is removed only after consumers have moved, which we confirm in the logs. For messages and events, the same rules apply, so additive changes only, a schema version field in the message, and consumers that tolerate unknown fields. For a breaking change, we publish a new event type or version, sometimes both in parallel during the transition.
+
+Consumers should also be tolerant readers. Ignore fields they don't understand, and don't fail on them.
+
+The deployable artifacts are versioned too. Container images use semantic versions and the git commit, so we always know exactly what's running. In our pipelines, we compare OpenAPI documents between versions to catch accidental breaking changes. I can explain consumer-driven contract tests, which help here too.
+
+@p5-51
+For me, the key principle is that every microservice can be built, tested and deployed on its own.
+
+Each service has its own CI/CD pipeline. It builds the code, runs unit and integration tests, runs quality and security scans like a SonarQube gate and container image scanning, builds a Docker image tagged with the version and commit, and pushes it to a registry like Amazon ECR. Infrastructure is defined as code, with Terraform or CloudFormation, so environments are reproducible. Then the pipeline deploys to the orchestrator, ECS or Kubernetes, environment by environment.
+
+For the deployment itself, I use rolling updates by default. New tasks start, pass health checks, and only then are old tasks drained and stopped, so there's no downtime. For riskier changes, blue-green or canary deployments let us shift traffic gradually and switch back instantly. Automated rollback kicks in if health checks or alarms fail. Database changes are backward compatible, so old and new versions can run side by side during the rollout.
+
+In our regulated environment, deployments to validated environments go through approval gates, with release evidence attached. I coordinate those releases across [about 5] scrum teams. I can explain how we handle a rollback.
+
+@p5-52
+Monitoring microservices means being able to answer, quickly, "is anything broken, where, and why" across lots of services.
+
+I think of it as metrics, logs and traces. Metrics means, for each service, the golden signals, which are latency, traffic, errors and saturation, plus business metrics like shipments processed. For message-driven services, queue depth, consumer lag and dead-letter queue counts really matter. Logs means structured JSON logs from every service, centralised in one place, with a correlation id so one search shows a request across services. And traces, distributed tracing with OpenTelemetry, to see the path and timing of a request through every hop.
+
+On top of that, dashboards in Grafana or CloudWatch per service and per business flow, and alerts based on service level objectives, like "p95 latency above 500 ms for 5 minutes", or "any message in a dead-letter queue". Alerts have to be actionable, or people start ignoring them.
+
+In our platform, Splunk and Grafana dashboards show each service's health, and our correlation-id work from [2024] means support can trace a failed request across [4] services in [a few minutes] instead of [about an hour]. We also have AlertWatchDog, our Quartz-scheduled alert engine, which emails study teams about events like low stock or shipments through RabbitMQ, and our RabbitMQ consumers alert on dead-letter queues.
+
+@p5-53
+I secure service-to-service communication on a zero trust idea, so a request isn't trusted just because it comes from inside our network.
+
+It's layered. On the network side, services run in private subnets, with security groups or firewall rules allowing only the expected traffic, so most services aren't reachable from the internet at all. Then encryption, TLS between services, and mutual TLS where policy requires, so both sides prove who they are. Then identity. Each service has its own identity, either OAuth client-credentials tokens from the identity provider, with specific scopes, or IAM roles when calling AWS services. The receiving service validates the token and its scopes on every call, just like it would for a user. Least privilege too, each service gets only the permissions it needs. And secrets, like client secrets or keys, live in a secrets store like AWS Secrets Manager, never in code or images, and are rotated.
+
+The point is, if one service is compromised, the attacker shouldn't automatically be able to call everything else.
+
+In our platform, internal services call each other with client-credential tokens and scopes, and IQVIA's newer services on AWS use IAM roles for AWS resources, with no long-lived keys. I can explain how token caching works for service calls.
