@@ -1,0 +1,127 @@
+@p6-40
+Kafka consumers scale through consumer groups. All consumers with the same group id share the work. Each partition is assigned to exactly one consumer in the group, and one consumer can handle several partitions. So with six partitions and two consumers, each gets three. Adding consumers spreads the partitions out, and the group rebalances automatically.
+
+That means the number of partitions is the maximum parallelism for a consumer group. If you have more consumers than partitions, the extra consumers just sit idle, with no partitions assigned. They do act as hot standbys, taking over if another consumer fails, but they don't add throughput. People miss this one quite often.
+
+So to scale beyond the number of partitions, you have a few options. Add partitions to the topic, keeping in mind that this changes which partition each key maps to, which can affect ordering for existing keys, so it's best to plan enough partitions from the start. Or increase parallelism inside each consumer, processing messages concurrently with a worker pool, while keeping order per key if it matters. Or make processing itself faster, with batching and efficient database writes.
+
+Separate applications that need the same events use different consumer groups, and each group gets every message independently.
+
+For autoscaling, I'd scale consumers on consumer lag rather than CPU, like with KEDA in Kubernetes, up to the partition count.
+
+@p6-41
+When I design Kafka topics, I think about what the events represent, who consumes them, how they need to be ordered, and how they'll change over time.
+
+I'd have one topic per type of business event or entity, like shipment-status or order-events, named with a clear convention, say domain, entity and version. Not one giant topic for everything, and not one topic per customer. Then the key. I pick the message key based on ordering needs. If events for one shipment must be in order, the key is the shipment id. A good key also spreads load evenly, so one key doesn't overload a partition. Then the number of partitions, enough for the consumer parallelism I need now and in the near future, because increasing it later changes key placement. Retention, time-based for event streams, or compaction for "latest value per key" topics. The replication factor, three for production, with a minimum of two in-sync replicas.
+
+The schema matters a lot too. Events have a defined schema, with Avro, Protobuf or JSON Schema, preferably in a schema registry, with backward-compatible changes. Events include an event id, a timestamp, a type, a version and a correlation id. And there's a plan for failures, a retry topic and a dead-letter topic.
+
+Our shipment status topic follows pretty much this, keyed by shipment id, with versioned events and correlation ids.
+
+@p6-42
+A poison message is a message that a consumer can never process successfully, maybe because it's malformed, has invalid data, or triggers a bug. Without handling, the consumer keeps retrying it forever. In Kafka, that's especially bad, because it blocks every message behind it in that partition.
+
+My approach separates two kinds of failure. Transient failures, like a database timeout or an unavailable service, are worth retrying. Permanent failures, like a message that can't be deserialised or fails validation, will never succeed, so retrying is pointless.
+
+For transient errors, I retry a few times in the consumer with exponential backoff. If it still fails, or for longer delays, I publish the message to a retry topic, sometimes several with increasing delays, like one minute, then ten, so the main partition isn't blocked while waiting. For permanent errors, or after the maximum attempts, the message goes to a dead-letter topic, with headers saying the original topic, partition, offset, the error, and the number of attempts. Then the consumer commits the offset and moves on.
+
+The dead-letter topic is monitored, with an alert, and after investigating and fixing the cause, messages can be replayed to the main topic. Consumers are idempotent, so retries never cause duplicates.
+
+Honestly, we use exactly this pattern with RabbitMQ too, limited retries with backoff, then a dead-letter queue, with alerts.
+
+@p6-43
+To secure Kafka, I cover four things, encryption, authentication, authorisation and network access.
+
+Encryption in transit with TLS, between clients and brokers and between the brokers themselves, so messages can't be read on the network. Encryption at rest on the broker disks, which managed services like Amazon MSK provide. Authentication with SASL, like SCRAM, or mutual TLS, or IAM authentication on MSK, so only known applications can connect. Authorisation with ACLs, applying least privilege, so each service can only write to the topics it produces, and read from the topics it consumes, with its own consumer group. And network access, brokers in private subnets, reachable only from our services, never from the internet. Also, sensitive data in messages should be minimised or encrypted, and schemas validated.
+
+For monitoring, the metrics I watch are consumer lag per group and partition, which is usually the first sign of trouble, under-replicated partitions, which mean data is at risk, offline partitions and controller status, broker CPU, disk usage and network, and request latency, errors and throughput for producers and consumers. I'd collect these with Prometheus exporters or CloudWatch for MSK, show them in Grafana, and alert on growing lag, under-replicated partitions and disk space.
+
+Consumers also log and trace with correlation ids from message headers, so one event can be followed across services. That's basically how I'd cover it.
+
+@p6-44
+RabbitMQ is a message broker. Applications send messages to it, and it routes them to queues, where consumers pick them up and process them. It decouples services, so the sender doesn't wait for the receiver, and if the receiver is slow or down, messages wait safely in the queue.
+
+The main concepts come from the AMQP protocol. Producers don't publish directly to queues. They publish to an exchange, with a routing key. A queue is where messages wait until a consumer receives and acknowledges them. A binding is the rule that connects an exchange to a queue, saying which messages should go there.
+
+You've got four main exchange types. Direct sends a message to queues whose binding key exactly matches the routing key, which is great for commands like "process this file". Fanout sends every message to all bound queues, like a broadcast. Topic matches routing keys with patterns, like shipment dot star, so different queues can subscribe to different groups of messages. And headers routes based on message headers.
+
+Unlike Kafka, once a message is acknowledged, it's removed from the queue. So RabbitMQ is ideal for tasks and work queues, where each message should be processed once by one consumer, with retries and dead-lettering.
+
+In our platform, we use RabbitMQ for work like processing vendor updates and sending notifications.
+
+@p6-45
+Acknowledgements are how RabbitMQ makes sure messages aren't lost, and you have two separate kinds, one on each side.
+
+Publisher confirms are about the producer. When a publisher sends a message, it can't assume the broker received and stored it. With confirms enabled on the channel, the broker sends back an acknowledgement once it has taken responsibility for the message, and for a persistent message, that means written to disk. If something goes wrong, it sends a negative acknowledgement, and the publisher can retry. Without confirms, a message can be lost silently, say if the connection drops at the wrong moment.
+
+Consumer acknowledgements are about the consumer. When RabbitMQ delivers a message, it waits for the consumer to acknowledge it before deleting it. With manual acknowledgement, the consumer acks only after it has finished processing. If the consumer crashes before acking, RabbitMQ redelivers the message to another consumer. A consumer can also reject a message, and send it to a dead-letter queue. With automatic acknowledgement, the message is deleted as soon as it's delivered, so if processing fails, it's gone.
+
+I learned this the hard way in [mid-2024]. Our publisher had no confirms, and during a [40-minute] problem, [about 1,200] updates were lost silently. We recovered them by replaying the vendor files that evening, then added publisher confirms, at about [5 percent] throughput cost. There's been no silent loss in the [12 months] since.
+
+@p6-46
+Durability in RabbitMQ means messages survive a broker restart, and it needs a few settings to work together.
+
+The queue has to be durable. A durable queue's definition survives a restart, a non-durable one disappears. The message itself has to be persistent too, by setting the delivery mode to persistent when publishing. A persistent message in a durable queue is written to disk. If either part is missing, the message is lost on restart, so a persistent message in a non-durable queue disappears with the queue. The exchange should also be durable, so the routing still exists after a restart.
+
+But durability alone isn't enough, honestly. A message can still be lost before it's written, like if the connection fails right after publishing. That's why publishers should use publisher confirms, which tell the publisher the broker has really stored the message. And consumers should use manual acknowledgements, so messages aren't removed until they're processed.
+
+For surviving the loss of a whole node, not just a restart, you need replication. Modern RabbitMQ uses quorum queues, which replicate each queue across several nodes using the Raft consensus algorithm, and are the recommended choice for important data.
+
+Persistence does cost some throughput, because of disk writes, but for business messages, it's worth it. After we lost [about 1,200] updates in [mid-2024] without confirms, we made sure all of these were in place.
+
+@p6-47
+If RabbitMQ goes down, what happens depends on how it's set up, and on how well producers and consumers handle it.
+
+On the broker side, with a single node, everything stops until it's back. Durable queues with persistent messages are recovered from disk after a restart, but non-durable queues and transient messages are lost. In a cluster with quorum queues, losing one node isn't a problem. The queue's leader moves to another node, and clients reconnect, with no data loss.
+
+On the producer side, while the broker is unavailable, publishing fails. Without publisher confirms, a producer might think a message was sent when it wasn't. So producers should use confirms, retry with backoff, and, for critical messages, use the outbox pattern, saving the message in the database with the business change, and publishing it later, when the broker is back. That way nothing is lost during an outage.
+
+On the consumer side, consumers lose their connection. Unacknowledged messages go back to the queue and are redelivered when consumers reconnect, so consumers have to be idempotent. Client libraries support automatic connection recovery, and our services also have health checks and alerts on connection failures.
+
+In [mid-2024], we had a [40-minute] problem where our publisher had no confirms, and [about 1,200] updates were lost silently. I learned a lot from that one. We recovered them by replaying vendor files, and adding confirms has prevented silent loss since.
+
+@p6-48
+Honestly, RabbitMQ doesn't have a single built-in retry feature, so I build retries from a few pieces, separating transient failures from permanent ones.
+
+For quick transient failures, like a brief database timeout, the consumer retries in memory a few times with exponential backoff, say using Polly, before giving up on the message.
+
+For longer delays, I use a retry queue. When processing fails, the consumer rejects the message, or publishes it to a retry queue that has a message time-to-live, like 30 seconds, and a dead-letter exchange pointing back to the main queue. So the message waits in the retry queue, expires, and comes back to the main queue to be processed again. Several retry queues with increasing delays give backoff. I track the number of attempts in a message header. Another option is the delayed message exchange plugin.
+
+After the maximum attempts, or straight away for permanent errors like invalid data, the message goes to a final dead-letter queue, with the error details, and an alert, so someone can investigate and replay it after fixing the cause.
+
+What I avoid is just requeueing a failed message straight away, because it goes back to the front and can loop forever, blocking the queue.
+
+A real case, some kit-assignment notifications vanished because the consumer used autoAck. I switched to manual acknowledgement, added [3] retries with exponential backoff, and then a dead-letter queue.
+
+@p6-49
+To prevent message loss in RabbitMQ, I protect every step of the message's journey, publishing, storing, and consuming.
+
+Publishing comes first. Use publisher confirms, so the publisher knows the broker actually stored each message, and retry when a confirm doesn't arrive. Use the mandatory flag, or an alternate exchange, so messages that can't be routed to any queue aren't silently dropped. For critical business messages, use the outbox pattern. Save the message in the database in the same transaction as the business change, and a background process publishes it, so even a broker outage doesn't lose it.
+
+Then storing. Durable exchanges and queues, persistent messages, and quorum queues, which replicate across nodes, so a node failure doesn't lose data.
+
+Then consuming. Manual acknowledgements, only after processing has completed, like after the database transaction commits. Never auto-ack for important messages. Failed messages are retried, and then go to a dead-letter queue, not discarded.
+
+And monitoring, alerts on dead-letter queues, unroutable messages and connection failures, plus idempotent consumers, because these measures can cause duplicates.
+
+I learned this from a real incident in [mid-2024]. Without publisher confirms, [about 1,200] updates were lost silently in [40 minutes]. We recovered them by replaying the vendor files, added confirms at about [5 percent] throughput cost, and there's been no silent loss since.
+
+@p6-50
+Okay, so to scale RabbitMQ, I scale the consumers before anything, and only then think about the broker.
+
+Scaling consumers is simple. Several consumers on the same queue share the work, with RabbitMQ distributing messages between them. The prefetch count controls how many unacknowledged messages each consumer gets at once, and a sensible value, like 10 to 50, balances throughput and fairness. Consumers can be autoscaled on queue depth. Scaling the broker means running a cluster of three nodes, with quorum queues for important data, replicated for availability. A single queue is handled by one node, so for very high throughput, you can spread load across several queues, like with the consistent hash exchange, or use RabbitMQ streams. Keep messages small and queues short, because RabbitMQ performs best when queues are near empty. Use long-lived connections with several channels, instead of opening a connection per message.
+
+For monitoring, I watch queue depth and how it's changing, publish and acknowledge rates, unacknowledged messages, consumer count per queue, dead-letter queue size, connections and channels, memory and disk alarms, which block publishers, and node health. We use the management UI and Prometheus with Grafana dashboards, with alerts on growing queues, dead letters, zero consumers and resource alarms.
+
+A queue with growing depth and no consumers is the classic warning sign I always alert on.
+
+@p6-51
+Right, so to work out whether an issue is in the application, the database or the infrastructure, I start with the scope and timing of the problem, then follow the evidence layer by layer.
+
+Scope is the first question. Is it every endpoint or one? Every user or some? One service instance or all of them? Did it start suddenly, and did it line up with a deployment, a configuration change or a traffic spike? A deployment at that time points to the application.
+
+Then I check each layer's signals. Infrastructure, CPU, memory, disk, network, container restarts, and the health of hosts and load balancers. If one node is out of disk or memory, or tasks are being killed, it's infrastructure. Database, database CPU, active connections, blocking, deadlocks, and slow queries, using Query Store or the monitoring tools. If the database is slow and the app is just waiting, it's the database. Application, error logs and exceptions, response times broken down by dependency in traces, and thread pool or connection pool exhaustion.
+
+Distributed tracing is honestly the most useful tool here, because a trace shows exactly where the time goes, in our code, in a database call, or in a call to another service.
+
+A real example, an API suddenly became slow, around [200 milliseconds to 3 seconds]. The application and servers looked healthy, but the trace showed one query taking all the time. It was parameter sniffing in SQL Server, a database issue, fixed with a better plan.
