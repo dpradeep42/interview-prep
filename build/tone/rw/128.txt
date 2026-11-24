@@ -1,0 +1,119 @@
+@p7-10
+Controlled and uncontrolled components are basically two ways to handle form inputs in React.
+
+In a controlled component, React state is the single source of truth for the input's value. The input's value attribute is set from state, and an onChange handler updates the state on every keystroke. So React always knows the current value. That makes it easy to validate as the user types, disable a submit button until the form is valid, format input automatically, or change the value from code, like resetting the form. The downside is more code, and re-rendering on every keystroke, which can matter in very large forms.
+
+In an uncontrolled component, the DOM itself keeps the value, like in a plain HTML form. React doesn't track each change. When I need the value, usually on submit, I read it, either through a ref, or from the form data. You can set a starting value with defaultValue. It's simpler and faster for basic forms, and it's required for file inputs, because their value can only be set by the user.
+
+In practice, for most real forms, I use React Hook Form. It uses uncontrolled inputs internally for performance, but still gives full validation, often with a Zod schema, error messages and form state. So I get the convenience of controlled behaviour without the re-render cost.
+
+@p7-11
+Unnecessary re-rendering happens when components render again even though what they show hasn't changed. A little is normal and fine, but in large screens it can make the UI slow.
+
+The usual causes, from what I've seen. A parent re-renders, and by default, all its children re-render too, even if their props are the same. New object, array or function props created on every render, like an inline style object, or an inline arrow function as onClick. Even with React.memo on the child, those are new references each time, so the child still re-renders. Context, when a provider's value changes, every consumer re-renders, and if the value is a new object on every render, they re-render every time. State kept too high in the tree, so a small change, like typing in a search box, re-renders a whole page. Derived data stored in state and synced with effects, causing extra render cycles. And unstable list keys, like using the array index, which can make React recreate items.
+
+To fix them, measure with the React DevTools Profiler before touching anything. Then move state down to where it's used, memoise expensive children with React.memo, use useMemo and useCallback for stable props, split contexts, use stable ids as keys, and virtualise long lists, so only visible rows render.
+
+The new React Compiler handles a lot of the memoisation automatically.
+
+@p7-12
+In React, authentication is mostly handled by the identity provider and the backend. The React app's job is to sign the user in, call APIs with the token, and show only the right screens.
+
+For sign-in, I use OpenID Connect with the authorization code flow and PKCE, through a library like MSAL or oidc-client, with our corporate single sign-on. Even better, for security, is the backend-for-frontend pattern. The server handles the tokens and the browser only gets a secure, HttpOnly session cookie, so no tokens are exposed to JavaScript. If tokens are in the browser, I keep them in memory rather than local storage, to reduce the risk from cross-site scripting.
+
+The auth state, like the current user and their roles, is provided through a context, so any component can check it.
+
+To protect routes, I wrap private routes with a component, often called ProtectedRoute or RequireAuth. With React Router, it checks the auth state. If the user isn't signed in, it redirects to login and remembers where they were going, and if they don't have the required role, it shows a forbidden page. Menus and buttons are also hidden based on permissions.
+
+But honestly, the most important point is that hiding things in the UI is only for user experience. Real security is enforced on the server, where every API validates the token and checks permissions. A user can always bypass front-end checks.
+
+@p7-13
+For forms in React, I want three things, good performance, clear validation, and simple code. For anything beyond a couple of fields, I go with React Hook Form.
+
+React Hook Form registers inputs and keeps their values mostly uncontrolled, so typing doesn't re-render the whole form, which keeps large forms fast. It tracks the form state, like which fields are touched, dirty or invalid, and whether it's submitting. On submit, it gives me all the values, already validated.
+
+For validation, I define a schema with Zod, and connect it with a resolver. The schema describes each field, like required, a maximum length, a valid date, or a rule across fields, like the end date being after the start date. With TypeScript, the same schema also gives me the form's type, so there's one source of truth. Error messages appear next to each field, and the first invalid field is focused, which helps accessibility.
+
+On submit, I disable the button while the request is in progress, to avoid double submissions. If the API returns validation errors, as a problem details response, I map them back onto the matching fields, because the server always validates too.
+
+For very simple forms, controlled inputs with useState are fine.
+
+In the CSV import screen I built, the upload form used pretty much this approach, with clear client-side checks for file type and size, and server-side validation for the content.
+
+@p7-14
+So for a large React application, I basically structure it by feature rather than by type of file, so the code for one business area lives together.
+
+At the top, there's an app folder for application setup, routing, providers, like the auth and query client providers, and the main layout. Then a features folder, with one folder per business area, like shipments, studies or imports. Each feature has its own components, hooks, API calls, types and tests, and exposes a small public interface through an index file. Other features use only that interface. Then shared folders for things used across features, UI components like buttons and tables, often from a design system, utility functions, and the shared API client.
+
+A few principles go with it. Keep components small and focused, with logic in custom hooks. Keep server data in a library like React Query, and only truly global client state in Context or a store. Use TypeScript in strict mode. Use lazy loading for routes, so users only download the code for the pages they open. Enforce rules with ESLint, Prettier and import restrictions. And test with Vitest or Jest and React Testing Library, plus Playwright for end-to-end tests.
+
+When an app gets very large, with separate teams, it can be split further into packages in a monorepo, or micro-frontends, but I'd only do that when the team structure really needs it.
+
+@p7-15
+Honestly, React and Angular are both excellent choices, so it depends on the team and the project. Let me give the trade-offs, and why we use React.
+
+Angular is a complete, opinionated framework from Google. It includes routing, forms, an HTTP client, dependency injection and testing tools, and it uses TypeScript by default. Everything has an official way to do it, which gives consistency across large teams. It has a steeper learning curve, though, with concepts like modules, decorators and RxJS.
+
+React is a library focused on the UI. You pick your own libraries for routing, state and data fetching, which gives a lot of flexibility. It's mostly just JavaScript or TypeScript with JSX, so it's quick to learn, and it has a huge ecosystem and community, with plenty of developers available.
+
+For our team, we went with React for new screens for a few reasons, the team's experience, IQVIA's in-house React design system, the modularity of building each feature as its own npm package, the ecosystem, and how easy it is to build small, reusable components. We didn't rewrite everything at once, because it's a GxP-regulated product. Our legacy portal is ASP.NET MVC with Angular sub-applications, and new modules are built in React with TypeScript, module by module, calling our newer .NET APIs, so I work with both. Like, when I fixed the reverse-tabnabbing issue, I fixed [about 40] links across both React and Angular code.
+
+If I joined a team that uses Angular, I'd be happy with it. The fundamentals, components, state, and calling APIs safely, are the same.
+
+@p7-16
+var, let and const are the three ways to declare variables in JavaScript, and they differ in scope, hoisting and reassignment.
+
+var is the old way. It's function-scoped, meaning it's visible throughout the whole function, ignoring blocks like if statements and loops. It's hoisted and initialised as undefined, so you can use it before its declaration line without an error, which hides bugs. And it can be declared again in the same scope. A classic problem is var in a loop with callbacks, where all the callbacks share one variable and see the final value.
+
+let and const came in with ES2015 and are block-scoped, they only exist inside the nearest curly braces. They're also hoisted, but not initialised, so using them before the declaration throws an error. That period is called the temporal dead zone. They can't be redeclared in the same scope.
+
+The difference between let and const is reassignment. let can be reassigned. const can't be reassigned after it's created. But const doesn't make the value immutable, and people mix this up a lot. A const object or array can still have its contents changed, you just can't point the variable to a different object.
+
+My rule is const by default, let only when the value has to change, like a counter, and never var. ESLint rules enforce this in our projects.
+
+@p7-17
+Hoisting is JavaScript's behaviour of processing declarations before running the code in a scope. It feels as if declarations are moved to the top of their scope, though really the engine registers them during a setup phase.
+
+How it behaves depends on what's declared. Function declarations are hoisted completely, both the name and the body, so you can call a function before the line where it's written. var declarations are hoisted and initialised to undefined. So if you use a var variable before its declaration, you don't get an error, you get undefined, which can hide bugs. let and const are hoisted too, but not initialised. Using them before the declaration throws a ReferenceError. The time between the start of the scope and the declaration is called the temporal dead zone. Classes behave like let. And function expressions or arrow functions assigned to a variable follow the variable's rules. So with var, the variable exists but is undefined, and calling it fails with "is not a function", and with const, you get a ReferenceError.
+
+In practice, hoisting is mostly something to understand, not rely on, I'd say. I declare variables before using them, use const and let instead of var, and let ESLint flag anything used before it's defined. That avoids the confusing bugs hoisting can cause.
+
+@p7-18
+A closure in JavaScript is a function that remembers the variables from the place where it was created, and can keep using them even after that outer function has finished running.
+
+Every function in JavaScript keeps a reference to its surrounding scope. So if an outer function creates a local variable and returns an inner function that uses it, the inner function keeps access to that variable, and the variable stays alive as long as the inner function exists.
+
+A simple example. A function makeCounter creates a variable count set to zero, and returns a function that adds one to count and returns it. Each time I call makeCounter, I get a new counter with its own private count. Nothing outside can change count directly, so closures are also a way to create private state.
+
+Closures are everywhere in real code, honestly. Event handlers and callbacks that use variables from the component, functions like debounce and memoise, and React hooks, where every render's functions capture that render's props and state. That's also where a common bug comes from, a stale closure, when a callback or effect keeps using an old value of state. That's why the dependency array in useEffect matters.
+
+The classic loop issue is a closure issue too. Callbacks created in a loop with var all share one variable, while let creates a new variable for each iteration.
+
+@p7-19
+Okay, so a Promise is an object that represents the future result of an asynchronous operation, like an API call. It's in one of three states, pending, while waiting, fulfilled, with a value, or rejected, with an error. Once it's settled, it doesn't change.
+
+With Promises directly, you handle the result by chaining then for success, catch for errors, and finally for cleanup. Each then returns a new Promise, so steps can be chained one after another. There are also helpers for running several at once. Promise.all waits for all of them and fails if any fails, Promise.allSettled waits for all and reports each result, Promise.race takes the first to settle, and Promise.any takes the first success.
+
+async and await is newer syntax built on top of Promises. It doesn't replace them, it makes them easier to read. An async function always returns a Promise, and inside it, await pauses that function until the Promise settles, without blocking the main thread. Errors are handled with a normal try, catch and finally. So the code reads top to bottom like synchronous code.
+
+I use async and await almost everywhere for clarity. But I still use Promise.all to run independent calls in parallel, because awaiting them one after another would make them run in sequence and be slower.
+
+@p7-20
+Callback hell is basically what happens when asynchronous code is written with nested callbacks, where each step is passed a function to call when it finishes, and the next step goes inside that function. With several steps in a row, the code keeps moving to the right, forming a pyramid shape, which is why it's also called the pyramid of doom.
+
+Like, read a file, and in its callback, parse it, and in that callback, call an API, and in that callback, save the result. Each level also needs its own error check, usually the "if error, return" pattern in Node.js. The problems are that it's hard to read, hard to follow the flow, easy to forget error handling at one level, and difficult to do things like run steps in parallel or retry.
+
+The solutions came in stages. Naming the functions and keeping them flat helps a little. Then Promises allowed chaining with then, and one catch for all errors. And today, async and await lets you write the same sequence as straight, top-to-bottom code, with normal try and catch. In Node.js, most built-in modules now have Promise versions, like fs slash promises, and util.promisify converts older callback functions.
+
+So in modern code, callback hell is mostly avoided just by using async and await consistently.
+
+@p7-21
+Optional chaining and nullish coalescing are two JavaScript and TypeScript operators that make it much safer and cleaner to work with values that might be null or undefined.
+
+Optional chaining, the question mark dot operator, lets you access a property deeply without checking each level. Like, user question-mark-dot address question-mark-dot city. If user or address is null or undefined, the whole expression just returns undefined, instead of throwing a "cannot read property of undefined" error. It also works for calling functions that might not exist, and for array access.
+
+Nullish coalescing, the double question mark operator, gives a default value, but only when the left side is null or undefined. Say, settings dot pageSize double question mark 20.
+
+The thing is how it differs from the older OR operator. OR returns the right side for any falsy value, zero, an empty string, false, and NaN, as well as null and undefined. So if pageSize was deliberately set to zero, OR would wrongly replace it with 20. Double question mark keeps zero, empty strings and false, and only replaces null or undefined.
+
+They're often used together, like user question-mark-dot name double question mark "Guest". There's also the nullish assignment operator, which sets a value only if it's currently null or undefined. I use these all the time, especially with API data that may have missing fields.
