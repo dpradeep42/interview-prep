@@ -10598,193 +10598,176 @@ S: scx
 D: A
 T: Calls to a partner API time out only from the production network. How do you troubleshoot?
 K: partner api timeout production only, outbound connectivity production, firewall proxy timeout, tls handshake timeout, works from test not prod
-X: If it works from other environments but times out from production, the problem is almost always network path or configuration, not the code.
-X: Steps.
-X: Reproduce from a production host: run a simple request with curl or PowerShell Invoke-WebRequest from the same server or container, with verbose output. Does DNS resolve? Does the TCP connection open? Does the TLS handshake complete? Where does it hang?
-X: DNS: production may use different DNS servers that resolve the partner's name to another address, or can't resolve it.
-X: Firewall and egress rules: production often has stricter outbound rules. A new partner endpoint or a changed IP address isn't allowed, so connections hang until timeout rather than failing fast. Network teams can check firewall logs.
-X: Proxy: production servers might have to go through a corporate proxy, and the application isn't configured to use it, or the proxy blocks the destination or breaks TLS inspection.
-X: Partner allow-listing: the partner only accepts connections from known IP addresses, and our production outbound IP, through NAT or the firewall, isn't on their list, or changed.
-X: TLS: production servers might have older TLS settings or missing intermediate certificates in the trust store, so the handshake fails; or the partner requires a client certificate that's only configured in test.
-X: MTU and packet issues over VPN, which cause hangs on larger requests.
-X: Once found, the fix is usually a firewall rule, proxy configuration or allow-list update. I document the required network paths per integration, and add a synthetic check from production to each partner endpoint, so we know before the business does.
+X: If it works from other environments but times out from production, it's almost always the network path or configuration, not the code.
+X: What I do is reproduce from a production host. Run a simple request with curl or PowerShell Invoke-WebRequest from the same server or container, with verbose output. Does DNS resolve? Does the TCP connection open? Does the TLS handshake finish? Where exactly does it hang?
+X: DNS. Production might use different DNS servers that resolve the partner's name to another address, or can't resolve it at all.
+X: Firewall and egress rules. Production usually has stricter outbound rules. A new partner endpoint or a changed IP isn't allowed, so connections hang until timeout instead of failing fast. The network team can check the firewall logs.
+X: Proxy. Production servers might have to go through a corporate proxy and the app isn't configured to use it, or the proxy blocks the destination or breaks things with TLS inspection.
+X: Partner allow-listing. The partner only accepts connections from known IPs, and our production outbound IP, through NAT or the firewall, isn't on their list, or it changed.
+X: TLS. Production servers might have older TLS settings or missing intermediate certificates in the trust store, so the handshake fails. Or the partner needs a client certificate that's only set up in test.
+X: MTU and packet issues over VPN, which cause hangs on larger requests. That one's sneaky, honestly.
+X: Once found, the fix is usually a firewall rule, proxy config or allow-list update. I document the required network paths per integration, and add a synthetic check from production to each partner endpoint, so we know before the business does.
 @p17-961
 S: scx
 D: A
 T: An Angular sub-app breaks after the host MVC page changes. How do you prevent this?
 K: angular sub app broken by host page, embedded angular conflicts, global css conflict, jquery conflict angular, micro frontend isolation
-X: When Angular apps are embedded into server-rendered pages, they share the same document with the host, so changes in the host can break them.
-X: Typical causes.
-X: Global CSS: the host adds or changes styles, like a CSS reset, a new theme or generic selectors like button or table, which override the sub-app's styling.
-X: Global JavaScript: a new or upgraded script, like a different jQuery version, a polyfill, or a library that patches built-in objects, conflicts with Angular or zone.js. Two copies of zone.js, from different sub-apps, also cause strange behaviour.
-X: DOM expectations: the sub-app expects a specific container element id or data attribute that the host changed or removed.
-X: Configuration passed through the page: the host renders configuration, like API base URLs, tokens or user context, into the page, and the format changed.
-X: Base href and routing: a change in the page path breaks the sub-app's router or asset paths.
-X: Content Security Policy changes block inline scripts or styles the sub-app needs.
-X: Fixing and preventing.
-X: Define a contract between host and sub-app: the mount element, the configuration object shape and the events used for communication, documented and versioned.
-X: Isolate styles: prefix sub-app styles, use Angular's view encapsulation, and avoid global styles in the sub-app; for strong isolation, Angular Elements with Shadow DOM.
+X: So when Angular apps are embedded into server-rendered pages, they share the same document with the host, and changes in the host can break them.
+X: Typical causes. Global CSS. The host adds or changes styles, a CSS reset, a new theme, or generic selectors like button or table, which override the sub-app's styling.
+X: Global JavaScript. A new or upgraded script, like a different jQuery version, a polyfill, or a library that patches built-in objects, conflicts with Angular or zone.js. Two copies of zone.js from different sub-apps also cause really strange behaviour.
+X: DOM expectations. The sub-app expects a specific container element id or data attribute that the host changed or removed.
+X: Configuration passed through the page. The host renders config, API base URLs, tokens or user context, into the page, and the format changed.
+X: Base href and routing. A change in the page path breaks the sub-app's router or asset paths.
+X: Content Security Policy changes that block inline scripts or styles the sub-app needs.
+X: Fixing and preventing it. Define a contract between host and sub-app, the mount element, the shape of the config object and the events used for communication, documented and versioned.
+X: Isolate styles. Prefix sub-app styles, use Angular's view encapsulation, and avoid global styles in the sub-app. For strong isolation, Angular Elements with Shadow DOM.
 X: Avoid global dependencies, and load one shared zone.js.
-X: End-to-end smoke tests that load each sub-app inside the real host page, run in the host's pipeline, so host changes are tested against sub-apps before release.
-X: This is also one of the reasons for moving to a single React shell with packaged features.
+X: End-to-end smoke tests that load each sub-app inside the real host page, running in the host's pipeline, so host changes get tested against sub-apps before release.
+X: And this is also one of the reasons for moving to a single React shell with packaged features, I'd say.
 @p17-962
 S: scx
 D: A
 T: A Lambda function is triggering itself in a loop and costs are exploding. What do you do?
 K: lambda recursive loop, lambda infinite loop s3, lambda cost spike loop, recursive invocation detection, s3 trigger loop
-X: A common cause: a Lambda triggered by S3 object creation writes its output into the same bucket, or the same prefix, which triggers it again, forever. Similar loops happen with SQS, where a function sends to the queue that triggers it, or SNS and EventBridge rules that match the function's own events.
-X: Immediate actions, because every minute costs money.
-X: Stop the loop: set the function's reserved concurrency to zero, which throttles all invocations immediately. Alternatively, disable the trigger, like the event source mapping or S3 notification.
-X: Check side effects: how many objects or messages were created, and clean them up, carefully, so cleanup doesn't trigger anything else.
-X: Check costs and limits: Lambda, S3 requests, CloudWatch Logs ingestion and downstream services may all have spiked.
-X: Fix the design.
-X: Separate input and output: write output to a different bucket, or a different prefix with the trigger filtered to the input prefix only.
-X: Use event filtering, so the function only receives the events it should process.
-X: Mark processed items, like metadata or tags, and skip them.
-X: Guardrails.
-X: Lambda's recursive loop detection stops some loops automatically after a number of recursive invocations, for supported services like SQS and SNS, but not every pattern, so I don't rely on it.
-X: Reserved concurrency limits on functions, so a runaway can't scale indefinitely.
-X: Budgets and cost anomaly detection alerts, and CloudWatch alarms on invocation counts per function compared with normal levels.
-X: Code review of trigger configuration, in infrastructure as code, checking for loops.
+X: A common cause, a Lambda triggered by S3 object creation writes its output into the same bucket, or the same prefix, which triggers it again, forever. Similar loops happen with SQS, where a function sends to the queue that triggers it, or SNS and EventBridge rules that match the function's own events.
+X: Immediate actions, because every minute costs money. Stop the loop. Set the function's reserved concurrency to zero, which throttles all invocations immediately. Or disable the trigger, the event source mapping or S3 notification.
+X: Check side effects. How many objects or messages got created, and clean them up carefully, so the cleanup doesn't trigger anything else.
+X: Check costs and limits. Lambda, S3 requests, CloudWatch Logs ingestion and downstream services might all have spiked.
+X: Then fix the design. Separate input and output, write output to a different bucket, or a different prefix with the trigger filtered to the input prefix only.
+X: Use event filtering, so the function only gets the events it should process.
+X: Mark processed items, with metadata or tags, and skip them.
+X: Guardrails. Lambda's recursive loop detection stops some loops automatically after a number of recursive invocations, for supported services like SQS and SNS, but not every pattern, so honestly I don't rely on it.
+X: Reserved concurrency limits on functions, so a runaway can't scale forever.
+X: Budgets and cost anomaly detection alerts, plus CloudWatch alarms on invocation counts per function compared with normal levels.
+X: And code review of trigger configuration in infrastructure as code, checking specifically for loops.
 @p17-963
 S: scx
 D: A
 T: The Horizontal Pod Autoscaler is not scaling up under load. Why?
 K: hpa not scaling, horizontal pod autoscaler not working, hpa unknown metrics, kubernetes autoscaling not triggering, hpa troubleshooting
-X: First I run kubectl describe hpa, which shows current and target metrics, conditions and events, and usually reveals the reason.
-X: Common causes.
-X: Metrics unavailable: the current metric shows unknown. The metrics server isn't installed or healthy, or for custom metrics, the adapter, like Prometheus Adapter or KEDA, isn't working or the metric name is wrong.
-X: Missing resource requests: CPU utilisation targets are percentages of requests. If pods have no CPU request, the HPA can't calculate utilisation and won't scale.
-X: Requests set too high: if a pod requests 2 CPUs but uses 0.5 under heavy load, utilisation looks like 25 percent and never crosses a 70 percent target. The real bottleneck may be elsewhere.
-X: Wrong metric: the service is limited by something other than CPU, like I/O, a connection pool or queue depth, so CPU never rises even though users suffer. Scaling on requests per second, latency or queue length, with custom metrics or KEDA, fits better.
-X: Max replicas reached: the HPA is already at maxReplicas.
-X: Pods can't be scheduled: the HPA increased the desired count, but new pods are Pending because the cluster has no capacity, and the node autoscaler is slow, misconfigured or at its limit.
-X: Scaling behaviour: stabilisation windows and scale-up policies limit how fast it scales; defaults can feel slow for sudden spikes.
-X: Readiness: new pods take long to become ready, so the HPA sees little relief and the effect lags.
-X: After the fix, I load test to confirm scaling happens at the right point, and alert when the HPA is at max replicas for a sustained period.
+X: The first thing I run is kubectl describe hpa, which shows current and target metrics, conditions and events, and usually tells you the reason.
+X: Common causes. Metrics unavailable, the current metric shows unknown. The metrics server isn't installed or healthy, or for custom metrics, the adapter, Prometheus Adapter or KEDA, isn't working or the metric name's wrong.
+X: Missing resource requests. CPU utilisation targets are percentages of requests, so if pods have no CPU request, the HPA can't calculate utilisation and won't scale.
+X: Requests set too high. If a pod requests 2 CPUs but uses 0.5 under heavy load, utilisation looks like 25 percent and never crosses a 70 percent target. That one can catch people out.
+X: Wrong metric. The service is limited by something other than CPU, I/O, a connection pool or queue depth, so CPU never rises even though users are suffering. Scaling on requests per second, latency or queue length, with custom metrics or KEDA, fits better.
+X: Max replicas reached, the HPA's already at its max.
+X: Pods can't be scheduled. The HPA raised the desired count, but new pods are Pending because the cluster has no capacity, and the node autoscaler is slow, misconfigured or at its limit.
+X: Scaling behaviour. Stabilisation windows and scale-up policies limit how fast it scales, and the defaults can feel slow for sudden spikes.
+X: Readiness. New pods take a long time to become ready, so the HPA sees little relief and the effect lags.
+X: After the fix, I load test to confirm scaling kicks in at the right point, and alert when the HPA sits at max replicas for a sustained period.
 @p17-964
 S: scx
 D: A
 T: A Python service crashes with "too many open files". What is wrong?
 K: too many open files python, emfile error, file descriptor leak, ulimit nofile, socket leak python
-X: "Too many open files", error EMFILE, means the process reached its limit on file descriptors. On Linux, sockets count as files too, so this is often a connection leak, not a file problem.
-X: Investigation.
-X: Count open descriptors over time: ls /proc/PID/fd | wc -l, or lsof -p PID, and look at what they are: regular files, TCP sockets to a particular host, pipes. A steadily rising count means something isn't being closed.
-X: Check the limit with ulimit -n or /proc/PID/limits. Defaults like 1,024 can be too low for busy services.
-X: Common causes in Python.
-X: Opening files without with statements or close calls, especially in error paths.
-X: Creating a new HTTP session or client per request, like requests.Session or httpx.Client, without closing it, leaving sockets open. The fix is one shared client with connection pooling, closed on shutdown.
-X: Database connections or cursors not returned to the pool, or creating engines repeatedly in SQLAlchemy instead of once.
+X: "Too many open files", error EMFILE, means the process hit its limit on file descriptors. And on Linux, sockets count as files too, so this is often a connection leak, not really a file problem.
+X: Investigation. Count open descriptors over time, list the process's fd folder under proc and count it, or use lsof on the PID, and look at what they are. Regular files, TCP sockets to a particular host, pipes. A steadily rising count means something isn't getting closed.
+X: Check the limit with ulimit or the process's limits file. Defaults like 1,024 can be too low for busy services.
+X: Common causes in Python. Opening files without with statements or close calls, especially in error paths.
+X: Creating a new HTTP session or client per request, a requests Session or an httpx Client, without closing it, which leaves sockets open. I've seen this one a lot. The fix is one shared client with connection pooling, closed on shutdown.
+X: Database connections or cursors not returned to the pool, or creating engines again and again in SQLAlchemy instead of once.
 X: Subprocesses with pipes that aren't closed or waited on.
-X: Too much concurrency: an async service opening thousands of simultaneous connections without a semaphore limit.
-X: Fixes: fix the leak with context managers and shared clients; limit concurrency; and raise the descriptor limit appropriately, in the container or systemd settings, as a capacity setting rather than a leak fix.
-X: Monitoring: export open file descriptor counts as a metric, which most Prometheus client libraries do automatically for processes, and alert when it approaches the limit.
+X: Too much concurrency, an async service opening thousands of simultaneous connections without a semaphore limit.
+X: Fixes, fix the leak with context managers and shared clients, limit concurrency, and raise the descriptor limit sensibly, in the container or systemd settings, as a capacity setting, not as a leak fix.
+X: Monitoring, export open file descriptor counts as a metric, which most Prometheus client libraries do automatically for processes, and alert when it gets close to the limit.
 @p17-965
 S: scx
 D: A
 T: The pipeline says deployment succeeded, but the servers are still running the old code. What happened?
 K: deployment succeeded old code running, pipeline green but not deployed, iis old version after deploy, stale deployment, release did not update
-X: A green pipeline only means the steps didn't report errors, so I check what actually happened on the targets.
-X: What I verify first: the version endpoint or the assembly and file version on each server, to see which servers have the old version, all or only some.
-X: Common causes.
-X: Wrong artifact: the release picked an older build artifact, like "latest" from the wrong branch, or a cached artifact.
-X: Deployment to the wrong target: a variable pointing to another environment, server group or deployment slot, or a server missing from the deployment group.
-X: Files locked or not replaced on IIS: the app pool kept files locked, so the copy step skipped or failed silently on some files, especially with tasks configured to continue on error. Taking the app offline with app_offline.htm or stopping the app pool during deployment fixes this.
-X: App not restarted: files changed, but the process still runs the old code, for example a Windows service or worker that wasn't restarted, or IIS shadow copying behaviour.
-X: Load balancer pointing to old instances: a blue-green or slot setup where traffic wasn't switched.
-X: Caching: output caching, CDN or browser cache serving old content.
-X: Agent issues: a self-hosted agent with an old working directory, or the deployment step running on a different machine than expected.
-X: Fixes: deployment steps that fail loudly instead of continuing on error; post-deployment verification that calls each instance's version endpoint and fails the pipeline if versions don't match the build; immutable artifacts with build numbers; and smoke tests after deployment. Then the pipeline's green actually means the new code is running.
+X: Well, a green pipeline only means the steps didn't report errors, so I check what actually happened on the targets.
+X: What I verify straight away is the version endpoint, or the assembly and file version on each server, to see which servers have the old version, all of them or only some.
+X: Common causes. Wrong artifact, the release picked an older build, like "latest" from the wrong branch, or a cached artifact.
+X: Deployment to the wrong target. A variable pointing to another environment, server group or deployment slot, or a server missing from the deployment group.
+X: Files locked or not replaced on IIS. The app pool kept files locked, so the copy step skipped or failed silently on some files, especially with tasks set to continue on error. Taking the app offline with an app offline file, or stopping the app pool during deployment, fixes it.
+X: App not restarted. Files changed, but the process still runs the old code, like a Windows service or worker that wasn't restarted, or IIS shadow copying behaviour.
+X: Load balancer pointing to old instances, a blue-green or slot setup where traffic wasn't switched.
+X: Caching, output caching, CDN or browser cache serving old content.
+X: Agent issues, a self-hosted agent with an old working directory, or the deployment step running on a different machine than expected.
+X: Fixes. Deployment steps that fail loudly instead of continuing on error. Post-deployment verification that calls each instance's version endpoint and fails the pipeline if versions don't match the build. Immutable artifacts with build numbers, and smoke tests after deployment. Then a green pipeline actually means the new code's running.
 @p17-966
 S: scx
 D: A
 T: A scheduled job runs at the wrong hour after moving to containers. Why?
 K: scheduled job wrong time, container time zone utc, cron wrong hour, daylight saving job time, quartz time zone container
-X: When a job that ran at 2 AM on a server suddenly runs at 7:30 or 8:30, the usual cause is time zones.
-X: Containers run in UTC by default. Windows and Linux servers on-premise usually ran in the local time zone, so a cron expression like "0 0 2 * * ?" meant 2 AM local. In a container, the same expression means 2 AM UTC, which is a different local time, and the difference changes with daylight saving in regions that observe it.
-X: Other places where this appears: code using DateTime.Now or local time to decide what to process, like "yesterday's records", which now uses UTC boundaries; log timestamps that seem shifted; and reports cut off at the wrong day boundary.
-X: Fixes.
-X: Be explicit about time zones in schedules: Quartz.NET lets you set a time zone on cron triggers, Kubernetes CronJobs support a timeZone field, and cloud schedulers like EventBridge Scheduler and Azure Functions support specifying time zones.
-X: Choose the right zone per job: business jobs tied to a local day, like a site's end-of-day processing, should use that region's time zone; technical jobs can use UTC.
-X: In code, use UTC for storage and logic, converting to local time zones explicitly where business rules need it, with DateTimeOffset and TimeZoneInfo, or TimeProvider for testability.
-X: Don't fix it by setting the container's time zone to local as a blanket solution; that hides the problem and causes inconsistencies between services.
-X: Test schedules around daylight saving transitions, where jobs can run twice or be skipped in local time.
+X: When a job that ran at 2 AM on a server suddenly runs at 7:30 or 8:30, nine times out of ten it's time zones.
+X: Containers run in UTC by default. Windows and Linux servers on-premise usually ran in the local time zone, so a cron expression for 2 AM meant 2 AM local. In a container, the same expression means 2 AM UTC, which is a different local time, and the gap shifts with daylight saving in regions that have it.
+X: Other places it shows up. Code using DateTime Now or local time to decide what to process, like "yesterday's records", which now uses UTC boundaries. Log timestamps that look shifted. Reports cut off at the wrong day boundary.
+X: Fixes. Be explicit about time zones in schedules. Quartz.NET lets you set a time zone on cron triggers, Kubernetes CronJobs have a time zone field, and cloud schedulers like EventBridge Scheduler and Azure Functions let you specify time zones.
+X: Pick the right zone per job. Business jobs tied to a local day, like a site's end-of-day processing, should use that region's time zone, and technical jobs can use UTC.
+X: In code, use UTC for storage and logic, and convert to local time zones explicitly where business rules need it, with DateTimeOffset and TimeZoneInfo, or TimeProvider for testability.
+X: My rule is don't fix it by setting the container's time zone to local as a blanket solution. That hides the problem and causes inconsistencies between services.
+X: And test schedules around daylight saving transitions, where jobs can run twice or get skipped in local time.
 @p17-967
 S: scx
 D: A
 T: Users in one office say the application is very slow, but others are fine. How do you investigate?
 K: slow from one office, location specific slowness, network latency office, regional performance issue, vpn proxy slow
-X: When slowness is specific to a location, the application code is usually fine and the network path is different, but I verify rather than assume.
-X: Gather facts: which office, since when, all pages or some, all users there or some, and at what times. A time correlation with a change, like a new proxy, VPN, or network upgrade, is a strong clue.
-X: Compare measurements: server-side response times for those users' requests, using logs filtered by their IP range. If server time is normal, the delay is on the network or client side.
-X: Front-end timing: real user monitoring or browser developer tools from an affected user show where time goes: DNS lookup, TCP connect, TLS handshake, waiting for the first byte, or downloading content. Large downloads over a slow link point to bandwidth; long connection setup points to latency or proxies.
-X: Common causes.
-X: Corporate proxy or security inspection, like TLS inspection or antivirus scanning web traffic, adding delay per request.
-X: VPN routing: traffic from that office goes through a distant VPN gateway or data centre.
-X: Distance and latency to the hosting region, multiplied by many sequential requests from a chatty front end.
+X: Okay, so when slowness is tied to one location, the code's usually fine and the network path is what's different, but I verify instead of assuming.
+X: Gather facts. Which office, since when, all pages or some, all users there or some, and at what times. If the timing lines up with a change, a new proxy, VPN, or network upgrade, that's a strong clue.
+X: Compare measurements. Server-side response times for those users' requests, using logs filtered by their IP range. If server time is normal, the delay's on the network or client side.
+X: Front-end timing. Real user monitoring, or browser dev tools from an affected user, show where the time goes. DNS lookup, TCP connect, TLS handshake, waiting for the first byte, or downloading content. Big downloads over a slow link point to bandwidth, long connection setup points to latency or proxies.
+X: Common causes. A corporate proxy or security inspection, TLS inspection or antivirus scanning web traffic, adding delay per request.
+X: VPN routing, where traffic from that office goes through a distant VPN gateway or data centre.
+X: Distance and latency to the hosting region, multiplied by lots of sequential requests from a chatty front end. That multiplication is what people forget.
 X: DNS resolving to a far-away endpoint.
 X: Local network congestion, Wi-Fi problems, or bandwidth limits.
-X: Solutions depend on the cause: working with the network team on routing or proxy exceptions for our domains; a CDN for static assets; reducing the number of requests and payload sizes; compression and caching; and, for global users, hosting closer to them.
-X: Adding a synthetic monitor from that region helps confirm the fix and catch regressions.
+X: The fix depends on the cause. Working with the network team on routing or proxy exceptions for our domains, a CDN for static assets, fewer requests and smaller payloads, compression and caching, and for global users, hosting closer to them.
+X: Adding a synthetic monitor from that region helps confirm the fix and catch regressions later.
 @p17-968
 S: scx
 D: A
 T: Users get random 401 or antiforgery errors after scaling out to multiple instances. Why?
 K: random 401 multiple instances, data protection keys load balancer, antiforgery token error scale out, cookie decryption failed, shared data protection keys
-X: This pattern points strongly to ASP.NET Core Data Protection keys not being shared between instances.
-X: ASP.NET Core uses Data Protection to encrypt and sign authentication cookies, antiforgery tokens, TempData and some other values. By default, each instance generates its own key ring, stored locally, in memory, in the user profile or in a container's file system. When a user's cookie was created by instance A and the next request goes to instance B, B can't decrypt it, so the user appears logged out, gets 401s, or antiforgery validation fails. It looks random because it depends on which instance the load balancer picks.
+X: Yeah, this pattern points really strongly to ASP.NET Core Data Protection keys not being shared between instances.
+X: ASP.NET Core uses Data Protection to encrypt and sign auth cookies, antiforgery tokens, TempData and a few other values. By default, each instance generates its own key ring, stored locally, in memory, in the user profile or in the container's file system. So when a user's cookie was created by instance A and the next request goes to instance B, B can't decrypt it. The user looks logged out, gets 401s, or antiforgery validation fails. It looks random because it depends on which instance the load balancer picks.
 X: It also happens after deployments or container restarts, when keys stored inside the container are lost and every existing cookie becomes invalid.
-X: The fix: configure Data Protection to persist keys to a shared location and protect them: PersistKeysToStackExchangeRedis, PersistKeysToDbContext, PersistKeysToAzureBlobStorage, or a file share for IIS servers, combined with ProtectKeysWith a certificate, Azure Key Vault or AWS KMS, so keys aren't stored in plain text. Also set the same application name with SetApplicationName on all instances that should share cookies.
-X: Related causes to check: sticky sessions hiding the problem until the instance count changes; in-memory session state not shared; and clock differences between servers affecting token validation.
-X: In .NET Framework apps on IIS farms, the equivalent problem is mismatched machineKey settings in web.config across servers, causing ViewState and forms authentication errors, solved by configuring the same machineKey everywhere.
+X: The fix is to configure Data Protection to persist keys to a shared location and protect them. Persist keys to Redis, to a DbContext, to Azure Blob Storage, or to a file share for IIS servers, combined with protecting keys with a certificate, Azure Key Vault or AWS KMS, so keys aren't stored in plain text. And set the same application name on all instances that should share cookies.
+X: Related things to check, sticky sessions hiding the problem until the instance count changes, in-memory session state not shared, and clock differences between servers affecting token validation.
+X: In .NET Framework apps on IIS farms, the equivalent problem is mismatched machine key settings in web config across servers, causing ViewState and forms authentication errors, and you solve it by configuring the same machine key everywhere.
 @p17-969
 S: scx
 D: A
 T: A new index made writes slower and caused blocking. What happened, and what do you do?
 K: new index slowed writes, index overhead inserts, too many indexes, index caused blocking, write performance index
-X: Indexes speed up reads, but every index must be maintained on every insert, update of its columns, and delete. A new index can hurt write-heavy tables, and creating it can itself cause blocking.
-X: What might have happened.
-X: Creation blocking: building an index offline takes locks that block writes on the table for the whole build, which on a large table can be many minutes. Online index creation, where the edition supports it, avoids most of that.
-X: Write overhead: a busy table with many indexes now does more work per write. If the new index includes frequently updated columns, every update touches it, increasing log volume, I/O and lock duration.
-X: Lock contention and deadlocks: more indexes means more structures locked during writes, which can increase blocking and deadlocks, especially when different queries access indexes in different orders.
-X: Page splits: an index on a random key, like a GUID, causes fragmentation and page splits during inserts.
-X: Plan changes: the optimiser started using the new index for some queries, producing worse plans, like key lookups on many rows.
-X: What I do: confirm with wait stats, blocking reports and Query Store whether write latency increased after the change. Short term, drop or disable the index if it's causing an incident, since it was a recent change. Then review: is the index needed by an important query? Can an existing index be extended with INCLUDE columns instead? Can unused or duplicate indexes be removed to compensate?
-X: Prevention: test index changes with realistic write load, check index usage statistics regularly, and create indexes online during quiet hours.
+X: Indexes speed up reads, but every index has to be maintained on every insert, every update of its columns, and every delete. So a new index can hurt write-heavy tables, and creating it can cause blocking by itself.
+X: What might've happened. Creation blocking. Building an index offline takes locks that block writes on the table for the whole build, which on a big table can be many minutes. Online index creation, where the edition supports it, avoids most of that.
+X: Write overhead. A busy table with lots of indexes now does more work per write. If the new index includes frequently updated columns, every update touches it, which increases log volume, I/O and lock duration.
+X: Lock contention and deadlocks. More indexes means more structures locked during writes, which can increase blocking and deadlocks, especially when different queries hit indexes in different orders.
+X: Page splits. An index on a random key, like a GUID, causes fragmentation and page splits during inserts.
+X: Plan changes. The optimiser started using the new index for some queries and produced worse plans, like key lookups on many rows.
+X: What I do is confirm with wait stats, blocking reports and Query Store whether write latency went up after the change. Short term, drop or disable the index if it's causing an incident, since it was a recent change. Then review. Does an important query actually need it? Can an existing index be extended with INCLUDE columns instead? Can unused or duplicate indexes be removed to compensate?
+X: Prevention, test index changes with realistic write load, check index usage stats regularly, and create indexes online during quiet hours.
 @p17-970
 S: scx
 D: A
 T: An EF Core migration failed halfway in production. How do you recover?
 K: ef core migration failed production, partial migration, migration rollback ef core, database migration failure, schema change failed
-X: A failed migration can leave the schema in an unknown state, so I move carefully rather than rerunning things blindly.
-X: First, assess the state. Check the __EFMigrationsHistory table to see whether the migration was recorded; compare the actual schema with what the migration intended, to see which steps were applied. EF Core wraps each migration in a transaction on SQL Server, so often the whole migration rolled back cleanly. But some operations can't run inside transactions, or the migration might contain raw SQL with its own transaction handling, so partial application is possible.
-X: Check the application: is the running version compatible with the current schema? If the deployment stopped before the new code went live, the old code may be fine. If not, roll back the application to the previous version.
-X: Recover.
-X: If nothing was applied: fix the cause, like a timeout on a large table, a data issue violating a new constraint, or missing permissions, and rerun.
-X: If partially applied: write a script to either complete the remaining steps or undo the applied ones, reviewed and tested on a restored copy of production first, then apply it.
-X: If data was damaged: restore from backup to a point before the migration, as a last resort.
-X: Prevention.
-X: Generate idempotent SQL scripts from migrations, review them, and run them through the pipeline, rather than applying migrations from application startup.
+X: A failed migration can leave the schema in an unknown state, so I go carefully instead of rerunning things blindly.
+X: Assess the state. Check the EF migrations history table to see whether the migration got recorded, and compare the actual schema with what the migration intended, to see which steps went through. EF Core wraps each migration in a transaction on SQL Server, so often the whole thing rolled back cleanly. But some operations can't run inside transactions, or the migration might have raw SQL with its own transaction handling, so partial application is possible.
+X: Check the application. Is the running version compatible with the current schema? If the deployment stopped before the new code went live, the old code's probably fine. If not, roll the app back to the previous version.
+X: Recovering. If nothing was applied, fix the cause, a timeout on a large table, a data issue violating a new constraint, or missing permissions, and rerun.
+X: If it's partially applied, write a script to either finish the remaining steps or undo the applied ones, reviewed and tested on a restored copy of production first, then apply it.
+X: If data got damaged, restore from backup to a point before the migration, as a last resort.
+X: Prevention, and honestly this is where I'm strict. Generate idempotent SQL scripts from migrations, review them, and run them through the pipeline, not from application startup.
 X: Test migrations against a production-sized copy, measuring duration and locks.
-X: Keep migrations small and backward compatible, using expand-and-contract, so the old application version works with the new schema.
-X: Take a backup or snapshot immediately before production migrations.
+X: Keep migrations small and backward compatible, expand-and-contract, so the old app version works with the new schema.
+X: And take a backup or snapshot right before production migrations.
 @p17-971
 S: scx
 D: A
 T: A Python dependency upgrade broke production even though tests passed. How do you prevent it?
 K: python dependency broke production, unpinned dependencies, transitive dependency update, lock file python, reproducible builds python
-X: First, recovery: roll back to the previous image or version, which works if each deployment is an immutable artifact. Then find what changed by comparing installed package versions between the good and bad builds, with pip freeze or the lock files.
-X: Why tests didn't catch it.
-X: Unpinned or loosely pinned dependencies: the requirements file had ranges, or only top-level packages were pinned, so the production build installed a newer version of a transitive dependency than the one tests ran with. Builds weren't reproducible.
-X: Different environments: production uses a different Python version, operating system or architecture, so a compiled package behaves differently or a wheel is missing.
-X: Behaviour not covered by tests: like serialisation formats, default timeouts, or deprecation changes in a library such as Pydantic, SQLAlchemy or requests, which only matter with real data or integrations.
-X: Prevention.
-X: Lock files: use uv, Poetry or pip-tools to lock every package, including transitive ones, with hashes. Build from the lock file, so CI and production install exactly the same versions.
-X: Build once: create the container image once in CI, test that exact image, and promote it, rather than reinstalling packages per environment.
-X: Controlled updates: Renovate or Dependabot propose upgrades as pull requests, one or a few at a time, with changelogs, so tests run against each change and failures point to one package.
+X: Recovery comes first. Roll back to the previous image or version, which works if each deployment is an immutable artifact. Then find what changed by comparing installed package versions between the good and bad builds, with pip freeze or the lock files.
+X: Why didn't tests catch it? Unpinned or loosely pinned dependencies, basically. The requirements file had ranges, or only top-level packages were pinned, so the production build installed a newer version of a transitive dependency than tests ran with. Builds weren't reproducible.
+X: Different environments. Production uses a different Python version, OS or architecture, so a compiled package behaves differently or a wheel's missing.
+X: Behaviour tests don't cover, like serialisation formats, default timeouts, or deprecation changes in a library such as Pydantic, SQLAlchemy or requests, which only matter with real data or integrations.
+X: Prevention. Lock files. Use uv, Poetry or pip-tools to lock every package, transitive ones included, with hashes. Build from the lock file, so CI and production install exactly the same versions.
+X: Build once. Create the container image once in CI, test that exact image, and promote it, instead of reinstalling packages per environment.
+X: Controlled updates. Renovate or Dependabot propose upgrades as pull requests, one or a few at a time, with changelogs, so tests run against each change and a failure points to one package.
 X: Integration and contract tests that exercise real serialisation, database access and external calls.
-X: Staged rollout: canary or test environments receive upgrades first, with monitoring.
-X: The same discipline applies to npm and NuGet: lock files, build once, promote the same artifact.
+X: Staged rollout, canary or test environments get upgrades first, with monitoring.
+X: The same discipline applies to npm and NuGet too. Lock files, build once, promote the same artifact.
 @p17-972
 S: scx
 D: A
