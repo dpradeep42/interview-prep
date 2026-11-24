@@ -1,0 +1,175 @@
+@p17-756 | What are the access modifiers in C#, including protected internal and private protected?
+Okay, access modifiers control which code can use a type or member.
+
+public, accessible from anywhere. private, only inside the same class or struct, and it's the default for members. protected, the class and derived classes, even in other assemblies. internal, anywhere in the same assembly but not from outside, and that's the default for top-level types.
+
+Then the two that confuse people. protected internal means accessible from the same assembly, or from derived classes in any assembly. So it's protected OR internal. private protected, since C# 7.2, means only derived classes that are also in the same assembly. So protected AND internal. That OR versus AND is how I remember them, and interviewers love asking it.
+
+And file, since C# 11, a type visible only inside the same source file, mostly useful for source generators and helper types.
+
+How I use them in practice. Default to the most restrictive access and open up only when needed. In a library or shared NuGet package, anything that isn't meant to be public API is internal, so we can change implementations without breaking consumers.
+
+InternalsVisibleTo lets a test project see internal types, so I don't make things public just for tests, though honestly I prefer testing through public behaviour anyway.
+
+In clean architecture solutions, keeping the infrastructure implementations internal and exposing only interfaces and a registration extension method enforces the boundaries nicely.
+
+And sealed, alongside the access modifiers, stops unintended inheritance.
+
+@p17-757 | How do you make a deep copy of an object in C#?
+So a shallow copy creates a new object, but reference-type fields just copy the reference, so the copy and the original share nested objects. Change a nested list in the copy and it changes in the original too. A deep copy duplicates the nested objects as well, so the two are fully independent.
+
+The ways to copy. MemberwiseClone, a protected method on object that makes a shallow copy, you can call it from a Clone method in your class. Records with with-expressions, also shallow. Copying an order with a new status copies the top-level values, but a List property is shared. ICloneable, an old interface that doesn't say shallow or deep, so it's not recommended for public APIs.
+
+For actual deep copies. Manual copy methods or copy constructors are the most explicit and the fastest. Each class copies its own nested objects, like a new Order built from another one creating new item objects. Safe, but you have to maintain it when properties get added.
+
+Serialisation round-trip, serialise to JSON with System.Text.Json and deserialise into a new object. Simple and generic, but slower, and it only copies serialisable data, so you lose private state, references and cycles unless configured.
+
+Mapping libraries or source-generated mappers can produce copies too.
+
+But often the best answer, I think, is to not need deep copies at all. Make objects immutable so they can be shared safely, and use immutable collections. Then "changing" means creating a new version and there's no risk of accidental shared mutation.
+
+And I'd never use BinaryFormatter for cloning like older articles suggest. It's insecure and it's been removed.
+
+@p17-758 | Explain the Proxy pattern and how dynamic proxies are used in .NET.
+See, the Proxy pattern puts a stand-in object in front of a real one, implementing the same interface, to control access to it. The caller doesn't know it's talking to a proxy. The proxy can add behaviour before or after forwarding the call.
+
+The common kinds. A virtual proxy delays creating an expensive object until it's needed, like lazy loading. A protection proxy checks permissions before calling through. A remote proxy represents an object in another process, like a generated gRPC or WCF client. And caching or logging proxies add those concerns.
+
+It looks a lot like the Decorator pattern. The difference is intent. Decorators add behaviour and often get stacked, proxies control access. In code they can look identical.
+
+Dynamic proxies generate the proxy classes at runtime, so you don't write one per interface. In .NET there's DispatchProxy, built in, which creates a proxy for any interface and handles every call in one Invoke method. And Castle DynamicProxy, a popular library supporting interfaces and virtual class members. Moq and NSubstitute use it to create mocks, and some frameworks use it for interceptors, adding logging, timing or retries to every method of a service.
+
+Where it shows up in our stack, EF Core lazy-loading proxies, which override navigation properties to load data on access. Mocking libraries in unit tests. And HTTP client libraries like Refit, which generate implementations of an interface that make the API calls.
+
+Because runtime proxies use reflection, people are increasingly using source generators to produce the same thing at compile time.
+
+@p17-759 | How would you build a GraphQL API in .NET, and how do you avoid the N+1 problem?
+Actually in .NET the go-to GraphQL server library is Hot Chocolate. You define the schema from C# types, a Query class with resolver methods like GetShipments, object types for Shipment and Site, and mutations for changes. Clients send one query describing exactly the fields they want, including nested data, like shipments with their site name and items, and they get back exactly that shape.
+
+The N plus one problem is GraphQL's classic trap. If a query asks for 50 shipments and each one's site, a naive site resolver runs one database query per shipment. One query for shipments plus 50 for sites.
+
+DataLoader solves it. Instead of loading the site right away, each resolver asks a DataLoader for a site id. The DataLoader collects all the ids requested in that execution step, makes one batched call, basically a where id is in this list query, and hands each resolver its result. It also caches within the request, so the same site isn't loaded twice. Hot Chocolate has DataLoader built in, and it integrates with EF Core projections so only the requested columns are queried.
+
+Other things I'd set up. Query depth and complexity limits, so a client can't send some huge nested query that kills the server. Persisted or allow-listed queries for public APIs. Authorisation on fields and types, not just the endpoint. And cursor-based pagination.
+
+When would I choose GraphQL? When lots of different front ends need different shapes of related data. For simple CRUD or service-to-service calls, I'd say REST or gRPC is simpler to run, cache and monitor.
+
+@p17-760 | How do you write API integration tests with WebApplicationFactory?
+Honestly these are some of the most valuable tests we have. WebApplicationFactory, from the Mvc Testing package, starts the whole ASP.NET Core app in memory, with the real Program dot cs, middleware, routing, DI, filters and serialisation, on an in-memory TestServer. Tests get an HttpClient from it and make real HTTP calls, no network, no deployment.
+
+How I set it up. A custom factory class that inherits WebApplicationFactory of Program and overrides ConfigureWebHost. In ConfigureTestServices I swap out external dependencies. The DbContext points at a test database, often a real SQL Server in a container with Testcontainers. HTTP clients for third-party APIs get fakes or a stub server like WireMock.NET. The message bus gets an in-memory version or a test double. And I add a test authentication handler so tests can act as different users with specific roles.
+
+A test then arranges data in the database, posts a request as JSON to slash api slash shipments, and asserts the status code, the response body, and the resulting database state or published message.
+
+What these catch that unit tests miss is routing and attribute mistakes, model binding and validation behaviour, authorisation policies, serialisation settings, middleware order, and EF Core mappings against a real database.
+
+Practically, share the factory across tests in a class fixture for speed, reset data between tests, with Respawn for example, keep tests independent, and run them in CI on every pull request.
+
+One small thing, with top-level statements in .NET 6 and later, you add a public partial Program class declaration, or InternalsVisibleTo, so the test project can reference Program.
+
+@p17-761 | AutoMapper, Mapster, Mapperly or manual mapping: how do you map DTOs?
+So mapping between entities and DTOs is repetitive, which is why libraries exist. Each one has its pros and cons.
+
+AutoMapper uses conventions and reflection-based configuration. Properties with matching names map automatically, and profiles define the exceptions. It saves typing, and ProjectTo can turn mappings into EF Core query projections. But mistakes show up at runtime, not compile time. The mapping logic is hidden, so debugging and find-references get harder. Complex configurations turn into a puzzle. And recent versions moved to a commercial licence.
+
+Mapster is similar in style, but faster, with optional code generation.
+
+Mapperly is a source generator. You declare a partial mapper class with method signatures, and it generates plain mapping code at compile time. You get compile-time warnings for unmapped properties, no reflection, good performance, and generated code you can actually read and debug.
+
+Manual mapping, writing the assignments yourself, often as extension methods like ToDto, or constructors. Explicit, fast, easy to debug, refactor-safe. It costs some typing, but with modern IDEs and AI assistants that's really small now.
+
+My preference is manual mapping or Mapperly for most code, because mappings often contain little business decisions, formatting, combining fields, hiding data, and those are clearer in code. For EF Core queries I write Select projections directly, so only the needed columns come back. In an existing codebase that uses AutoMapper consistently I'd keep it, but always with configuration validation tests, AssertConfigurationIsValid, to catch mistakes early.
+
+@p17-762 | Why do async controller actions improve scalability in ASP.NET Core?
+Right, so in ASP.NET Core each request runs on a thread pool thread. If an action calls a database or another API synchronously, that thread just sits there blocked, doing nothing, until the response comes back. Under load, all the threads can end up blocked waiting on I/O. The thread pool grows slowly, requests queue up, latency spikes, while the CPU's mostly idle. That's thread pool starvation.
+
+With async actions, when the code awaits an I/O operation, like awaiting ToListAsync on a DbSet, or an HttpClient GetAsync, the thread goes back to the pool while the OS waits for the I/O. When the result comes in, a pool thread continues the method. So a small number of threads can serve lots of concurrent requests that are mostly waiting.
+
+A few important points. Async improves scalability and throughput under concurrency, not the speed of one request. A single request might even be a tiny bit slower because of the overhead.
+
+It only helps I/O-bound work. CPU-bound work still needs a thread, and wrapping it in Task Run inside a request just moves it to another pool thread and adds overhead.
+
+It has to be async all the way. Calling dot Result or dot Wait on async methods blocks a thread again and can bring the starvation right back.
+
+And pass the request's CancellationToken into async calls, so work stops when the client disconnects.
+
+In our legacy ASP.NET MVC applications, moving data access to async was one of the changes that helped handle peak usage better without adding servers.
+
+@p17-763 | IActionResult vs ActionResult<T> vs returning the DTO directly: which do you use?
+Yeah, in ASP.NET Core controllers you've basically got three return styles.
+
+Returning the DTO directly, like a Get method that returns a ShipmentDto. Simple, and the framework serialises it with a 200. But you can't return other status codes like 404 without throwing exceptions or some workaround.
+
+IActionResult. You can return anything, Ok with the DTO, NotFound, BadRequest with a problem, CreatedAtAction. Flexible, but the return type says nothing about the body, so OpenAPI generators can't infer the schema. You need ProducesResponseType attributes with the DTO type and status code.
+
+ActionResult of T combines both. You can return a ShipmentDto directly, and it's implicitly converted to a 200 result, or return NotFound or anything else. The T tells OpenAPI and readers what the success body looks like. That's my default for controllers, an async Get returning a Task of ActionResult of ShipmentDto. I still add ProducesResponseType for the error codes so the docs are complete.
+
+For minimal APIs, the equivalent is TypedResults with a Results type listing Ok of ShipmentDto or NotFound, which gives compile-time checked status codes and automatic OpenAPI metadata.
+
+One caveat, ActionResult of T doesn't work with an interface as T, because implicit conversions from interfaces aren't allowed. So I return concrete DTO types, which I'd do anyway.
+
+And consistency matters more than which one you pick. The team agrees on one style for new code, along with ProblemDetails for errors.
+
+@p17-764 | Should you wrap every API response in a standard envelope?
+Let me be honest, I've seen both in real systems. Some teams wrap every response in an envelope with success, data, errors and message. Others return the resource directly and use HTTP status codes and ProblemDetails for errors.
+
+For an envelope, you get one consistent shape for the front end to handle, a place for metadata like pagination, warnings or request ids, and it was common practice in older systems where clients couldn't easily read status codes.
+
+Against it, it duplicates what HTTP already gives you. Success false with a 200 status confuses monitoring, caches, gateways and retry logic, which all rely on status codes. It adds nesting to every client call. And standard tools, OpenAPI generators, HTTP clients, API gateways, work more naturally with plain resources and standard errors.
+
+My preference is return resources directly with correct status codes. Use ProblemDetails, RFC 9457, for all errors, with extensions like an error code and validation errors. Put pagination in a consistent wrapper only for list endpoints, with items, a next cursor and a total count. And use headers for cross-cutting metadata like correlation ids.
+
+If an existing API already uses an envelope, I keep it consistent rather than mixing styles, but I make sure the HTTP status still reflects the outcome, so failures aren't hidden behind 200s. In our legacy APIs that the Angular sub-apps consume, consistency for the front end was the priority, so new endpoints there follow the same contract.
+
+@p17-765 | How do you validate configuration options at startup in .NET?
+So a really common production failure is a missing or wrong config value, an empty connection string, a negative timeout, and nobody notices until the code using it runs, maybe hours after deployment, right in the middle of some business process. I want the app to fail fast at startup instead.
+
+The options pattern supports validation. With data annotations, you put Required, Range and Url attributes on the options class, and register it with AddOptions, Bind to the RabbitMq section, then ValidateDataAnnotations.
+
+For custom rules, chain a Validate call with a lambda, say retry count must be less than or equal to max retries, with a message. Or a class implementing IValidateOptions for complex logic, like checking combinations of settings, or using FluentValidation.
+
+The key one is ValidateOnStart. Without it, validation only runs the first time the options are accessed. With it, validation runs when the host starts, so bad config stops the app immediately with a clear error, and the deployment fails before it takes any traffic. In .NET 8 there's a source generator, the OptionsValidator attribute, that generates the validation code for AOT and performance.
+
+Combine that with health checks and readiness probes, and a misconfigured instance never becomes healthy, so rolling deployments stop and the old instances keep serving.
+
+I also check secrets exist without logging their values, and log the non-sensitive effective config at startup, which helps troubleshooting across environments.
+
+This caught real issues for us, like a missing setting in one environment after a new feature, which otherwise would only have shown up when a scheduled job ran.
+
+@p17-766 | How do you deprecate and retire an old API version?
+Okay, versioning lets you bring in a new version, but retiring the old one needs a proper process, otherwise you end up maintaining old versions forever.
+
+I announce early. A deprecation notice with the reason, the replacement, a migration guide and a sunset date, giving consumers enough time, often months for external partners.
+
+Then signal it in the API itself. Add the Deprecation header and the Sunset header, RFC 8594, with the retirement date on responses from the old version, plus a Link header pointing to docs. Mark the operations deprecated in the OpenAPI document so generated clients show warnings. Asp.Versioning can report deprecated versions in the api-deprecated-versions header.
+
+Measure usage. Log and dashboard calls to deprecated endpoints by client id. That tells us exactly who still needs to migrate, so we can contact them directly instead of guessing.
+
+Help them migrate, examples, a side-by-side comparison of the old and new contracts, and a test environment where both work.
+
+Brownouts before removal. Temporarily switch off the old version for short planned windows, returning a clear error, so the remaining consumers notice before the final shutdown.
+
+Then retire it. After the sunset date, return 410 Gone with a helpful message for a while, then remove the code.
+
+Internally, for APIs only our own front ends use, it's shorter since we can coordinate releases. But I still check usage logs before removing anything. Trust me, there's often some forgotten report or integration still calling it.
+
+@p17-767 | How do you configure JSON serialization options in ASP.NET Core?
+So ASP.NET Core uses System.Text.Json by default, and its options decide how every request and response gets serialised. I configure them deliberately and consistently.
+
+Where you set them, for controllers it's AddControllers followed by AddJsonOptions with a lambda. For minimal APIs it's ConfigureHttpJsonOptions. HttpClient calls like GetFromJsonAsync use their own defaults, so shared settings matter there too.
+
+The common settings. Property naming, the web defaults already use camelCase. If a legacy client expects PascalCase, you can set the naming policy to null.
+
+Enums as strings, add JsonStringEnumConverter, so APIs return "Shipped" instead of 2.
+
+Nulls, DefaultIgnoreCondition WhenWritingNull leaves null properties out and shrinks payloads, but some clients prefer explicit nulls, so agree on it.
+
+Cycles, ReferenceHandler IgnoreCycles if entity graphs with back-references get serialised, although the better fix is returning DTOs without cycles.
+
+Numbers, AllowReadingFromString for clients that send numbers as strings.
+
+Unknown properties, .NET 8 added UnmappedMemberHandling to reject unexpected fields, which catches client mistakes.
+
+Custom converters for special types, like DateOnly in older versions, or strongly typed ids. And source generation with JsonSerializerContext for performance and trimming.
+
+The main lesson I've learned is changing these settings, or switching from Newtonsoft, changes the API contract. Casing, date formats, null handling. So I add contract tests that compare serialised output, to catch unintended changes before the front ends break.

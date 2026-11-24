@@ -1,0 +1,159 @@
+@p17-720 | How does mutual TLS work, and when would you use client certificates?
+So in normal TLS only the server shows a certificate, so the client knows it's talking to the real server. In mutual TLS the client also presents a certificate, so the server knows exactly which client is connecting, right at the transport level, before any HTTP request is even processed.
+
+How it works, the server is set up to request client certificates and trusts a specific certificate authority. During the handshake, the client proves it holds the private key for its certificate. The server validates the chain, expiry and revocation status, then maps the certificate, by thumbprint or subject, to a client identity. In ASP.NET Core that's Kestrel's ClientCertificateMode plus the certificate authentication handler. If a load balancer or gateway terminates TLS, the gateway validates the cert and forwards the details in a header, and the app must only trust that header from the gateway.
+
+Where I'd use it. Service-to-service calls in a zero trust network, often automated through a service mesh that issues and rotates the certificates. Partner and B2B integrations, where a partner system connects to our API, certificates are much harder to steal and replay than API keys, and some industries require them. And device authentication, IoT devices or machines.
+
+OAuth can also bind tokens to the client certificate, so a stolen token is useless without the private key.
+
+The cost is certificate management. Issuing, distributing, rotating before expiry, revoking. Honestly, without automation it becomes painful very quickly.
+
+@p17-721 | API keys vs OAuth client credentials for partner integrations: which do you choose?
+Okay, both authenticate a system, not a user, but they're really different in security terms.
+
+API keys are simple static secrets sent with every request, usually in a header. Partners find them easy, which is why they're popular. But they're long-lived and sent on every call, so any leak, in logs, proxies, code, gives access until someone notices and rotates. They have no scopes or expiry on their own unless the server builds that. And rotation needs coordination with the partner.
+
+OAuth 2.0 client credentials, the partner authenticates to the token endpoint with its client id and a secret, or better, a private key JWT or a certificate, and gets a short-lived access token with specific scopes, which it sends to the API. The long-lived credential only ever goes to the identity provider, not to every API. Access tokens expire in minutes, scopes limit what the partner can do, and the identity provider handles management, rotation and revocation centrally.
+
+My choice, for anything sensitive, clinical or personal data, or write operations, OAuth client credentials, ideally with private key JWT or mTLS for the client authentication. API keys are fine for low-risk, read-only or public-ish APIs, or as an extra identifier for rate limiting and analytics alongside OAuth.
+
+And if we do use API keys, I store only hashes, support multiple active keys so rotation is smooth, scope them, log usage per key, and make revocation fast.
+
+@p17-722 | How do you prevent open redirect vulnerabilities?
+See, an open redirect is when the app takes a URL from user input, like a return URL parameter after login, and redirects to it without checking. Attackers send phishing links that use our trusted domain, something like our site slash login with a return URL pointing at some evil site. The user sees our domain, logs in, and lands on a fake page that asks them to "log in again" and steals their credentials. In OAuth flows it can even leak authorisation codes or tokens.
+
+The main fix is only allowing local redirects. In ASP.NET Core, Url dot IsLocalUrl checks the URL is relative to our site, and LocalRedirect throws if it isn't. That's what the default login templates use. Be careful with tricky inputs like double slash evil dot com, or slash backslash evil dot com, which some naive checks treat as local. The built-in helpers handle those.
+
+If you genuinely need redirects to other domains, like between our own apps, compare against an explicit allowlist of hosts, not a substring match.
+
+Or use indirect references. Instead of passing a URL, pass an identifier, like a page key, that the server maps to a URL.
+
+For OAuth and OpenID Connect, register exact redirect URIs in the identity provider, no wildcards, so codes can only ever go to our own apps.
+
+And front-end code too. SPAs that read a redirect parameter from the URL and set window location need the same validation. It's a small fix, I'd say, with a big phishing protection payoff.
+
+@p17-723 | What is insecure deserialization, and how do you avoid it in .NET?
+Actually it's when the app turns untrusted data into objects with a serialiser that lets the data decide which types to create. Attackers craft payloads that instantiate dangerous types, called gadgets, whose constructors or setters run code, and you end up with remote code execution.
+
+In .NET the classic danger is BinaryFormatter. It's fundamentally unsafe with untrusted data, and Microsoft removed it in .NET 9. Same story for NetDataContractSerializer, SoapFormatter, LosFormatter and ObjectStateFormatter used without protection. Legacy .NET Framework apps might still use them, in caches, session state, or ViewState with MAC validation turned off.
+
+Then Newtonsoft with TypeNameHandling set to Auto, Objects or All. The JSON carries a dollar type property and the serialiser creates whatever type it names. That's exploitable. Keep TypeNameHandling at None, or if you really need polymorphism, use a strict SerializationBinder that only allows specific known types.
+
+How I avoid it. Use System.Text.Json, which doesn't instantiate arbitrary types, and for polymorphic JSON use its explicit JsonDerivedType attributes, which only allow declared types. Deserialise into specific DTOs, never object or dynamic. Treat anything from outside as untrusted, including cookies, message queues and caches shared with other systems. And sign or encrypt serialised data that round-trips through clients, using Data Protection.
+
+Scanners and analyzers flag dangerous serialiser use, which really helps when you're hunting for it in a big legacy codebase like ours.
+
+@p17-724 | How do you prevent path traversal when handling file names?
+Honestly this one's simple but people still get it wrong. Path traversal is when user input builds a file path and the attacker sneaks in dot dot slash to escape the intended folder. A download endpoint that takes name equals report dot pdf gets called with dot dot slash dot dot slash web dot config, and the server hands back its own configuration, connection strings and all. On uploads, attackers might write files into executable locations.
+
+Best is not using user input as a path at all. Store files with server-generated names, like a GUID, and keep the original name only as metadata in the database. The user asks for a file by id, the server checks authorisation and looks up the stored path.
+
+If you have to use names, validate strictly. Take only the file name part with Path dot GetFileName, reject anything with path separators, dot dot, drive letters or invalid characters, and allowlist characters and extensions.
+
+Then canonicalise and check containment. Combine the base folder with the name, get the full path with Path dot GetFullPath, and verify it still starts with the base folder's full path, with a trailing separator, before touching the file. That catches encoded tricks and different separator styles.
+
+Least privilege, the app's identity should only access the folders it needs, read-only where possible.
+
+Even better, put files in object storage like S3 or Blob Storage with server-generated keys, and the file system's out of the picture. And archives need care too. Extracting zip entries named dot dot slash something, Zip Slip, is the exact same bug.
+
+@p17-725 | How do you prevent command injection?
+So command injection is when user input ends up in an operating system command, and the input contains shell syntax, like a semicolon followed by rm dash rf, or double ampersand net user, which the shell happily runs. In .NET it usually shows up when code builds a command string for Process Start with cmd.exe or bash, say to run a conversion tool or a script with a file name from the user.
+
+My preference order. First choice, don't shell out at all. Use a library to do the job in-process, like an image library instead of a command-line tool.
+
+If you do need an external program, don't go through a shell. Start the executable directly with ProcessStartInfo, UseShellExecute false, and pass arguments through the ArgumentList collection, which passes each argument separately and handles quoting, so input can't break out into new commands. Never concatenate input into one command string for cmd slash c or bash dash c.
+
+Validate input strictly with an allowlist. If a parameter should be a file id or a known option, check it matches exactly, and map user choices to fixed values instead of passing raw input.
+
+Watch for argument injection. Even without a shell, input starting with a dash can be read as an option by the target program. Use double dash to end options where it's supported, or validate.
+
+Run the process with least privilege, a restricted account, a timeout, and in a sandbox or container where you can.
+
+And the same thinking applies to PowerShell scripts in pipelines or automation. Parameters, not string-built commands. I've seen that one in build scripts more than in app code.
+
+@p17-726 | What is an XXE attack, and is .NET vulnerable to it?
+Okay, XML External Entity attacks go after XML parsers that process DTDs, document type definitions. The attacker sends XML with an entity pointing to an external resource, like a file URL for win.ini on the C drive, or an internal URL. If the parser resolves it, the file's content lands in the parsed document and may get returned to the attacker, or the server makes requests into internal systems, which is SSRF. There's a related one, billion laughs or the XML bomb, where nested entities expand a tiny document into gigabytes and exhaust memory.
+
+Is .NET vulnerable? Modern .NET, and .NET Framework 4.5.2 onwards, have safe defaults for most XML APIs. XmlReader prohibits DTD processing by default, and XmlDocument doesn't resolve external resources by default in newer framework versions. But older code and explicit settings can bring the risk back. Setting DtdProcessing to Parse, using an XmlUrlResolver, or old XmlTextReader usage on framework versions before 4.5.2.
+
+What I do is parse untrusted XML with XmlReader Create, with DtdProcessing set to Prohibit and the XmlResolver set to null, which also stops entity expansion. Set limits like MaxCharactersFromEntities and MaxCharactersInDocument. And validate against an expected schema where it makes sense.
+
+This really matters in integrations that receive XML from partners, like older clinical data exchanges or SOAP services, which you see a lot in legacy systems. Scanners and analyzers flag unsafe XML settings, so I fix any findings in the legacy code.
+
+@p17-727 | How do you encrypt sensitive data in SQL Server: TDE, Always Encrypted or column encryption?
+Right, SQL Server has a few encryption options and each protects against a different threat.
+
+TDE, Transparent Data Encryption, encrypts the database files, logs and backups at rest. Apps don't notice it, and it protects against someone stealing disks or backup files. But anyone who can query the database, DBAs, the app, sees plain data. It's a baseline, and usually on by default in cloud databases.
+
+Always Encrypted encrypts specific columns in the client driver. Data's encrypted before it leaves the application and stays encrypted in the database, in server memory and in backups. The keys sit with the client, in Key Vault or a certificate store, not in SQL Server. So DBAs and anyone with database access can't read those columns. The catch is the server can't do much with encrypted data. Deterministic encryption allows equality lookups, randomised allows nothing. Secure enclaves extend that to some range comparisons and pattern matching. It needs driver support and careful key management.
+
+Cell-level encryption with ENCRYPTBYKEY uses keys inside SQL Server. You get control, but the server and its admins can decrypt.
+
+Application-level encryption, the app encrypts fields itself with envelope encryption through a key management service. Flexible and database-independent.
+
+What I'd pick is TDE everywhere plus TLS in transit, and then Always Encrypted or app-level encryption for the few really sensitive columns, like personal identifiers, where even administrators shouldn't be able to read them.
+
+@p17-728 | How do you monitor security events and detect attacks in your applications?
+Let me start with the point that prevention isn't enough, you also need to notice attacks and misuse. And that starts with the app logging the right security events.
+
+What I log, structured, with user, source IP, time and correlation id. Authentication successes and failures, MFA events, password and permission changes, access denied, like 401s and 403s, especially repeated ones, validation failures that look like attacks, admin actions, exports of sensitive data, config changes, and use of emergency or privileged functions. Never passwords, tokens or sensitive data in the logs themselves.
+
+They go to a central log platform, and for security analysis, a SIEM like Microsoft Sentinel, Splunk Enterprise Security or Elastic Security, which also pulls in identity provider logs, WAF logs, cloud audit logs, endpoint and network data.
+
+Then detection rules. Lots of failed logins for one account or from one IP, logins from unusual countries or impossible travel, a user suddenly accessing loads of records or exporting a lot, privilege escalation, admin functions used outside normal hours, SQL injection patterns in WAF logs. Alerts go to the security operations team, with runbooks.
+
+Integrity matters too. Security logs have to be protected from tampering, shipped off the server quickly, with restricted access, and kept according to policy.
+
+And test it. During pen tests or simulated attacks, check the expected alerts actually fired. In my experience detection that's never tested often just doesn't work.
+
+@p17-729 | What do you check in a security-focused code review?
+Yeah, automated tools catch the common patterns, but a lot of real vulnerabilities are logic flaws only a human spots. So in a security-focused review I run through a mental checklist.
+
+Authorisation first. Does every new endpoint have the right authorisation attribute or policy? Does it check the user can access this specific record, not just that they're logged in? Are tenant or site filters applied consistently?
+
+Input handling. Is external input validated for type, length and allowed values? Any SQL built by string concatenation, raw HTML rendering, file paths, redirects or commands built from input?
+
+Data exposure. Do responses return only what's needed, or whole entities with internal fields? Are sensitive values kept out of logs and error messages?
+
+Secrets and config. Any hardcoded credentials, keys or connection strings? Are new settings secure by default?
+
+Authentication and sessions, token handling, expiry, cookie flags, changes to the auth pipeline. Cryptography, standard libraries, no home-made crypto, no weak algorithms, secure random generators.
+
+Error handling, no stack traces to users, and failures fail closed, denying access instead of allowing it.
+
+Dependencies, any new packages, are they trustworthy, which versions.
+
+And concurrency and business logic. Can actions be repeated, raced or done out of order to gain something, like double-submitting or skipping a step?
+
+For high-risk changes, authentication or payment-like flows, my approach is to ask for a second reviewer with security experience and threat-model the feature.
+
+@p17-730 | How do you handle findings from a penetration test?
+So a pen test report usually has findings rated critical, high, medium, low and informational. Handling them well comes down to triage, fixing the root cause and proving the fix.
+
+Triage first. For each finding, confirm it's valid in our context, understand the real risk, exploitability, data exposure, existing controls, and agree the severity with the security team. Sometimes the tester's rating gets adjusted, with justification, but I'm careful not to downplay findings just to avoid work.
+
+Then plan. Each finding becomes a tracked work item with an owner and a deadline based on severity, critical within days, high within a few weeks, whatever the security policy says. Critical ones might need an immediate mitigation, like a WAF rule or switching off a feature, before the code fix lands.
+
+Fix the root cause, not just the one instance. If they found an IDOR on one endpoint, review every endpoint for the same pattern. Missing output encoding in one place, find all the similar places. Often a central fix, a shared authorisation filter or a security header middleware, kills a whole class of issues.
+
+Add tests, an automated test reproducing each finding so it can't come back.
+
+Verify, ask the testers to retest, or verify internally with evidence, and record the closure.
+
+And learn from it. Look at patterns across findings and feed them into coding guidelines, review checklists, training and automated scans. Any accepted risks get documented and approved by the right people, with review dates. That's pretty much how we close the loop.
+
+@p17-731 | What does zero trust mean for application design?
+Honestly the core idea is no implicit trust based on network location. The old model assumed everything inside the corporate network or VPN was trusted, so once an attacker got in, they could wander freely. Zero trust says verify explicitly every time, use least privilege, and assume you're already breached.
+
+For applications, what that means in practice. Every request is authenticated and authorised, including internal service-to-service calls. Services verify tokens or mutual TLS identities, instead of trusting a call because it came from the internal network.
+
+Strong identity for users and workloads. MFA and conditional access for users, managed or workload identities for services, and short-lived credentials everywhere.
+
+Least privilege and just-in-time access. Services get only the permissions they need, and admins get elevated access temporarily, with approval.
+
+Micro-segmentation. Network policies and security groups restrict which services can talk to which, so a compromised service can't reach everything, even though the network isn't the main defence anymore.
+
+Encryption in transit everywhere, internal traffic included. Device and context awareness, so access decisions consider device health, location and risk. And continuous monitoring, logging and analysing access and spotting anomalies.
+
+For legacy systems that rely on network trust, like intranet apps with Windows authentication, you apply it gradually. Put them behind an identity-aware proxy, add MFA, tighten the network paths. In our on-prem world that's realistically how it would happen, step by step.

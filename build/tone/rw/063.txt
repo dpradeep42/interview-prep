@@ -1,0 +1,163 @@
+@p17-744 | Which recent C# features do you actually use: collection expressions, raw strings, list patterns?
+So I try to use the newer features where they make code clearer, not just because they're new. The ones I actually use a lot are these.
+
+Collection expressions from C# 12. Square-bracket syntax to create arrays and lists with values, an empty list with just empty brackets, and the spread operator, two dots, to combine collections. One syntax for arrays, lists, spans and immutable collections, and the compiler picks an efficient implementation.
+
+Raw string literals from C# 11. Triple quotes let me write JSON, SQL or XML snippets in tests and templates without escaping quotes, and you use a double dollar for interpolation when the content has braces in it.
+
+Pattern matching. Switch expressions, property patterns, like checking an order's status is Shipped and its total is greater than 1000, relational and logical patterns like "greater or equal zero and less than 100", and list patterns from C# 11, which match on the first and last elements or a single-element list. Handy for parsing arguments or messages.
+
+Records and with-expressions for DTOs and immutable values, required members and init setters for safe construction, and primary constructors from C# 12 for simple classes and DI.
+
+File-scoped namespaces and global usings cut the noise, and nullable reference types are on for every new project.
+
+Smaller ones too, target-typed new, the null-coalescing assignment, and the field keyword in C# 14 for properties with simple backing logic.
+
+Honestly though, our legacy projects are on .NET Framework 4.8 with older C# versions, so I mostly use these in the newer .NET 8 services. That's actually one of the small productivity wins we point to when we make the case for migration.
+
+@p17-745 | How do memory leaks happen in .NET, and how do you find them?
+Okay, so .NET has a garbage collector, but leaks still happen whenever objects stay reachable when they shouldn't. The GC can't collect anything that's still referenced.
+
+The most common cause I've seen is event handlers. A short-lived object subscribes to a long-lived object's event, like a static event or a singleton service, and never unsubscribes. The publisher holds a reference to the subscriber forever.
+
+Static collections and caches without limits. A static dictionary that only grows, or an in-memory cache with no size limit or expiry.
+
+Captive dependencies, a singleton holding scoped or transient objects, which then live forever too.
+
+Timers and background tasks holding on to objects they never release. Unmanaged resources not disposed, streams, connections, native handles, which leak memory outside the managed heap as well. Closures and lambdas accidentally capturing big objects and being held by long-lived delegates. And HttpClient created per request, which leaks sockets more than memory.
+
+To find them, watch the trend. dotnet-counters or metrics showing the GC heap growing after each full GC instead of levelling off. Then take two memory snapshots some time apart, with dotnet-gcdump or a full dump with dotnet-dump, and compare them in Visual Studio, PerfView or another profiler. Which types grew in count, and what's the retention path, the chain of references keeping them alive. That path usually points straight at the event subscription or static collection to blame.
+
+Then the fix follows the cause. Unsubscribe or use weak events, bound the caches, fix lifetimes, dispose properly.
+
+@p17-746 | Which less common .NET collections do you use: PriorityQueue, SortedDictionary, LinkedList?
+See, most code only needs List, Dictionary and HashSet, but knowing the others helps you pick the right tool.
+
+Queue and Stack. First in first out and last in first out, with constant-time enqueue and dequeue, or push and pop. Queues for processing work in order, stacks for undo or depth-first traversal.
+
+PriorityQueue, since .NET 6, is a min-heap where Dequeue always gives you the item with the lowest priority value, in log n time. Useful for scheduling, like processing the most urgent jobs first, merging sorted streams, or algorithms like Dijkstra's shortest path. It's not thread-safe and you can't update priorities directly.
+
+SortedDictionary keeps keys sorted with a red-black tree, log n operations. Good when you insert and remove a lot and need ordered iteration. SortedList is similar but array-based, less memory and faster lookups, slower inserts. SortedSet gives a sorted unique set with range queries, like GetViewBetween.
+
+LinkedList is a doubly linked list with constant-time insert and remove when you already have the node. I've used it for an LRU cache together with a dictionary. In general it's slower than List because of poor memory locality, so I rarely use it otherwise.
+
+For multi-threading, the concurrent collections, ConcurrentQueue, ConcurrentBag, BlockingCollection, and Channels for async producer-consumer. And immutable and frozen collections for shared read-only data.
+
+Picking correctly turns order n scans into log n or constant-time operations, which really matters at scale.
+
+@p17-747 | How do you create and use custom attributes in C#?
+Actually attributes are just metadata on code, classes, methods, properties, parameters. They don't do anything on their own. Some other code reads them and acts. Frameworks use them everywhere, Authorize, HttpGet, Required, JsonPropertyName, test attributes like Fact.
+
+To create one, you write a class that inherits from Attribute, named with the Attribute suffix by convention, like AuditedAttribute, and put an AttributeUsage attribute on it saying where it can go, methods or classes, whether it can appear multiple times, and whether it's inherited. Constructor parameters and public properties become its arguments, and they have to be compile-time constants, strings, numbers, enums or types.
+
+To read it, reflection, GetCustomAttribute of AuditedAttribute on a type, method or property. In ASP.NET Core, endpoint metadata makes it easy. A middleware or filter gets the current endpoint, asks its metadata for the Audited attribute, and acts on it. For example, writing an audit record only for endpoints marked Audited, or applying a specific rate-limit policy.
+
+Examples I've used, marking endpoints that need audit logging, marking properties that hold sensitive data so logging and serialisation can mask them, and marking handler classes for automatic registration.
+
+A couple of considerations. Reading attributes through reflection costs something, so cache the results. For performance-critical or AOT scenarios, source generators can read attributes at compile time and generate code instead. And I don't hide important business logic in attributes, because it makes behaviour less obvious to whoever's reading the code.
+
+@p17-748 | How do you design immutable types in C#?
+Honestly I like immutability a lot. An immutable object can't change after it's created, any "change" gives you a new object. That makes code easier to reason about, since nothing can modify an object behind your back, it's naturally thread-safe, and it's safe as a dictionary key or in shared caches.
+
+Records are the simplest way. A positional record, like an Address record with Street and City, gives you init-only properties, value equality, and with-expressions to make modified copies, like taking an address and creating a copy with the City set to Pune.
+
+For classes, properties with get only or init, set through the constructor or object initialisers, and required members to make sure they're set. Fields marked readonly. No methods that modify state. Methods return new instances instead, like Money Add returning a new Money.
+
+One thing to watch is shallow immutability. A record with a List of string property isn't truly immutable, because the list itself can still change. Use IReadOnlyList with a copy, ImmutableArray or ImmutableList, or FrozenSet for collection properties, and copy incoming collections in the constructor.
+
+readonly struct for small value types guarantees all fields are read-only.
+
+Where I use it, value objects in the domain, like Money, DateRange or strongly typed ids. DTOs and messages, which shouldn't change after creation. Config snapshots. And front-end state, like Redux, same idea.
+
+The cost is more allocations when objects change a lot. That's rarely an issue in business code, but it matters in tight loops.
+
+@p17-749 | Which timer should you use in .NET: PeriodicTimer, System.Threading.Timer or System.Timers.Timer?
+Yeah, .NET has several timers and it does confuse people.
+
+System.Threading.Timer is the lightweight one that calls a callback on a thread pool thread at intervals. Callbacks can overlap if one takes longer than the interval, exceptions in callbacks are unhandled and can crash the process, and you have to keep a reference to it so it isn't garbage collected.
+
+System.Timers.Timer is a wrapper with an Elapsed event and an AutoReset property. It swallows exceptions from handlers, which hides errors, and it also allows overlapping callbacks. Mostly legacy now.
+
+UI timers, the Windows Forms and WPF dispatcher timers, run on the UI thread, desktop only.
+
+PeriodicTimer, since .NET 6, is built for async code. You write a loop, while awaiting the timer's WaitForNextTickAsync with the stopping token, do the work. Ticks never overlap, because the next wait only starts once the work finishes. Exceptions are handled like normal async code, and cancellation is built in. That's my default inside a BackgroundService for periodic jobs, polling an outbox table or refreshing a cache.
+
+For testability, TimeProvider in .NET 8 can create timers, so tests control time.
+
+And for schedules more complex than fixed intervals, like every weekday at 2 AM, or jobs that must survive restarts and run once across multiple instances, I'd go with a scheduler like Quartz.NET or Hangfire instead of a raw timer. That's how our alert watchdog runs its scheduled checks.
+
+@p17-750 | What does the volatile keyword do, and what is the .NET memory model?
+Let me start with the problem. Compilers, the JIT and CPUs are allowed to reorder memory reads and writes, and cache values in registers, as long as single-threaded behaviour doesn't change. In multi-threaded code, that means one thread might not see another thread's writes when you expect, or sees them in a different order.
+
+The .NET memory model defines what's guaranteed. volatile on a field gives reads acquire semantics and writes release semantics. A volatile read always reads the current value from memory, and operations after it can't move before it. A volatile write makes all earlier writes visible before it. The classic use is a stop flag. A private volatile bool stop-requested field, one thread sets it, a worker loop checks it, and the JIT can't hoist the read out of the loop and spin forever.
+
+What volatile doesn't do is make compound operations atomic. count plus plus on a volatile field is still a read-modify-write race, you need Interlocked Increment for that. It also doesn't give full ordering between a write followed by a read.
+
+In practice I rarely use volatile directly. Higher-level tools are clearer and safer. lock, which includes full memory barriers. Interlocked for atomic updates. Volatile Read and Volatile Write methods for explicit cases. CancellationToken for stop signals instead of a volatile bool. And concurrent collections, Lazy and Channels for coordination.
+
+For me, knowing the memory model mostly helps me spot subtle bugs in lock-free code, and avoid writing lock-free code unless it's really necessary.
+
+@p17-751 | What is TaskCompletionSource, and when do you use it?
+So TaskCompletionSource lets you create a Task that you complete yourself. You hand its Task property to callers, they await it, and later your code calls SetResult, SetException or SetCanceled, or the Try versions, to finish it.
+
+Where I find it useful. Wrapping callback or event-based APIs into async ones. An older library raises a Completed event, you subscribe, and in the handler you set the result on the completion source. The method returns its Task, so callers just await it.
+
+Request-response over messaging. When you send a request over a queue or WebSocket and wait for a reply with a matching correlation id, you store a TaskCompletionSource in a dictionary keyed by that id. When the response arrives, find it and complete it. Combine it with a timeout and cancellation, and remove the entry afterwards.
+
+Signals between components, one part waits until another reaches some state, like "service is ready". And testing, controlling exactly when a fake async dependency completes.
+
+The important detail people miss is creating it with the RunContinuationsAsynchronously option. Otherwise, when you call SetResult, the awaiting code's continuation can run synchronously on your thread, inside your lock or event handler, and that can cause deadlocks or weird re-entrancy. I learned that one the hard way.
+
+Also make sure every path completes it, including errors and cancellation, by registering a cancellation callback that calls TrySetCanceled. Otherwise the awaiting code just waits forever.
+
+@p17-752 | Server GC vs workstation GC: what is the difference?
+Okay, the .NET garbage collector has modes tuned for different kinds of apps.
+
+Workstation GC is meant for desktop and client apps. Single heap, collects on the thread that triggered the collection, lower memory usage, so it's friendly to machines running lots of processes.
+
+Server GC is meant for high-throughput server apps. It creates a separate heap and a dedicated GC thread per CPU core, so allocations scale across cores and collections run in parallel and finish faster. It uses more memory, since each heap has its own budget. ASP.NET Core apps use Server GC by default.
+
+Both can run with concurrent or background GC, which is the default, so full gen 2 collections mostly run in the background while app threads keep going, reducing pauses.
+
+Why it matters in practice. Containers, with Server GC on a machine with lots of cores but a small memory limit, heap counts and memory usage can surprise you. .NET respects container CPU and memory limits, and you can tune with GCHeapCount, GCHeapHardLimit, or the newer DATAS mode, dynamic adaptation to application sizes. That's on by default in .NET 9 for Server GC, and it adjusts heap count to the load and cuts memory for small apps.
+
+Lots of small services on one host, Workstation GC or DATAS might be better to save memory. Latency-sensitive work, GC latency modes like SustainedLowLatency can reduce blocking collections during critical periods.
+
+But I don't change GC settings on a guess. I measure with dotnet-counters, GC pause time, heap size, allocation rate, and then adjust.
+
+@p17-753 | How do you write high-performance logging with LoggerMessage in .NET?
+Right, normal logging calls, like LogInformation with a "Processed Count items for StudyId" template and the values, are convenient but have hidden costs. Value-type arguments get boxed into an object array, the template gets parsed, and all that happens even when the level is disabled, unless you check IsEnabled first. In hot paths, like per-message processing in a busy consumer, that adds allocations and CPU.
+
+LoggerMessage fixes it. The modern way is the source generator. You declare a static partial method, like LogProcessed taking a logger, a count and a study id, with the LoggerMessage attribute giving an event id, a level like Information, and the message template. The generator writes an optimised implementation at compile time. It checks the level is enabled before doing any work, avoids boxing with strongly typed parameters, and pre-parses the template.
+
+Beyond speed, strongly typed log methods give consistent event ids and messages across the codebase, which makes searching and alerting in Splunk or Grafana easier. Parameter names get checked at compile time. And log calls in business code read cleanly, like logger dot LogProcessed with count and study id, when you write them as extension methods.
+
+When I use it, libraries, and high-volume paths like message handlers, middleware and data processing loops. For rare log lines, like startup messages, regular calls are fine.
+
+And I avoid string interpolation in log calls, because it builds the string even when the level is off, and you lose the structured properties.
+
+@p17-754 | How do you sort custom objects in C#: IComparable, IComparer and stable sorting?
+Actually the differences here matter more than people think.
+
+IComparable defines a type's natural order. The type implements CompareTo and returns negative, zero or positive. Think of a Version or a Money type that has an obvious order. Then List Sort and SortedSet use it automatically.
+
+IComparer defines an order outside the type, so you can have several, by name, by date, by priority. You pass it to Sort, OrderBy or sorted collections. Comparer Create with a lambda builds one quickly, and StringComparer OrdinalIgnoreCase is a built-in one for strings.
+
+LINQ OrderBy and ThenBy are the most readable for most business code, like ordering shipments by priority, then by created date descending. It returns a new sequence, and it's a stable sort, so items with equal keys keep their original order.
+
+List Sort and Array Sort sort in place, faster with less allocation, but they're unstable, equal items can get reordered. If stability matters, like sorting a table by one column while keeping a previous order, use OrderBy or add a tie-breaker key like an id.
+
+Common mistakes I've seen. Inconsistent comparers that break the rules, random results or not handling nulls, which can cause exceptions or wrong results. Subtracting integers in CompareTo, which can overflow, instead of calling CompareTo on the values. And culture-sensitive string sorting when ordinal was intended.
+
+For data from a database, I sort in the SQL query, with a deterministic tie-breaker, especially for pagination.
+
+@p17-755 | What is the dynamic keyword in C#, and when is it appropriate?
+So var and dynamic look similar but they're completely different. var is static typing, the compiler infers the type at compile time and you get full type checking and IntelliSense. object is also static, you need casts to use its members.
+
+dynamic switches off compile-time checking for that variable. Member access, method calls and operators get resolved at runtime by the Dynamic Language Runtime. If the member doesn't exist, you get a RuntimeBinderException at runtime instead of a compile error.
+
+Where it's appropriate. COM interop, like automating Office, where the APIs are loosely typed. dynamic made that a lot simpler. Interop with dynamic languages like IronPython. Truly dynamic data structures, like ExpandoObject, or dynamic JSON in some cases, though System.Text.Json's JsonNode or JsonDocument are usually the better choice. And some reflection-heavy cases where dynamic is shorter, like calling a generic method with a runtime type, where dynamic dispatch picks the right overload.
+
+Why I avoid it in normal code. No compile-time safety, so typos and refactoring mistakes turn into runtime errors. Slower than static calls, though the DLR caches call sites. No IntelliSense. And it doesn't work with trimming and Native AOT.
+
+In business apps and APIs I prefer strong types, DTOs and generics. If I see dynamic in a code review outside interop, I'd usually ask whether a proper type or JsonNode would be clearer. Most of the time it is.

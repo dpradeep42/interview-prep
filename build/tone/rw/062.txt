@@ -1,0 +1,171 @@
+@p17-732 | How do you secure internal admin tools and back-office applications?
+So admin tools are really high-value targets. They can change configuration, data and permissions for everyone. And yet they're often less protected, just because they're "internal". I actually treat them as the most sensitive apps we have.
+
+Access first. Strong authentication through the company identity provider with MFA, and conditional access, like requiring a managed device. No local accounts, no shared logins. Access by role with least privilege, reviewed periodically. Privileged functions can need just-in-time elevation with approval.
+
+Network, not exposed to the internet, or only through an identity-aware proxy or VPN with IP restrictions. But never relying on the network alone.
+
+Authorisation in depth. Every action is checked on the server, with fine-grained permissions for the dangerous stuff, bulk changes, deleting data, maybe needing a second person's approval, the four-eyes principle.
+
+Safety. Confirmation steps that show the impact before applying a change, like "this will affect 3 studies and 120 sites", dry-run modes, and the ability to undo.
+
+Audit, every action logged with who, what, when, old and new values, and a reason where it makes sense, stored somewhere admins can't alter it.
+
+And secure development, the same code review, scanning and testing as customer-facing apps. Internal tools often get built quickly and skip all that.
+
+Our admin console, which we use to configure studies, follows this thinking. Role-based access, controlled promotion from build to UAT to production, and full audit of configuration changes.
+
+@p17-733 | What is a break-glass account, and how do you manage it?
+Okay, a break-glass account is an emergency account you only use when the normal ways in fail. Like the identity provider's down, MFA is broken, conditional access policies have locked everyone out, or the usual admins aren't reachable during a critical incident.
+
+Because it's powerful and skips some normal controls, it needs really strict management.
+
+Setup, at least two emergency accounts, cloud-only so they don't depend on on-premise directory sync, excluded from conditional access policies that could lock them out, but protected with strong authentication. FIDO2 security keys stored securely, or very long passwords split between people and kept in a safe.
+
+Storage and access, credentials sealed in a physical safe or a secure vault, with access needing more than one person, and documented rules for when use is allowed.
+
+Monitoring, any sign-in with a break-glass account fires an immediate high-priority alert to the security team, because legitimate use is so rare. Every use gets a review afterwards, why it was used, what was done, and then the credentials get rotated.
+
+Testing, check periodically that the accounts still work, say every few months, as a controlled exercise. Otherwise you find out they're broken right in the middle of the emergency.
+
+And the same principle applies to apps and databases. A documented, audited emergency access path for production data fixes during incidents, with approval and full logging, instead of developers keeping permanent production access "just in case". I'd say that's the part teams most often get wrong.
+
+@p17-734 | What is ReDoS, and how do you prevent regex denial of service?
+See, ReDoS is a denial of service caused by a regular expression that takes exponential time on certain inputs. Patterns with nested quantifiers or overlapping alternatives, like a group of "a plus" that's itself repeated with a plus, or word characters with an optional space, repeated with a star, can make the regex engine backtrack through a massive number of combinations when the input almost matches but fails right at the end. A short nasty string, a few dozen characters, can keep a CPU core busy for seconds or minutes. A handful of those requests can take down an API.
+
+Where it shows up, validating emails, URLs or names with home-made patterns, parsing log lines, and search features that accept user patterns.
+
+How I prevent it in .NET. Set timeouts. Pass a TimeSpan to the Regex constructor, or set a default with the REGEX DEFAULT MATCH TIMEOUT AppContext setting, so a pathological match throws a timeout exception instead of running forever.
+
+Use the NonBacktracking option, available since .NET 7. It's an automata-based engine with linear-time guarantees, for patterns that don't need lookarounds or backreferences.
+
+Write safer patterns, avoid nested quantifiers on overlapping groups, anchor the patterns, and limit input length before matching. And never run user-supplied patterns without these protections.
+
+Source-generated regexes with GeneratedRegex are good for performance, combined with all the above.
+
+Analyzers can flag risky patterns, and fuzz tests with long near-matching inputs catch them in testing. Honestly, most teams don't think about this until it bites them.
+
+@p17-735 | How do you secure file downloads so users only get files they're allowed to see?
+Actually files usually hold the most sensitive data, reports, exports, documents. And a common mistake is protecting the page that lists them but not the files themselves.
+
+What I look for. Files in a public web folder or public bucket, reachable by anyone who knows or guesses the URL. Predictable names, like report underscore 1001 dot pdf, so changing the number shows other people's files. And download endpoints that take an id without checking ownership.
+
+The secure design. Store files privately, outside the web root, or in object storage with no public access.
+
+Serve through an authorised endpoint. GET slash documents slash the id checks the current user may access that document, based on owner, site, study or tenant, and then streams the file. Resource-based authorisation keeps that check consistent.
+
+Or issue short-lived signed URLs after the authorisation check. S3 pre-signed URLs or Azure SAS tokens valid for a few minutes, for one specific file, read-only. That takes the transfer off the API while keeping control.
+
+Use unguessable ids like GUIDs as an extra layer, but never as the only protection.
+
+Set the right headers, Content-Disposition attachment for downloads so active content doesn't render in the browser, the correct Content-Type, and X-Content-Type-Options nosniff.
+
+Audit downloads of sensitive documents, who got what and when. And expire and clean up temporary files like generated exports after a while. In a clinical system, I'd say that audit part isn't optional.
+
+@p17-736 | How do you build a secure password reset flow?
+Honestly password reset is a favourite attack path, because it skips the password completely. So it needs care.
+
+The request step, the user enters their email, and the response is always the same, like "if an account exists, we've sent a link", whether or not it exists. That way attackers can't use it to find registered emails. Rate-limit per account and per IP.
+
+The token, long, random, single-use, from a cryptographically secure generator. Store only its hash, linked to the user, with a short expiry, 15 to 60 minutes. ASP.NET Core Identity's token providers do this, and tokens become invalid if the user's security stamp changes.
+
+The link goes only to the registered email address, never to an address someone typed into the request. HTTPS, and don't leak the token through referrer headers, so no third-party resources on the reset page.
+
+The reset itself, verify the token, require a strong new password checked against breached password lists, then invalidate the token, kill all existing sessions and refresh tokens, and email the user that their password changed.
+
+MFA, if the account has it, the reset shouldn't quietly bypass it. Require the second factor during or after the reset.
+
+Log reset requests and completions, and alert on unusual volumes.
+
+And in enterprise setups with SSO, Keycloak or Entra ID, the identity provider owns this flow and the app just links to it. For me that's better than building our own, every time.
+
+@p17-737 | How do you prevent username or account enumeration?
+So account enumeration means an attacker can figure out which usernames or emails are registered just by watching how the app responds. With a list of valid accounts, credential stuffing and targeted phishing work much better.
+
+Where it leaks. Login, "user not found" versus "wrong password". Use one generic message, invalid username or password.
+
+Password reset, "no account with that email" versus "email sent". Always respond the same way.
+
+Registration, "this email is already registered". That's harder. One option is sending an email to the address saying "you already have an account", while the screen shows a neutral confirmation.
+
+Timing. Even with identical messages, the response can be faster for unknown users because no password hash gets computed. So do equivalent work, like hashing against a dummy hash, so timing looks the same. People forget this one.
+
+Other signals, different HTTP status codes, different response sizes, or lockout messages that only show for real accounts.
+
+APIs, endpoints like users slash an email slash exists, or profile lookups, that confirm existence to unauthenticated callers.
+
+Then the complementary defences, rate limiting and bot detection on these endpoints, CAPTCHA after repeated attempts, and monitoring for enumeration patterns, like lots of different usernames from one source.
+
+There is a usability cost. For internal enterprise apps on SSO, the identity provider handles most of this anyway. For public-facing apps, I follow all of it.
+
+@p17-738 | How do you map identity provider roles, like Keycloak realm and client roles, into ASP.NET Core authorization?
+Okay, so Keycloak puts roles into access tokens in its own nested structure. Realm roles are under realm access dot roles, and client roles are under resource access, keyed by the client id, then roles. ASP.NET Core's role checks, the Authorize attribute with Roles, or User IsInRole, look for role claims with a specific claim type. So out of the box they just don't see Keycloak's nested roles.
+
+How I connect them. One way is a claims transformation. Implement IClaimsTransformation, which runs after authentication, read the realm access and resource access JSON from the token, pull out the roles for our client, and add them as role claims on the ClaimsPrincipal. Then normal role checks and policies just work.
+
+The other way is a protocol mapper in Keycloak that puts roles in a flat claim, like "roles", and set RoleClaimType in the JWT bearer options to that name. That moves the mapping into Keycloak config and keeps app code simple.
+
+On top of that, policies. Rather than checking raw role names everywhere, define policies like CanManageShipments that map to one or more roles, and use those in controllers. Then roles can change in Keycloak with no code change.
+
+Fine-grained data permissions, like which sites or studies a user can see, usually come from the app's own database, not the token, because they change often and can be big. A claims transformation or authorisation handler loads them, with caching.
+
+And I test the mapping with test tokens that have Keycloak's structure, so a config change can't silently remove someone's access.
+
+@p17-739 | How does Windows authentication work for intranet apps, and what are its limits?
+Right, Windows authentication lets users on domain-joined machines sign in to intranet apps automatically with their Windows login, no password prompt. IIS supports it, and so does ASP.NET Core with the Negotiate handler.
+
+It uses two protocols. Kerberos is the preferred one. The browser gets a service ticket from the domain controller for the web app's service principal name and presents it to the server, which validates it without calling the domain controller every time. It supports delegation, so the app can call another service, like SQL Server, as the user, if constrained delegation is set up. You need the correct SPNs registered for the service account, and the client has to reach the domain controller.
+
+NTLM is the fallback when Kerberos isn't possible, like accessing by IP address or when SPNs are missing. It's challenge-response, weaker, no delegation, and Microsoft is deprecating it.
+
+The limits. It only really works for domain-joined devices inside the corporate network. External users, mobile devices and other platforms struggle. It doesn't fit cloud and SaaS scenarios, it ties the app to Active Directory, and it's hard to combine with modern MFA and conditional access. Proxies and load balancers can also break NTLM, because it's connection-based. I've seen that cause some very confusing login loops.
+
+For modern apps I'd use OpenID Connect against an identity provider like Entra ID or Keycloak. That can still use Kerberos for seamless sign-in on the corporate network, while supporting MFA, external access and token-based APIs.
+
+@p17-740 | What is reflection in .NET, and what does it cost?
+Let me explain it with where it's used. Reflection lets code inspect and use types at runtime. List a type's properties, methods and attributes, read or set properties by name, call methods dynamically, create instances with Activator CreateInstance. A lot of framework magic runs on it. ASP.NET Core model binding and controller discovery, DI containers, serialisers, ORMs like EF Core and Dapper mapping columns to properties, test frameworks finding test methods.
+
+The costs. Performance, reflective calls are much slower than direct ones, because of lookups, security checks, boxing arguments and no inlining. Calling GetProperties and GetValue in a hot loop, for every row or request, can be a real bottleneck.
+
+Type safety, errors the compiler would normally catch, like a renamed property, only show up at runtime.
+
+Trimming and Native AOT, the trimmer can't see what reflection will use, so it might remove code you need, and AOT doesn't support some dynamic features at all.
+
+How I reduce the cost. Cache reflection results, like the PropertyInfo arrays per type, in a static dictionary. Compile expression trees or create delegates once with Delegate CreateDelegate, then call those fast delegates. And best of all, source generators that produce the code at compile time, which is what System.Text.Json, the logging generator and the regex generator do.
+
+In our projects I'd use reflection for startup-time work, like scanning assemblies to register handlers or plugins, and keep it out of per-request paths, where a generated or cached approach is way faster.
+
+@p17-741 | Parallel.ForEachAsync vs Task.WhenAll vs PLINQ: when do you use each?
+Yeah, they all run things in parallel, but they suit different kinds of work.
+
+Parallel For and Parallel ForEach are for CPU-bound work on in-memory data, like crunching thousands of records with calculations. They split the work across thread pool threads and block the calling thread until it's done. MaxDegreeOfParallelism controls how many run at once, usually around the number of cores.
+
+PLINQ, with AsParallel, does the same thing for LINQ queries. Filtering, projecting and aggregating big in-memory collections across cores. Order isn't kept unless you add AsOrdered. Good for data-parallel queries, but the overhead makes it slower for small collections or cheap operations.
+
+Task WhenAll is for I/O-bound async work, calling several APIs or databases at once. You start the tasks and await them together, and no threads are blocked while waiting. But starting thousands of tasks at once can flatten the downstream service or exhaust connections.
+
+Parallel ForEachAsync, since .NET 6, sort of combines both. It runs an async delegate per item with a concurrency limit, like 500 files with at most 8 uploads at a time. That's my default for lots of I/O operations with throttling, instead of hand-writing SemaphoreSlim logic.
+
+My rules of thumb. CPU-bound, Parallel or PLINQ. I/O-bound, async with WhenAll or ForEachAsync. Never use Parallel ForEach with async lambdas, because it treats them as async void and doesn't wait for them. And in ASP.NET Core request handling, avoid heavy CPU parallelism, because requests already share the thread pool.
+
+@p17-742 | What is the Mediator pattern, and what do MediatR pipeline behaviours do?
+So the Mediator pattern cuts direct dependencies between objects by having them talk through a mediator. In .NET APIs it's usually done with a library like MediatR. A controller doesn't call a service directly. It sends a request object, like CreateShipmentCommand, and the mediator finds the one handler for that request type and calls it.
+
+What you get is thin controllers, and each use case is its own handler class with its own dependencies. That fits vertical slices and CQRS nicely, and handlers are easy to test.
+
+Pipeline behaviours are honestly the most useful part. They wrap every request, kind of like middleware for use cases. A behaviour gets the request and a next delegate, can run code before and after, and can short-circuit. Typical ones are validation, running FluentValidation validators and returning errors before the handler even runs. Logging and timing each request. Transactions, wrapping commands in a database transaction. Caching for queries. Authorisation checks. Retry or idempotency for commands. You register them once and they apply to all handlers, or to specific request types through generic constraints.
+
+The downsides, it's an extra layer of indirection, so navigating is harder, you can't just jump from controller to service. A little overhead. And for small apps it can be over-engineering. Also, recent MediatR versions moved to a commercial licence, so some teams use alternatives or a small hand-written dispatcher.
+
+I like it for medium to large APIs with lots of use cases and cross-cutting concerns, and I keep it simple. One request, one handler, behaviours for the cross-cutting stuff.
+
+@p17-743 | How do operator overloading and implicit or explicit conversions work in C#?
+Okay, C# lets a type define how operators like plus, minus, double equals and less than work on it, through static operator methods. Say a Money type defines plus to add two amounts and checks they're the same currency, or a Vector type defines arithmetic. If you overload double equals, you have to overload not-equals too, and override Equals and GetHashCode consistently. Comparison operators come in pairs as well.
+
+Conversion operators define how a type converts to or from another type. An implicit conversion happens automatically, like assigning a ShipmentId to a Guid variable, and should only be used when it can never fail and loses nothing. An explicit conversion needs a cast, like casting a Fahrenheit value to Celsius, and that's for conversions that might fail, lose precision or surprise the reader.
+
+Where I find them useful is value objects and strongly typed ids. Like ShipmentId wrapping a Guid, where an explicit conversion from Guid stops you accidentally mixing up different ids, and an implicit conversion to Guid makes it easy to pass into data access code. Also maths or measurement types.
+
+A few cautions. Don't overload operators with surprising meanings, like using plus for something that isn't addition. Avoid implicit conversions that hide expensive work or possible exceptions. And remember operators are static and resolved at compile time, so they don't behave polymorphically through base types or interfaces, except with static abstract interface members and generic math in newer C#.
+
+And records give you value equality with double equals and not-equals automatically, which I think is the easiest win of the lot.

@@ -1,0 +1,189 @@
+@p17-672 | You are the incident commander for a major outage. How do you run it?
+So as incident commander, my job is coordination, not debugging. I make sure the right people are on the right things, decisions actually get made, and everyone knows what's going on.
+
+To set up, I declare the incident with a severity, open a dedicated channel or bridge, and assign roles. A technical or ops lead who drives the investigation, a comms lead for stakeholders and customers, and a scribe recording the timeline. In a small team one person might hold two roles, but the commander shouldn't also be deep in the logs. Trust me, you lose the big picture the moment you start debugging.
+
+Then I run it in short cycles. What do we know, what are we trying now, who's doing it, when do we check back, every 15 to 30 minutes. The focus is restoring service first, rollback, failover, disabling a feature, not finding the root cause. Decisions are made explicitly, even with imperfect information, and recorded with the time.
+
+Managing people matters too. Bring in specialists when needed, stop too many people changing things at once, and keep side discussions out of the main channel. On long incidents, rotate people so nobody's exhausted.
+
+Communication, regular updates to stakeholders with the impact, current status and the next update time, even if there's no news. For customer-facing systems, consistent messaging through support and status pages.
+
+To close, confirm recovery with monitoring and users, stand down, and schedule a blameless review. In a regulated environment the incident record also captures data impact and any deviations for quality follow-up.
+
+@p17-673 | A teammate's configuration change broke production. How do you handle it?
+Okay, so fix the problem, then fix the process, and treat the person with respect the whole way through.
+
+To restore service, I revert the config change, which is usually faster and safer than a forward fix, and verify it recovered. If the teammate's around I involve them, because they know exactly what they changed and why, and it makes them part of the fix instead of the one being blamed.
+
+Then I talk to them privately, and supportively. Everyone makes mistakes. If the reaction is blame, people stop admitting mistakes, and the next incident takes longer to resolve because nobody says what they touched.
+
+After that the focus is the system. Why could one config change break production without anyone catching it?
+
+The questions I'd ask in the review. Was the change reviewed? Config deserves the same review as code. Was it tried in a lower environment first? Did the app validate the config at startup, or did it only fail on certain requests? Was it applied by hand on a server, outside the pipeline? Could we see the change quickly, with change logs and alerts linked to deployments? Could we roll it back in one step?
+
+Usual improvements are config in source control and deployed through the pipeline, validation at startup with clear failures, staged rollout of config changes just like code, and audit logging of changes.
+
+Honestly the best outcome I've seen is when the teammate presents the review themselves and leads one of the improvements.
+
+@p17-674 | A background job holds locks and blocks users. How do you fix it?
+See, when a background job updates loads of rows in one big transaction, it holds locks for the whole duration. Users trying to read or update those rows wait, time out, or deadlock.
+
+To confirm, during the problem the requests DMV and blocking queries show the job's session as the head blocker, holding tons of locks, maybe escalated to a table lock.
+
+The main fix is processing in small batches. Update or delete maybe 1,000 to 5,000 rows per transaction, commit, carry on. Each transaction is short, so locks get released quickly, and you avoid lock escalation, which kicks in around 5,000 locks. The job also becomes restartable with progress tracking, and uses less transaction log.
+
+Make sure the batch queries use indexes, so each batch touches only its own rows and doesn't scan the table, which takes way more locks.
+
+Read committed snapshot isolation helps a lot, readers aren't blocked by the job's writes, so most of the user-facing blocking on read-heavy screens just goes away.
+
+Schedule it away from peak hours, and throttle between batches with a short delay if you need to.
+
+Avoid unnecessary work. Only update rows whose values actually change, and do the calculations before the transaction, not inside it.
+
+For really big changes, I'd consider building the new data in a separate table and switching over, instead of updating in place.
+
+And then monitor blocking and job duration, so if it creeps back we see it before users do.
+
+@p17-675 | An index maintenance job caused an outage. What went wrong and how do you fix it?
+Actually index maintenance is supposed to help performance, but if it's done carelessly it takes locks, fills the transaction log and saturates I/O.
+
+What usually goes wrong. Offline rebuilds, on editions or settings without online operations, ALTER INDEX REBUILD takes a schema modification lock and blocks all access to the table for the whole time. On a big table that's minutes or hours of outage.
+
+Log growth. Rebuilding a big index generates a lot of log, which can fill the log disk, especially if log backups don't run during the job. In availability groups it can overwhelm the replicas too.
+
+Wrong timing, overlapping with business hours in another region, or with batch jobs and backups. And doing too much, rebuilding every index every night whether it needs it or not.
+
+The fixes. Online rebuilds, with WAIT_AT_LOW_PRIORITY so the rebuild gives way to user queries, and resumable index operations that can be paused and resumed.
+
+Be selective. Rebuild only the fragmented indexes that matter, reorganise the moderately fragmented ones, or skip them. On modern SSD storage fragmentation matters less than statistics, and updating stats is often the more valuable part.
+
+Use a proven maintenance solution, like Ola Hallengren's scripts, with thresholds and time limits.
+
+Schedule it in a window that's quiet for every region, make sure log backups run frequently during maintenance, and watch blocking and log usage while it runs. I'd say most of these outages come from a job someone set up years ago and nobody looked at since.
+
+@p17-676 | After upgrading the .NET version, something behaves differently in production. What do you do?
+Honestly, major .NET upgrades have breaking changes and behaviour changes that compile fine and then act differently at runtime.
+
+If it's serious, I roll back to the previous build, which still targets the old version, and investigate from there.
+
+Then the breaking changes docs. Microsoft publishes a list for every version, by area, ASP.NET Core, serialisation, globalisation, networking, containers. Matching the symptom to an area usually finds it.
+
+Some examples I've seen or watch out for. Container images, since .NET 8 the default port moved from 80 to 8080 and images run as non-root, which breaks services and health checks expecting port 80.
+
+Globalisation. ICU on Linux versus NLS on Windows behave differently, which changes string comparisons, culture formatting or sorting.
+
+Serialisation. System.Text.Json differences, stricter handling, case sensitivity, new defaults, when moving from Newtonsoft or between versions.
+
+EF Core. Query translation changes between major versions, like how collections or Contains get translated, which affects results or performance.
+
+And security defaults, TLS versions, cipher suites, cookie settings getting stricter.
+
+Fix it, then add a test that captures that behaviour so it's pinned down.
+
+For prevention, upgrade non-production first, run full regression and performance tests, read the breaking changes list before you upgrade, not after, and upgrade regularly, version by version, instead of jumping several versions at once.
+
+@p17-677 | After a library upgrade, JSON responses changed and the front end broke. What happened?
+So changing or upgrading a JSON serialiser can quietly change the shape of your API responses, and the front end depends on exact property names and formats, so it breaks.
+
+The typical differences, especially going from Newtonsoft to System.Text.Json. Property naming, camelCase versus PascalCase depending on configuration. If the front end expects shipmentId and now gets ShipmentId with a capital S, everything's undefined.
+
+Enums get serialised as numbers by default unless you configure a JsonStringEnumConverter. The front end expected "Delivered" and now gets 3.
+
+Dates, formats and time zone handling differ, DateTime with Kind Unspecified, offsets included or not.
+
+Nulls, whether null properties are included or left out. Reference loops and polymorphism, Newtonsoft handled some cases with settings that System.Text.Json handles differently or needs attributes for.
+
+And case-insensitive deserialisation. Newtonsoft was case-insensitive by default, System.Text.Json is case-sensitive unless configured, although ASP.NET Core's web defaults are case-insensitive.
+
+The fix is configuring the serialiser explicitly to match the old contract, naming policy, enum converter, date handling, instead of trusting defaults. Then verify with the front end.
+
+What I do to prevent it is treat the API's JSON as a contract. Snapshot tests of responses with Verify catch accidental shape changes. Contract tests with consumers, or OpenAPI checks in CI comparing the schema with the previous version, flag breaking changes before release.
+
+@p17-678 | Money values are off by a cent in some calculations. How do you fix it?
+Yeah, off-by-a-cent is almost always floating point types for money, or inconsistent rounding.
+
+Floating point first. double and float in C#, and number in JavaScript, are binary floating point, and they can't represent a lot of decimal fractions exactly. 0.1 plus 0.2 isn't exactly 0.3. Sum enough values and the tiny errors add up until you see a cent difference. So use decimal in C#, and DECIMAL or NUMERIC with fixed scale in SQL. Never FLOAT or REAL for money.
+
+Rounding rules. .NET's Math Round uses banker's rounding by default, so 2.5 rounds to 2, while business users and other systems usually expect away from zero, 2.5 to 3. Pass MidpointRounding explicitly, and agree the rule with the business.
+
+When to round. Rounding each line then summing gives a different total than summing then rounding. The business rules have to say which one, like per line item for invoices, and the code has to do it the same way everywhere, including reports and exports. That's where it usually goes wrong, one report does it differently.
+
+Front end. JavaScript numbers can lose precision on very large values, and browser calculations can disagree with the server. Do the authoritative calculation on the server, send money as strings or with a known scale if precision matters, and only format on the client.
+
+Currency, different currencies have different decimal places, so the scale comes from the currency.
+
+Then I add tests with known tricky values and compare totals across the system.
+
+@p17-679 | A data migration of millions of rows failed halfway. How do you recover?
+Let me be careful here, because a half-finished migration leaves data in a mixed state. The first job is understanding exactly what state it's in, before touching anything.
+
+So stop and assess. Make sure it's not still running or retrying. Find out which batches or rows got migrated and which didn't, and whether any batch was half applied. A good migration makes that easy because it logs progress per batch.
+
+Then decide, resume or roll back. If it was designed to be resumable and idempotent, I fix the cause, bad data in one batch, a timeout, a constraint violation, and resume from the last completed batch. If it isn't resumable, or the data looks suspect, I restore the affected tables from the backup taken just before, or reverse the migrated batches with a tested script.
+
+Then validate. Row counts, checksums, and business-level checks between source and target, like totals per study or site, plus samples reviewed with business users.
+
+How I design migrations so this isn't painful. Batches with a progress table recording each completed batch, so it can resume. Idempotent operations, running a batch twice gives the same result, like upserts with stable keys. Keep the source data unchanged until it's verified, write to new tables or columns, then switch over. Dry runs on a production copy to measure duration and catch data surprises. And validation queries ready in advance.
+
+In a regulated system, the migration plan, results and verification are documented and approved as part of the change.
+
+@p17-680 | The IRT system is down while a site needs to randomise a patient. What happens?
+Okay, this is the case where availability directly affects patients and trials, so it's planned for in advance, not improvised on the day.
+
+On the system side, it's handled as top severity. The focus is getting service back as fast as possible, and clear communication to the support teams who talk to the sites.
+
+On the business side, IRT providers have business continuity procedures agreed with the sponsor for each study. Usually the site calls the support helpdesk, which is available around the clock, and the procedure says what can be done manually and who can authorise it. [For example, the protocol may allow a short delay of the randomisation visit, or a documented manual process.] Any manual action has to be recorded with full details, so when the system's back, the transactions get entered or reconciled, the audit trail is complete, and the randomisation list and drug supply records stay consistent. Because blinding and allocation integrity matter so much, manual steps are tightly controlled.
+
+What we do in engineering is make it rare and short. High availability infrastructure, tested failover and backups, careful releases with rollback plans, and monitoring that spots problems before the sites do.
+
+After recovery, we check no transactions were lost or duplicated, especially the ones in flight when the outage started, and support any reconciliation.
+
+For me the point to get across in an interview is that we design with this patient-facing impact in mind from the start.
+
+@p17-681 | A site says no kits are available, but the system shows stock. How do you investigate?
+So this one's urgent, because a patient visit might be blocked. I look for why the system won't allocate kits it seems to have.
+
+First I clarify the symptom. What exactly did the site see, a "no kits available" message during dispensing, or a physical shipment that never showed up? Which patient, visit, treatment arm and kit type?
+
+Then I go through the reasons a kit can exist but not be dispensable. Status, the kits might be in a status that excludes them, quarantined after a temperature excursion, damaged, lost, expired, or not received at the site yet.
+
+Expiry and use-by rules. The kits are in stock but too close to expiry to cover the dosing period, based on the study's configured buffer days.
+
+Treatment arm and blinding. The site has kits, just not the type this patient's arm needs. The site view is blinded, so it may only show total stock, and it looks like there's plenty.
+
+Configuration, a recent study config change, like a new kit type or dosing rule, that the existing stock doesn't match.
+
+Data issues, a shipment receipt not recorded properly, or a stuck transaction.
+
+The immediate action is working with support and the supply team on an emergency shipment, or a documented manual process if the protocol allows it.
+
+For root cause, if it's a supply shortfall, the resupply settings, trigger and resupply levels per site, might need tuning. If it's a defect, it gets fixed and assessed for other sites. The investigation, data checks and any correction all go through the controlled process.
+
+@p17-682 | A configuration bug is found the day before a study goes live. What do you do?
+Right, a day before go-live the real question is how serious the bug is, and whether it can be fixed safely in time without compromising validation.
+
+I assess impact quickly with the study team. Which functionality, which visits or sites, and what's the patient and data risk if we go live with it? Is it day-one stuff like screening and randomisation, or something used weeks later, like a later visit or a resupply rule?
+
+Then there are basically three ways it can go. Fix and retest, if it's a small config change, apply it in the study build, rerun the affected test scripts and the relevant parts of UAT, and get approvals. Config changes still need validation evidence.
+
+Go live with a workaround. If the affected bit isn't needed straight away, go live on schedule with a documented plan to fix it before it's needed, agreed and signed off by the sponsor and quality.
+
+Or delay. If day-one functionality that affects patients or randomisation is wrong and can't be fixed and tested safely, a short delay is the right call. Going live with a randomisation or dosing error is far worse than a few days' delay.
+
+Whatever we decide, it's made with the sponsor, study team and quality, documented, and communicated to everyone involved, including sites.
+
+Afterwards we look at why it wasn't caught earlier, like a missing test scenario in the spec review or simulation, and improve the config checks and test templates.
+
+@p17-683 | Auditors find gaps in the audit trail. How do you respond?
+Honestly this is a serious data integrity finding in a GxP system, so the response has to be thorough and documented.
+
+I start by understanding the scope precisely. Which records, which fields, what time period, which actions are missing audit entries? Is it every change of a certain type, changes through one particular path, like a back-end process, a data correction script or an integration, or is it intermittent?
+
+Then the cause. A code path that bypasses the audit layer is the common one, like a bulk operation or a direct SQL update that doesn't go through the normal service, or a new feature that never got wired into audit logging. Audit writes failing silently, if audit entries are written separately from the main change and errors get swallowed, a failure leaves a change with no audit record. Data corrections done outside the controlled process. Or retention and archiving processes removing records too early.
+
+For the response, assess impact with quality, figure out whether the missing information can be rebuilt from other sources, database logs, app logs, backups, and document what can and can't be recovered.
+
+The fix I prefer is making the audit record part of the same transaction as the change, so neither can exist without the other. Or database-level mechanisms like triggers or temporal tables for completeness. Then tests that verify every write path creates audit records, and monitoring for audit write failures.
+
+And the formal CAPA process tracks the corrective and preventive actions to closure.

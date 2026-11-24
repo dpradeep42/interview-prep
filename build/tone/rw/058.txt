@@ -1,0 +1,195 @@
+@p17-684 | One study database is much slower than the others. How do you investigate?
+So with a database per study, every database has the same schema and the same code. That means the difference has to come from data, configuration, or the database's own state.
+
+I compare the slow one with a typical one. Data volume first. A big, long-running study might have way more subjects, kits, visits and audit records, so queries that are fine elsewhere hit huge tables here. Sometimes specific tables have grown unusually, like audit or log tables with no archiving.
+
+Statistics and plans. Stats might be stale after big data changes, so plans are poor. Query Store on that database shows the top queries and any plan changes. Parameter sniffing can hit one database differently, just because its data distribution is different.
+
+Index health. Missing or fragmented indexes, or one that's in the standard schema but missing here because a deployment failed for this particular database. Schema drift between study databases is honestly worth checking against the expected version.
+
+Study configuration. Features only this study uses, complex randomisation, more strata, particular integrations, which drive heavier queries.
+
+Placement. The database might be on a busier server, sharing with other heavy databases, or its files sit on slower storage.
+
+And maintenance, did index and stats maintenance actually run successfully for this one?
+
+The fix follows the cause, update stats, add indexes, archive old data, tune specific queries, or move the database to a quieter server. Then I check whether other large studies are heading for the same problem, because usually they are.
+
+@p17-685 | Performance degrades as a database grows over the years. What do you do?
+Okay, gradual slowdown with growth is predictable, so I treat it as capacity planning, not a surprise.
+
+I measure first. Table sizes, row counts, query durations and resource usage over time, so I know which tables and queries are growing, how fast, and roughly when they'll start hurting.
+
+Then the fixes, roughly from least effort to most. Indexes and queries, stuff written when tables were small often scans, and with millions of rows you need proper indexes, filters on indexed columns, only the data you need, and paging.
+
+Archiving. Move old, rarely used data, closed records, old audit entries, historical logs, to archive tables or a separate archive database, but keep it accessible for reporting and regulatory needs. Retention requirements decide what can move and what has to stay.
+
+Partitioning. For really big tables like audit or transaction history, partitioning by date makes maintenance and archiving efficient, and partition switching moves old data almost instantly. It only helps queries that filter on the partition key though.
+
+Columnstore indexes for reporting over large historical data. Separating workloads, so reporting and analytics move to a replica or warehouse. And hardware and config, more memory to keep the working set cached, faster storage, database settings.
+
+In a regulated system, archiving has to keep data complete, retrievable and auditable for the whole retention period. So I'd design it with quality and compliance in the room, not on my own.
+
+@p17-686 | The master database is becoming a bottleneck for all studies. What do you do?
+See, in a database-per-study design, the master database usually holds the shared stuff, users, permissions, the study registry, global config. Every request across every study might touch it. So as studies and users grow, it turns into a hotspot.
+
+First I find out what load it's actually carrying. Top queries by frequency and cost from Query Store, and which apps and features issue them. Often it's a few lookups that run on every single request.
+
+The biggest win is usually caching. Study configuration, user permissions and reference data change rarely but get read constantly. Cache them in memory or Redis, with invalidation when they change, and most of the load just disappears.
+
+Then query efficiency. Fix the expensive queries with indexes and better access patterns, and get rid of chatty patterns, like one query per study in a loop.
+
+Read scaling, route read-only queries to a readable replica.
+
+Reduce coupling. Move data that's really study-specific out of master into the study databases, and avoid cross-database queries from study databases to master in hot paths.
+
+Split responsibilities. The master often plays several roles, identity, configuration, job scheduling. Separating those into their own stores or services lets them scale independently.
+
+And connection management, make sure apps use pooled connections and don't hold them open.
+
+I'd also check the master's availability setup. If everything depends on it, its outage is everyone's outage, so it deserves the strongest HA you've got.
+
+@p17-687 | Two systems show different numbers for the same data. How do you reconcile them?
+Actually the first thing is making sure they're even counting the same thing. Say our system and a partner's warehouse show different shipment or stock counts. The goal is finding which records differ and why, then fixing the data and the cause.
+
+So define the comparison precisely, same entity, same time cut-off, same definition. A lot of "mismatches" are just different definitions, like counting shipped versus received, or different time zones for the cut-off.
+
+Then compare at record level, not just totals. Export the keys and key attributes from both sides for the period and match them. You get records only in A, records only in B, and records in both but with different values. Each of those points to a different cause.
+
+Only in one system usually means messages or files that failed, were never sent, got dead-lettered, or were rejected by the other side's validation. So check integration logs and DLQs.
+
+Different values means updates that didn't propagate, out-of-order processing where an older update overwrote a newer one, or mapping differences like units or status codes.
+
+Fix the data through the controlled process, reprocess failed messages, resend corrected records, or apply documented corrections.
+
+Fix the cause, idempotent, ordered processing with version checks, and better error handling and alerts for integration failures.
+
+And what I'd always add is an automated daily reconciliation job that compares counts or checksums and alerts on differences. Then you find mismatches in a day, not at month end.
+
+@p17-688 | A study configuration change needs to go to production urgently. How do you do it safely?
+Honestly urgency changes the speed, not the safety rules. A config change in a validated study can affect patients, so it still follows the controlled process, just expedited.
+
+I start by clarifying the need. What exactly has to change, why it's urgent, a protocol amendment taking effect, a safety issue, a supply problem, and what happens if we wait. That tells us how fast we really need to go.
+
+Then impact. Which parts of the study it touches, visit schedules, dosing, randomisation, supply settings, eligibility, and what happens to subjects already enrolled. Amendments can apply differently to existing and new subjects, and that's easy to miss in a rush.
+
+The change goes in the study build environment, never straight into production. Configure, then test with focused scripts on the affected areas plus a regression check on core flows like randomisation and dispensing, ideally with simulation.
+
+Approvals through the expedited path, sponsor sign-off on the change, quality review of the test evidence. The documentation can be lighter in format, but it can't be missing.
+
+Deploy through the standard study promotion process, UAT to production, so it's the same mechanism we trust, and verify in production afterwards.
+
+Tell sites and support teams what changed and when.
+
+Afterwards, look at why it became urgent, maybe late notice of an amendment, and whether this type of change could go faster next time, like pre-approved test templates for common config changes.
+
+@p17-689 | A partner's SFTP server rejects your connections after their upgrade. How do you troubleshoot?
+So after a partner upgrades their SFTP server, failures are usually about security algorithms, keys or network changes. I go through the connection log details carefully.
+
+I turn on verbose logging in the SFTP client. The handshake log shows exactly where it fails, key exchange, host key verification, authentication, or opening the channel.
+
+Algorithm mismatch is the most common one in my experience. Newer servers disable old algorithms, ssh-rsa with SHA-1 signatures, older key exchange methods, CBC ciphers. If our client library or config only offers those, negotiation fails with "no matching algorithm". The fix is updating the client library and enabling modern ones, rsa-sha2-256 or ed25519 keys and curve25519 key exchange.
+
+Host key changed. The upgrade generated a new host key, so our client, which pins the old fingerprint, refuses to connect. And it's right to refuse, it could be a man-in-the-middle. So get the new fingerprint from the partner through a trusted channel, verify it, and update our config.
+
+Authentication, our public key didn't get migrated, or they now need a different key type, or password auth got disabled. Network, new IP or port, their firewall only allows our old IP, or our egress IP changed. Permissions, folders or paths changed.
+
+One thing that helps us, our SFTP component supports multiple client libraries behind one interface. So if one library can't do the new algorithms, switching provider through config is an option, tested first of course.
+
+And afterwards, agree with partners on advance notice of upgrades and a test endpoint.
+
+@p17-690 | You must apply an emergency security patch to all servers today. How do you do it safely?
+Okay, an actively exploited vulnerability flips the usual balance. Not patching is now riskier than the change. But a careless rollout can still cause an outage, so I move fast but with structure.
+
+I assess exposure first. Which servers and components are affected, which ones are internet-facing or hold sensitive data. Those go first. And I check for temporary mitigations, a WAF rule, disabling a feature, blocking a port, that cut the risk right now while patching goes on.
+
+Approval through the emergency change process, with the risk assessment written down. In a regulated environment that's required anyway.
+
+Test quickly. Patch a non-production environment, run smoke and key regression tests, focusing on whatever the patch touches.
+
+Roll out in waves. One production server or a small group first, out of the load balancer, patch, reboot, check health and functionality, put it back, then the next group. That keeps capacity up and lets us stop if something breaks. For clusters, drain nodes one at a time.
+
+Have a rollback plan, snapshots or the ability to uninstall the patch.
+
+Then verify it's installed everywhere with an inventory or scanning tool, and that nothing got missed. I've seen forgotten or rarely used machines get skipped more than once.
+
+Keep everyone updated throughout, then close the change with evidence. Afterwards, look at how long patching took and how to make the routine process faster next time.
+
+@p17-691 | Users report the app is slow, but only on Monday mornings. Why?
+Right, a weekly pattern means something builds up over the weekend, or load peaks at that exact time.
+
+The load pattern is the obvious one. Monday morning is often the busiest, everyone logs in, catches up on weekend work, processes backlogs. Add another time zone's Monday overlapping and peak load might just exceed capacity. Comparing Monday's metrics with other days confirms it. The fix is scheduled scaling ahead of the known peak, and fixing the queries that are most expensive at peak.
+
+Cold caches and idle shutdown. If app pools idle out, containers scale to zero, or caches expire over a quiet weekend, the first users on Monday pay for warming everything, JIT, loading config, filling caches. Always On or Application Initialization, warm-up jobs before business hours, and minimum instance counts fix that.
+
+Weekend jobs. Index rebuilds, stats updates, big batch imports running over the weekend and still going Monday morning, or leaving stats stale. So check schedules and durations, and make sure they finish well before business hours.
+
+Backlogs. Messages or files that piled up over the weekend get processed Monday morning and compete with users. Process them continuously, or throttle background processing in peak hours.
+
+Authentication too, lots of tokens and sessions expired over the weekend, so the identity provider gets a login surge all at once.
+
+What I'd do is look at Monday's metrics hour by hour and see which of these lines up.
+
+@p17-692 | The pipeline is broken right before a release and the build agent is offline. What do you do?
+Let me say the main thing first, I fix the tooling, I don't bypass it. Bypassing the pipeline undermines everything the release process guarantees, especially in a regulated environment.
+
+So I diagnose the agent. Is the agent service stopped, the machine down, out of disk, lost network access to the Azure DevOps Server, or has its access token expired? The agent pool page shows its status and last contact, and the diagnostic logs on the machine show errors. Disk full with old build folders and caches is super common. Cleaning the work folder often brings it straight back.
+
+Alternatives, if another agent in the pool has the same capabilities, the job can run there. If the machine is really broken, a new agent can be set up quickly, as long as agents are built from a documented script or image, which is exactly why we keep that script.
+
+I tell the release coordinator the expected delay, so stakeholders can decide whether to keep the window or move it.
+
+What I don't do is build on my laptop and copy files to servers by hand. That artifact isn't traceable, tested or approved through the normal flow. If the release truly can't wait, it goes through the emergency change process with a documented justification.
+
+Afterwards, monitor agent health and disk space, keep more than one agent capable of every critical job, and automate agent provisioning, so one machine isn't a single point of failure for releases.
+
+@p17-693 | A long-running user request ties up the server. How do you redesign it?
+So if a request takes minutes, generating a big report, running a simulation, importing a large file, keeping the HTTP request open causes timeouts at proxies and browsers, holds server resources, and fails badly when the connection drops.
+
+The redesign is the asynchronous request-reply pattern. The API validates the request quickly, creates a job record with a status like Pending, puts a message on a queue, and returns 202 Accepted with a job id and a status URL.
+
+A background worker, a hosted service, a separate worker or a function, picks up the message and does the work, updating progress and status, and stores the result somewhere like blob storage or a results table.
+
+The client polls the status URL, or gets a push notification through SignalR or email when it's done, and then fetches the result.
+
+What you get is no request timeouts, work that survives server restarts because it's queued, retries on failure, controlled concurrency so ten big jobs don't flatten the database, and a UI that can show progress while users keep working.
+
+The details I'd get right are idempotency, so a retried submission doesn't create duplicate jobs, using an idempotency key. Authorisation on the status and result endpoints, so users only see their own jobs. Cancellation support, cleanup of old results, and clear error states.
+
+For stuff under a minute, just optimising the work might be enough. Anything longer, I'd go with this pattern, it's the reliable answer.
+
+@p17-694 | Production config has a value that nobody can explain. What do you do?
+Yeah, a mystery value in production config is risky both ways. Change it and something might break, leave it and it might be hiding a problem. So I investigate before touching it.
+
+I look for its history first. Source control history for config files and pipeline variables, deployment logs, change tickets, the config store's audit history. Often a commit message or ticket explains it, like a timeout bumped during an incident years ago.
+
+Then its usage. Search the code for the key, including libraries and scripts, to see what reads it and what it does. Sometimes nothing reads it anymore and it's just a leftover.
+
+Ask people, the team, previous owners, operations, and the vendor docs if it's a framework setting.
+
+Test the effect in a lower environment. Change it there and watch, ideally with load or integration tests that exercise the related path.
+
+Then decide. Keep it and document why, change it through a normal change with monitoring, or remove it if it's unused, again through a normal change, not quietly.
+
+To stop future mysteries, all config in source control with meaningful commit messages, non-obvious settings documented next to the value or in a config reference, strongly typed options classes with validation and comments, and regularly removing unused settings.
+
+In a regulated system, config values that affect validated behaviour have to be controlled anyway, so this kind of documentation is part of the evidence people expect.
+
+@p17-695 | Your service depends on a legacy system that is very slow. How do you protect your users?
+Honestly I can't always fix the legacy system, but I can stop its slowness from becoming my users' problem.
+
+I measure first. Which calls are slow, how slow, and how often my service calls it per user action. Sometimes the biggest issue is actually my side calling it too often.
+
+Then the protections. Timeouts on every call, so a slow response fails fast instead of holding threads and connections. Paired with a circuit breaker, so when the legacy system is struggling, we stop hammering it and fail fast or degrade.
+
+Caching, if the data rarely changes, reference data, configuration, cache it with a sensible TTL so most requests never touch the legacy system at all.
+
+Async integration. For writes or long operations, queue the requests and process them in the background at a pace the legacy system can handle, and give the user an immediate acknowledgement.
+
+A replicated read model. For data that's read a lot, keep a local copy synced through change data capture, events or a scheduled sync, and serve reads from it. Users get fast responses and accept a small delay in freshness.
+
+Bulkheads, isolate calls to the legacy system in their own limited pool, so its slowness can't eat all my service's resources.
+
+Graceful degradation, show what's available and clearly mark what couldn't load, instead of failing the whole page.
+
+And longer term, these protections often end up being the first step of a strangler fig migration, replacing the legacy system piece by piece.

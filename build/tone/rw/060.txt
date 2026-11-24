@@ -1,0 +1,165 @@
+@p17-708 | How do you use change data capture to publish events from a legacy database?
+So basically, when a legacy system writes straight to a database and you can't modify it to publish events, change data capture lets other services react to its changes anyway.
+
+How it works, CDC reads the database's transaction log, which records every committed insert, update and delete, and turns each change into an event. SQL Server has built-in CDC that writes changes into change tables. Debezium is the popular open-source option, it reads the logs from SQL Server, PostgreSQL, MySQL and others and publishes change events to Kafka, usually through Kafka Connect. The cloud providers have similar services.
+
+What I like is you don't touch the legacy app at all. Every change gets captured, including ones from scripts and other apps, ordering per row is preserved, and nothing's lost because it reads committed data from the log.
+
+But there are challenges. Raw change events reflect table structure, not business meaning. An update on some table isn't a "ShipmentDelivered" event. So you need a translation step, people call it an event transformer, that turns low-level changes into proper domain events. Otherwise every consumer ends up coupled to the legacy schema, which is exactly what you were trying to escape.
+
+Schema changes in the legacy database ripple into the event stream. The initial snapshot of existing data, and catching up after outages, need care. And there's operational overhead, running Kafka Connect, monitoring lag, and the impact on the database's log retention.
+
+Still, it's a great tool for strangler fig migrations, syncing data into new services while the legacy system stays the source of truth.
+
+@p17-709 | How would you split a shared database during a monolith migration?
+Honestly the database is usually the hardest part of breaking up a monolith. Lots of modules read and write the same tables, with joins, triggers and stored procedures crossing every boundary.
+
+So I'd do it gradually. Start by mapping data ownership. For each table, which module writes it and which ones read it. The goal is one owner per table, and everyone else gets the data through the owner's API or events.
+
+Then separate inside the same database first. Move the new service's tables into their own schema, give the service its own database user that can only touch that schema, and replace cross-boundary joins and foreign keys with API calls or local copies. This flushes out hidden dependencies cheaply while the data's still in one place.
+
+Shared reads, other modules that need the data get it through an API, or keep a read-only copy updated by events or CDC.
+
+Shared writes, all writes for that data go through the owning service. Where the monolith still writes directly, sync temporarily with CDC while the code gets moved over.
+
+Then move to a separate database once the service doesn't depend on cross-schema access anymore, with a data migration and a cutover, maybe dual writes with verification for a while.
+
+Throughout the whole thing, reconciliation checks between old and new, feature flags to switch paths, and the ability to roll back each step.
+
+It's slow, I won't pretend otherwise. But every step reduces coupling and the system keeps working the whole time.
+
+@p17-710 | Batch processing vs stream processing: when do you use each?
+Okay, batch handles data in big chunks at intervals, like a nightly job processing all of yesterday's transactions. Streaming handles each event continuously as it arrives, within seconds.
+
+Batch fits reports and analytics where hourly or daily freshness is fine. Heavy computations over complete datasets, month-end reconciliation, billing, recalculating forecasts. Loading warehouses. And honestly simplicity, batch jobs are easier to reason about, rerun and test, and they can use cheap resources during quiet hours.
+
+Streaming fits things that need fast reactions, alerts, fraud or anomaly detection, notifications, live dashboards. Keeping derived data fresh, like search indexes or caches. And spreading load evenly instead of one big nightly spike.
+
+But streaming is more complex. Ordering, late-arriving events, exactly-once concerns, state for aggregations over windows, and more infrastructure, Kafka, Kinesis, or processors like Flink or Kafka Streams.
+
+A lot of systems combine them. A stream handles the real-time needs, and batch jobs do periodic full recomputation and reconciliation to correct drift. Modern tools blur the line too, micro-batching gives near-real-time with batch simplicity.
+
+My rule is start from the business's freshness requirement. If daily is genuinely fine, batch is simpler and cheaper. If people act on the data within minutes, it needs streaming, or at least frequent incremental processing.
+
+In supply management, for example, resupply checks can be frequent incremental jobs, but temperature excursion alerts need near-real-time handling.
+
+@p17-711 | What is contract-first API design with OpenAPI?
+See, contract-first means you design the API contract, usually an OpenAPI document, before writing the implementation, and that document is the source of truth.
+
+The process is the team writes the OpenAPI spec, paths, operations, request and response schemas, error formats, examples. It gets reviewed in a pull request with the consumers, front-end developers, partner teams, other services, and they comment on naming, shapes and error handling before any code exists. Mock servers generated from the spec, with tools like Prism, let consumers start building against realistic responses straight away, in parallel with the backend.
+
+Then code generation keeps everyone aligned. Server stubs or interfaces from the spec, and typed clients for consumers, like TypeScript clients for the React front end or C# clients for other services, with NSwag, Kiota or openapi-typescript. In CI, the implementation gets validated against the spec, and a diff against the previous version flags breaking changes.
+
+What you get is better API design from early review, consistency across teams with shared style guides and Spectral linting, parallel development, and far fewer integration surprises.
+
+The other way is code-first, where the spec is generated from code. That's convenient for internal APIs with one consumer, and .NET 9's built-in OpenAPI support makes it easy.
+
+For public or partner APIs though, I'd go contract-first every time, because there the contract basically is the product.
+
+@p17-712 | What is a golden path or service template, and why do platform teams provide one?
+Actually it's a pretty simple idea. A golden path, or paved road, is the recommended, well-supported way to build and run a service in an organisation. Instead of every team figuring out logging, health checks, pipelines, containers and monitoring on their own, a platform team provides a ready-made path that already does it right.
+
+What's usually in it. A service template, like a dotnet new template or a repo template, with the project structure, OpenTelemetry, structured logging, health checks, config and secrets handling, authentication, error handling, a Dockerfile and a test project already wired up. Pipeline templates for build, test, security scanning and deployment. Infrastructure modules for standard resources like a database, queue or cache, with secure defaults. Dashboards and alerts generated per service. And docs.
+
+An internal developer portal like Backstage often hosts it. A software catalogue listing every service with owners and docs, and scaffolding where a developer fills in a form and gets a new repository, pipeline and environment in minutes.
+
+The win is new services start production-ready, standards stay consistent, security and compliance are built in, and engineers spend their time on business logic. In regulated environments it's even more valuable, because consistency makes validation and audits much simpler.
+
+The key thing for me is it's a path, not a cage. Teams can deviate when they've got good reasons, but the easy way should be the right way.
+
+@p17-713 | How do you handle a data deletion request across many microservices?
+So when personal data has to be deleted, say under GDPR's right to erasure, the problem with microservices is the data is spread everywhere. Lots of services and databases, caches, search indexes, logs, backups, event streams.
+
+First you need to know where personal data lives. A data inventory listing which services store which personal data, kept up to date as part of service design.
+
+Then orchestrate the deletion. A deletion request kicks off a workflow, often a saga, that publishes a "delete data for this person" command or event. Each service that owns personal data handles it, deletes or anonymises the records, and confirms back. The workflow tracks confirmations and retries, and produces an audit record that the deletion completed, without keeping the deleted data itself, obviously.
+
+Derived stores too, search indexes and caches get cleared, analytics data gets anonymised.
+
+Event streams and backups are the tricky part, because immutable logs and backups make physical deletion hard. Crypto-shredding helps. You encrypt each person's data with a personal key and delete the key, so the data's unreadable everywhere. Backups that can't be edited are kept for limited periods, and deleted data never gets restored into live systems.
+
+And in our world there are conflicting obligations. In clinical trials, regulations require keeping trial data for many years, which can override deletion requests, and clinical data is usually pseudonymised, with identities held by the sites, not in the IRT. Legal and privacy teams define what gets deleted versus retained, and the system implements their rules.
+
+@p17-714 | How do you handle write conflicts in an active-active multi-region setup?
+Right, in active-active both regions accept writes and data replicates asynchronously. If the same record changes in both regions before replication catches up, you've got a conflict, and the system has to decide the final value.
+
+The approach I like most is avoiding conflicts by design. Route all writes for an entity to one home region, by tenant or customer, so each record has a single writer at a time, while reads can happen anywhere. You get most of the availability benefit with very few conflicts, and it's usually the most practical choice.
+
+Last writer wins, the update with the latest timestamp wins. Simple, and it's the default in DynamoDB global tables and Cosmos DB, but it silently loses the other update and depends on clocks being accurate. Fine for data where losing a concurrent change doesn't matter, like user preferences.
+
+Merge logic, application-specific resolution, like merging non-overlapping field changes, or a custom resolver in Cosmos DB.
+
+CRDTs, conflict-free replicated data types. Counters, sets and maps designed so concurrent changes always merge to a consistent result. Used for collaborative editing or distributed counters.
+
+Record and escalate, keep both versions and flag it for a human. That fits important business data.
+
+But for critical operations with strict rules, like allocating a limited item, active-active writes are risky. I'd say one primary region for those writes, with fast failover, is usually the safer call.
+
+@p17-715 | What is load shedding, and how do you implement it?
+Let me put it simply, load shedding means deliberately rejecting some requests when you're overloaded, so you can keep serving the rest properly. Without it, an overloaded service tries to do everything, queues grow, every request gets slow, timeouts make clients retry, and it collapses for everyone.
+
+How I'd implement it. Concurrency limits, cap how many requests are processed at once with a short queue, and beyond that return 503 or 429 right away with Retry-After. ASP.NET Core's rate limiting middleware has a concurrency limiter for this, and Kestrel and IIS have connection and queue limits.
+
+Queue time limits. If a request has waited too long to even start, drop it, the client's probably given up already. Processing it just wastes capacity.
+
+Prioritisation, because not all requests are equal. Keep capacity for critical operations like a patient randomisation or dispensing, and shed lower-priority stuff first, reports, exports, bulk syncs, background refreshes. You can do that with separate limiters per endpoint class, or separate deployments for critical and non-critical traffic.
+
+Adaptive limits, adjust the concurrency limit based on observed latency, grow it when things are healthy, shrink it when latency climbs.
+
+Client cooperation, clients back off on 429 and 503 with exponential backoff and jitter instead of retrying immediately.
+
+And degradation, serve cached or simplified responses instead of the full thing.
+
+Then load tests should show the system shedding load gracefully, not falling over. That's how you know it actually works.
+
+@p17-716 | What are hedged requests, and how do they reduce tail latency?
+Yeah so in distributed systems a request often fans out to several backends, and the slowest one decides the total latency. Even if each backend is usually fast, the occasional slow response, from GC pauses, noisy neighbours, network hiccups, makes p99 way worse than the median. That's tail latency.
+
+A hedged request sends the same request to a second replica if the first hasn't answered within a short delay, like that call's p95 latency, and uses whichever response comes back first, cancelling the other. Because the delay sits at a high percentile, only a few percent of requests get hedged, so the extra load is small, but you cut off the slow outliers.
+
+Polly v8 has a hedging strategy, and the .NET resilience packages give you AddStandardHedgingHandler for HttpClient, which can also send the hedged request to a different endpoint.
+
+When it's appropriate, reads, or idempotent operations, because the request might run twice. Never for non-idempotent writes without idempotency keys. And only when the backend has multiple independent replicas, so the second try is likely to land somewhere healthier.
+
+The risk is under overload, hedging adds load exactly when the system's struggling. So I'd limit the number of hedged attempts and combine it with circuit breakers.
+
+Other tail latency tricks are timeouts with fast fallbacks, reducing fan-out, caching, and just fixing whatever causes the slow outliers, like the GC pauses.
+
+@p17-717 | How would you design a kit allocation service for clinical supply?
+So at a visit, the system has to assign the right kit to the patient. Correct treatment, available at the site, not expiring before the next visit, keeping the blind, and never assigning the same kit twice.
+
+The inputs are the subject, their treatment arm from randomisation, the visit and its dosing requirements from the study config, and the site's inventory.
+
+Selection logic, filter the site's kits to the kit type the arm needs, in an available status, not quarantined or damaged, with an expiry beyond the next visit plus a configured buffer. Then pick by a rule, usually first expiry first out to cut waste. Some visits need several kits.
+
+Concurrency is the critical bit. Two dispensing requests at the same site must never pick the same kit. Selection and status update happen atomically in one transaction, with row-level locking using UPDLOCK and READPAST, or a conditional update checking the status hasn't changed. And an idempotency key per dispensing request stops double allocation on retries.
+
+Blinding, the site only sees the kit number, never the treatment, and the kit numbering itself mustn't reveal the treatment.
+
+Low stock, if there's no suitable kit, return a clear error to the site and alert supply management. Separately, allocations feed the resupply calculations, which trigger shipments when inventory drops below thresholds.
+
+Audit, every allocation recorded with who, when, which kit and why, including manual overrides with reasons and approvals.
+
+And testing is simulation with lots of concurrent visits and edge cases around expiry, as part of validation.
+
+@p17-718 | When would you use a workflow engine like Temporal or Durable Functions instead of a hand-written saga?
+Okay, a hand-written saga stores state in a table, reacts to messages, handles timeouts with scheduled jobs, and implements compensations. For a few simple flows that's totally fine. But once workflows get longer, with timers, human approvals, retries and branches, that custom state machine code gets complex and fragile.
+
+Durable execution engines, Temporal, Azure Durable Functions, AWS Step Functions, or some newer .NET options, take over the hard parts. You write the workflow as normal code, or a definition for Step Functions. Call activity A, wait up to three days for an approval signal, then call B, and on failure run the compensation. The engine persists every step's result, so if the process crashes, the workflow picks up exactly where it was. Retries with backoff, timeouts, timers lasting days or months, and visibility into each running workflow come built in.
+
+When it's worth it, long-running business processes spanning hours to weeks, workflows with lots of steps, waits and human interaction, complex compensation logic, and when seeing each instance's state really helps support and audit.
+
+What you pay for it is a new platform to run or pay for, a learning curve, constraints like deterministic workflow code that can't call random or the current time directly, and versioning workflows that are already running when the code changes.
+
+So for a two-step flow, I'd just use a simple outbox and consumer. For something like a multi-day approval and transfer process, an engine saves you a lot of code and a lot of bugs.
+
+@p17-719 | What is the OAuth token exchange or on-behalf-of flow?
+Honestly this comes up whenever one API needs to call another as the user. Say a user calls API A, and A has to call API B as that user, so B can apply the user's own permissions. Just forwarding the user's token is a problem. Its audience is API A, so B should reject it, and passing broad tokens everywhere makes the damage worse if one service gets compromised.
+
+The on-behalf-of flow in Entra ID, and the standard OAuth 2.0 token exchange, RFC 8693, which Keycloak and others support, solve it. API A sends the incoming user token to the identity provider's token endpoint, authenticating as itself, and asks for a new token for API B. The identity provider checks A is allowed to call B on behalf of users, and issues a token with audience B, carrying the user's identity and often A's identity as the actor. A calls B with that, and B validates it like any other token.
+
+What you get is every token scoped to exactly one audience, so it can't be replayed against other services. Downstream services see the real user and enforce their own authorisation. And the identity provider controls which services can delegate to which.
+
+The alternative, if B doesn't need the user's identity for authorisation, A calls B with its own client credentials token and passes the user id as context. Simpler, but B is trusting A to have checked permissions.
+
+So I'd use token exchange when downstream authorisation depends on the user, and client credentials otherwise.

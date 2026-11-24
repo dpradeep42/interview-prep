@@ -1,0 +1,181 @@
+@p17-696 | Error rates rise only during deployments. How do you get to zero-downtime releases?
+So if errors spike every time we deploy, something in the release process is either interrupting in-flight work or sending traffic to instances that aren't ready yet. I go through it phase by phase.
+
+Instances starting. Are new ones getting traffic before they're ready, before caches warm, JIT finishes, connections are set up? The fix is readiness checks that only pass when the app can really serve, warm-up requests, and Application Initialization on IIS.
+
+Instances stopping. Are old ones getting killed while handling requests? Take them out of the load balancer first, let connections drain with a deregistration delay, and implement graceful shutdown, so on SIGTERM the app stops taking new requests, finishes the in-flight ones and closes consumers cleanly within the timeout.
+
+Capacity during rollout. If half the instances get replaced at once, the rest can get overloaded. Rolling updates with extra surge capacity mean capacity never drops.
+
+Version incompatibility. During a rolling update, old and new run side by side and clients or other services hit both. So API changes have to be backward compatible, schema changes use expand and contract, and message formats need to be readable by both versions. This one catches people out a lot.
+
+Sessions and state, in-memory sessions vanish when an instance stops, so keep services stateless with external session storage. And background workers, messages in progress at shutdown should be completed or returned to the queue, not lost.
+
+I'd also track errors per deployment as a metric, so you can see things improving and catch regressions.
+
+@p17-697 | A cloud region or data centre has an outage. What do you do?
+Okay, a full region or data centre outage is exactly what disaster recovery plans exist for. So the response follows the plan, not improvisation.
+
+I confirm and assess first. Check the provider's status page and our own monitoring from outside the affected region. Work out which systems are hit and how long it might last, if the provider has an estimate.
+
+Then decide whether to fail over. Failing over has its own risks and costs, especially with asynchronous replication, where you might lose some recent data, up to the recovery point objective. If the provider expects recovery soon, waiting might be better. Who decides and on what criteria is defined in the DR plan ahead of time, usually based on expected outage duration versus our recovery time objective.
+
+If we fail over, promote the replicated databases in the secondary region, switch DNS or global load balancing over, start or scale up compute there from infrastructure as code, and verify the critical journeys. Keep users and stakeholders informed.
+
+During the outage, track which data might be lost or in an uncertain state, like transactions that were in flight.
+
+Fail back once the primary is healthy, resync data and switch back in a planned window. Honestly that's often harder than the failover itself.
+
+Afterwards, review against the plan, measure the actual recovery time and data loss, and fix the gaps. The biggest thing is regular DR testing, because an untested DR plan usually fails right when you need it.
+
+@p17-698 | How would you keep a search index in sync with a SQL database?
+See, full-text search, faceting and fuzzy matching are way better in a search engine like Elasticsearch, OpenSearch or Azure AI Search than in SQL. But then the same data lives in two places, and keeping the index reliably in sync is the actual challenge.
+
+The simplest option is dual writes from the app. After saving to SQL, also update the index. Easy, but if the index call fails after the database commit, they drift apart and you have no easy way of knowing. I wouldn't use that as the only mechanism.
+
+Better is events through an outbox. The service writes the change and an outbox record in the same transaction, a relay publishes the event, and an indexer consumer updates the search index. Reliable, with retries, and the index catches up even after failures.
+
+Change data capture is another way. Read the database's change stream, SQL Server CDC or Debezium on the transaction log, and feed changes to the indexer. No app changes, and it captures everything, including changes made by scripts or other apps.
+
+Or a periodic sync, an incremental job with a last-modified watermark. Simpler but more delay.
+
+Whichever one, I design for drift. Index documents carry a version or timestamp so older updates can't overwrite newer ones. There's a full reindex capability, building a new index alongside and switching an alias atomically, for mapping changes or recovery. And a reconciliation check comparing counts or checksums.
+
+One thing people forget is security trimming. Index the fields needed for permission filtering, like site or tenant, and always filter by them.
+
+@p17-699 | How would you design a stock reservation system that never oversells?
+Actually the core problem is concurrency. Two requests both see one item left, and both take it. So the design has to make the check and the update atomic.
+
+For the data model, either stock per location and item type with available and reserved quantities, or individual items, like kits with unique ids and statuses. That second one is how clinical supply works.
+
+For atomic reservation there are a few options. A conditional update in the database, update stock set available to available minus one, where the id matches and available is at least one, and then check the affected row count. If it's zero, there was no stock. One statement, no race.
+
+For individual items, select and lock one available item with UPDLOCK and READPAST hints, so concurrent requests skip each other's locked rows, then mark it reserved in the same transaction. Or optimistic concurrency with a row version, retrying on conflict.
+
+Then reserve, then confirm. A reservation has an expiry. If the process completes, like a dispensing gets confirmed, it becomes final. If it's abandoned, a background job releases expired reservations so stock isn't locked forever.
+
+Idempotency, every request carries an idempotency key so retries don't reserve twice.
+
+The selection applies the business rules, expiry dates, first expiry first out, blinding constraints, the right item type for the patient's arm.
+
+For scale, partition by location, so contention is only between requests for the same site's stock, and keep transactions short. And I'd add reconciliation jobs comparing reservations with confirmed transactions, flagging anything stuck.
+
+@p17-700 | How would you design a reminder and scheduling service, like visit reminders?
+Honestly the requirement sounds simple. Send reminders at the right time, like three days before a patient's visit window opens, reliably, exactly once, and adapt when schedules change. The details are where it gets interesting.
+
+For the data model, a scheduled notifications table with the target, like subject and visit, the type, the due time in UTC, status and a version. Reminders get created or updated whenever the visit schedule changes, like after randomisation or when a visit is recorded.
+
+For triggering, a scheduler process polls for due items in small batches, using an index on due time and status. Each item is claimed atomically, an update setting status to Processing where it's still Pending, or a select with UPDLOCK and READPAST, so multiple scheduler instances can run without double sending. You could use delayed messages instead, Service Bus scheduled messages, SQS delay up to 15 minutes plus a store, or EventBridge Scheduler. But a table gives you easy querying, cancellation and auditing.
+
+Sending, the claimed item becomes a message to the notification service, which renders the template and sends email or SMS, with retries and idempotency by notification id.
+
+Changes and cancellations. If the visit gets rescheduled, update the due time. If the subject withdraws, cancel pending reminders. A version check stops a stale reminder going out.
+
+Time zones, due times are computed in the site's time zone, handling daylight saving.
+
+And monitoring, overdue pending items trigger an alert, so a stuck scheduler gets noticed fast. That's the same kind of check our AlertWatchDog jobs do.
+
+@p17-701 | How would you design a document and report generation service?
+So reports and documents, PDFs, Excel files, regulatory exports, are usually slow, heavy on resources, and fail now and then. That's why I'd put them in a separate asynchronous service.
+
+The flow. The client requests a report with parameters. The API validates input and permissions, stores a job record and returns 202 with a job id. A worker takes the job off a queue, gathers data through APIs or a read replica, renders it with a template engine, like a Razor or HTML template converted to PDF, or a library for Excel, stores the file in blob storage and marks the job complete. The client gets notified or polls, then downloads through a short-lived signed URL.
+
+A few design points I care about. Templates are versioned separately from code, so layouts can change through a controlled process. That matters a lot for regulated documents.
+
+Determinism. Same inputs and same template version should give the same document. I record the template version, parameters and data timestamp in the job, for traceability.
+
+Scaling. Rendering is CPU and memory heavy, so workers scale on their own based on queue depth, with limits per user or tenant so one huge request doesn't starve everybody else.
+
+Resilience, retries with idempotency, timeouts for very large reports, clear error messages.
+
+Security, authorisation checked again at download time, files encrypted at rest, old files expired and deleted, and an audit record of who generated and downloaded what.
+
+And caching, identical requests within a short window can just reuse the previous result.
+
+@p17-702 | How would you design reliable webhook delivery to many subscribers?
+Okay, outgoing webhooks push events to subscribers' URLs, and the hard parts are unreliable receivers, retries, ordering and security.
+
+When an event happens, the service records it through an outbox. A dispatcher finds subscriptions for that event type, creates a delivery record per subscriber, and queues the deliveries.
+
+Delivery workers send an HTTP POST with the payload, an event id, a timestamp and an HMAC signature header, so receivers can verify it's really us and reject replays. Short timeouts, like ten seconds, so slow receivers don't tie up workers.
+
+Retries, on failure or a non-2xx response, retry with exponential backoff and jitter over hours or days, like 1 minute, 5, 30, 2 hours and so on. After the last attempt, mark it failed and tell the subscriber. Receivers have to dedupe by event id, because retries mean at-least-once delivery.
+
+Isolation is the one people underestimate. One subscriber being down mustn't delay everyone else, so queues or concurrency limits are per subscriber. A circuit breaker per endpoint pauses deliveries to a dead endpoint, and subscriptions that fail consistently get disabled.
+
+Ordering, if it matters, deliver sequentially per subscriber and entity, or include a sequence number so receivers can order or ignore stale events.
+
+Visibility, a delivery log per subscriber with request, response code and timing, a replay function, and a test endpoint feature.
+
+Security, validate subscriber URLs against SSRF, require HTTPS, and support secret rotation with two valid signatures during the switch.
+
+@p17-703 | GUIDs vs sequential ids vs Snowflake-style ids: how do you choose?
+Let me go through them, because the id choice affects database performance, security, and how distributed systems create records.
+
+Auto-increment integers are small, fast, naturally ordered, great for clustered indexes. But the database generates them, so you only know the id after the insert, merging data from several databases causes collisions, and putting them in URLs reveals counts and makes guessing other records easy.
+
+Random GUIDs, version 4, can be generated anywhere without coordination, they're globally unique and unguessable. But they're 16 bytes, and the randomness fragments clustered indexes in SQL Server, because inserts land all over the index, page splits, slower writes.
+
+Sequential GUIDs, NEWSEQUENTIALID in SQL Server, or UUID version 7, which .NET 9 supports with Guid dot CreateVersion7. They put a timestamp at the start, so values are roughly ordered and inserts go at the end of the index like integers, but they're still globally unique and generated in the app. I'd say that's a good default for distributed systems now.
+
+Snowflake-style ids are 64-bit integers combining a timestamp, a machine id and a sequence. Ordered, compact, no coordination, but you need to hand out machine ids uniquely.
+
+My approach, internal clustered keys can be integers or UUID v7. Public identifiers in URLs shouldn't be guessable, so UUIDs or a separate public id. And authorisation never relies on ids being secret.
+
+Business identifiers like kit numbers or subject numbers follow their own business formats, separate from the technical keys.
+
+@p17-704 | What is two-phase commit, and why do microservices avoid it?
+Right, two-phase commit is a protocol for making one transaction atomic across several resources, like two databases, or a database and a message broker. A coordinator first asks every participant to prepare, basically promise they can commit. If everyone says yes, it tells them all to commit. If anyone says no, everyone rolls back. In the .NET Framework world, MSDTC did this, often transparently with TransactionScope across connections.
+
+Why microservices stay away from it. Availability, every participant has to be up and responsive for it to complete. If one service or database is slow or down, the whole thing waits or fails. Locks are held during prepare, so a stuck coordinator can leave stuff locked.
+
+Coupling, services would have to share transaction infrastructure, which kills independent deployment and technology choice. And a lot of modern components, HTTP APIs, Kafka, cloud services, don't support it at all.
+
+Scalability, the coordination round trips and held locks limit throughput.
+
+So microservices accept eventual consistency, with patterns that give reliability without global locks. The outbox pattern, so a local database change and an event are recorded atomically. Idempotent consumers. And sagas, a sequence of local transactions with compensating actions if a later step fails.
+
+Where you truly need strong consistency, the better answer is often to keep that data in one service and one database, and then a normal local transaction does the job. I think people sometimes split services too early and then fight this problem.
+
+@p17-705 | What are leader election and consistent hashing used for?
+So both solve coordination problems when you've got several instances of a service running at once.
+
+Leader election is for when exactly one instance has to do something, run a scheduler, process a singleton queue, coordinate the others. Instances compete for a leadership lease, one wins and does the work, renewing the lease periodically. If it dies or stops renewing, another takes over after the lease expires. You can do it with a Kubernetes Lease object, a distributed lock with expiry in Redis, a database row with an expiry timestamp, sp_getapplock in SQL Server, or coordination services like ZooKeeper and etcd. The catch is a paused leader, say during a long GC pause, might think it's still leader after the lease expired. So work should carry a fencing token, an increasing number that downstream systems check to reject stale leaders.
+
+Consistent hashing spreads keys across a changing set of nodes. Nodes sit on a hash ring, and each key goes to the next node clockwise. When a node is added or removed, only the keys near it move, instead of nearly all of them like with simple hash modulo N. Virtual nodes smooth out the distribution. You see it in distributed caches, Redis Cluster's slot model is a related idea, partitioned databases like Cassandra and DynamoDB, and load balancers with session affinity.
+
+In application design I mostly use these through infrastructure rather than building them, but understanding them helps a lot when you reason about failover and rebalancing.
+
+@p17-706 | How do you evolve event schemas without breaking consumers?
+Yeah, the thing with events is they outlive code. Consumers get deployed at different times, and stored events might be replayed months later. So schemas need careful evolution.
+
+Adding optional fields is safe, as long as consumers ignore unknown fields. I make that a standard, tolerant readers.
+
+Removing or renaming fields, changing types or meanings, that's breaking. Instead you add the new field next to the old one, fill both for a transition period, move consumers over, and only remove the old one once nobody uses it.
+
+And never quietly change what an existing field means, like changing an amount from units to cents. That's the worst kind of break because nothing fails, the numbers are just wrong.
+
+Versioning, put an event type and version in the envelope, like ShipmentDelivered v2. For a truly breaking change, publish the new version as a new event type, maybe both in parallel for a while, and let consumers migrate at their own pace.
+
+With Kafka, a schema registry using Avro, Protobuf or JSON Schema enforces compatibility rules at publish time, backward or full compatibility, so an incompatible schema gets rejected before it reaches anyone.
+
+Consumer-driven contract tests for messages catch breaking changes in the producer's pipeline.
+
+For event-sourced systems, upcasting converts old event versions to the current shape when they're read, so the business logic only deals with the latest version.
+
+And documenting events in a catalogue, like AsyncAPI, makes ownership and versions visible to everyone.
+
+@p17-707 | What is hexagonal architecture, or ports and adapters?
+Okay so hexagonal architecture, or ports and adapters, puts the core business logic in the middle with no dependency on technology, and connects everything else through ports and adapters.
+
+Ports are interfaces the core defines. Incoming ports describe what the application can do, like an IAllocateKit use case. Outgoing ports describe what it needs from outside, like IKitRepository, IClock or INotificationSender.
+
+Adapters implement those ports for specific technologies. Driving adapters call into the application, an ASP.NET Core controller, a message consumer, a CLI command. Driven adapters get called by it, an EF Core repository, a RabbitMQ publisher, an SMTP sender.
+
+The dependency rule is adapters depend on the core, never the other way round. The core doesn't know HTTP, SQL or message brokers exist.
+
+What you get is business logic you can test with simple in-memory fakes for the outgoing ports. Technology can change, like swapping the message broker, just by writing a new adapter. And the same use case can be triggered from an API, a queue or a scheduled job without duplicating anything.
+
+Onion and clean architecture are close relatives with the same core idea, they mostly differ in how they name the layers.
+
+The risk is over-engineering, tons of interfaces and mapping for simple CRUD services. I use it where there's real business logic and keep simple services simple. In our case the newer APIs follow clean architecture, which is pretty much this idea in practice.
