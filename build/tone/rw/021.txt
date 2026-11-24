@@ -1,0 +1,135 @@
+@p17-240
+See, SQL Server is built for set-based operations. You describe the result you want for a whole set of rows in one statement, and let the optimiser figure out how to do it efficiently, with indexes, joins, parallelism and batching.
+
+A cursor processes rows one at a time, like a loop in procedural code. Each iteration fetches a row and runs separate statements for it. People call it RBAR, row by agonising row. On a big table, it's usually orders of magnitude slower than the equivalent set-based UPDATE or INSERT SELECT, because every row has its own overhead, locks are held longer, and the optimiser can't optimise the operation as a whole. WHILE loops that process one row at a time have exactly the same problem.
+
+So when I see a cursor, I try to rewrite it as one or a few set-based statements. Joins, CASE expressions, window functions like ROW_NUMBER, running totals with SUM OVER, and CTEs.
+
+There are legit uses though. Admin tasks that have to run something per database or per object, like maintenance across many study databases. Calling a stored procedure that only works one row at a time and that you can't change. And deliberately processing in batches, which is a loop over chunks of thousands of rows, not single rows, to control locking and log growth.
+
+If I really must use a cursor, I declare it LOCAL FAST_FORWARD, so the overhead is lower. But that's rare for me.
+
+@p17-241
+Dynamic SQL means building a SQL statement as a string and executing it. Sometimes you really need it, like search screens with many optional filters, dynamic sorting, or admin scripts that work across tables or databases.
+
+My rules for it. Use sp_executesql, not EXEC of a concatenated string. sp_executesql takes parameters separately, so user values never become part of the SQL text, and that's what prevents SQL injection. It also allows plan reuse, because the SQL text stays the same for different parameter values.
+
+Never concatenate user input as values. Only the structure gets built dynamically, like adding "and SiteId equals the SiteId parameter" when that filter is present. The values always go in as parameters.
+
+For identifiers, like table names, column names or sort direction, which can't be parameters, I validate them against a whitelist of allowed names and wrap them with QUOTENAME to handle special characters safely.
+
+For catch-all search queries with optional filters, honestly, building the WHERE clause dynamically with only the filters actually used often gives much better plans than one static query full of "or parameter is null" conditions. Those tend to produce poor, generic plans. OPTION RECOMPILE is the other way out for those.
+
+Dynamic SQL runs with the caller's permissions, and it's harder to read and review. So I keep it small, well commented, and print the generated SQL in debug mode.
+
+@p17-242
+In stored procedures that change data, I use one standard pattern, so errors never leave a transaction half-done or hanging open.
+
+At the top, SET XACT_ABORT ON, and SET NOCOUNT ON. With XACT_ABORT on, most runtime errors automatically roll back the whole transaction and abort the batch. Without it, some errors only fail the current statement and the transaction carries on, which can leave partial changes. It also matters when the client times out. The transaction gets rolled back instead of staying open and holding locks.
+
+Then BEGIN TRY, BEGIN TRANSACTION, the statements, COMMIT, END TRY. And in BEGIN CATCH, if there's an open transaction, which you check with TRANCOUNT greater than zero or XACT_STATE, ROLLBACK. Then log the error if needed, and rethrow with THROW, so the application knows it failed. THROW has been there since SQL Server 2012. It keeps the original error number and message, and it's simpler than RAISERROR.
+
+One thing I learned the hard way, logging inside the CATCH has to happen after the rollback, otherwise your log row gets rolled back too.
+
+Also, nested transactions in SQL Server aren't real nested transactions. An inner COMMIT only decrements the counter, and any ROLLBACK rolls back everything. So procedures called from other procedures need to be careful about starting their own transactions, or use save points.
+
+And on the .NET side, I still handle SqlException and use transactions consistently.
+
+@p17-243
+Whenever a SQL Server task can't proceed, it waits, and SQL Server records why and for how long. Wait statistics answer "what is this server spending its time waiting for?", and that points you to the kind of bottleneck before you start tuning anything.
+
+I look at sys.dm_os_wait_stats for the server overall, filtering out the harmless background waits, and session wait stats or Query Store's wait categories for specific sessions or queries.
+
+The common ones and what they tell me. PAGEIOLATCH is waiting to read data pages from disk, so not enough memory for the working set, or queries reading too much because of missing indexes. WRITELOG is waiting for log writes, so slow log storage or too many tiny commits. LCK_M waits mean blocking, waiting on locks held by others. CXPACKET and CXCONSUMER are parallelism, often normal, but lots of it may mean big scans or a cost threshold for parallelism that's too low. SOS_SCHEDULER_YIELD is CPU pressure. RESOURCE_SEMAPHORE is queries waiting for memory grants, often from big sorts or hashes due to bad estimates. And ASYNC_NETWORK_IO means the client isn't consuming results fast enough, usually the app reading row by row or pulling huge result sets.
+
+Wait stats are cumulative since the last restart. So I compare snapshots over a time window during the problem period, not just read the totals. The totals alone can really mislead you.
+
+@p17-244
+tempdb is a shared system database that every database on the instance uses. Temp tables, table variables, sorts and hashes that spill out of memory, the row version store for snapshot isolation, and some internal work. Since everything shares it, it can easily become a bottleneck.
+
+Allocation contention is the classic problem. When lots of sessions create and drop temp objects at a high rate, they all fight over the same allocation pages, and you see PAGELATCH waits on tempdb pages. To fix it, multiple tempdb data files of equal size, usually one per CPU core up to eight, which modern SQL Server setup does by default. Newer versions also reduced this contention a lot, and SQL Server 2019 added memory-optimised tempdb metadata.
+
+Then there are other tempdb problems. Spills, where a sort or hash join doesn't get enough memory and writes to tempdb, which is slow and shows as a warning in the execution plan. Fixing estimates, indexes or the query usually sorts that out. Version store growth, where with RCSI or snapshot isolation a long-running transaction stops old row versions being cleaned up, so tempdb keeps growing. And running out of space, which can hit every database on the server.
+
+So I monitor tempdb size and usage, keep it on fast storage, size it properly up front so it isn't constantly auto-growing, and look out for queries with spills or heavy temp object use.
+
+@p17-245
+No, honestly, never blindly. SQL Server records missing index suggestions when the optimiser thinks an index would have helped a query. They show up in execution plans as a green hint, and in the missing index DMVs with an estimated improvement. They're a useful starting point, but that's all.
+
+Why not just create them? Suggestions are made per query, without looking at other indexes, so you often get several overlapping ones that should really be one index. They ignore the cost of maintaining the index on inserts and updates. The key column order isn't always ideal, equality columns come before inequality columns, but they're not ordered by selectivity. They often include tons of INCLUDE columns, sometimes almost the whole table. They ignore filtered indexes and columnstore options. And the DMVs reset when the server restarts.
+
+What I do is look at the suggestion together with the actual query and its plan. Check the existing indexes on that table, maybe one can be extended instead of adding a new one. Think about the write load on that table. Design the index with the right key order and only the included columns that are needed. Test it on a copy with realistic data. And then deploy it through the normal database change process.
+
+After deploying, I verify the query actually uses it, and check index usage stats later, removing indexes that never get used.
+
+@p17-246
+So a query with LIKE percent term percent can't use a normal index, because of the leading wildcard. It scans the whole table, and it can't handle word forms, relevance ranking or multiple terms well.
+
+SQL Server full-text search builds a special full-text index of the words in text columns. You query with CONTAINS for precise word and phrase searches, including prefix searches like ship star, word forms through inflection, and proximity. And FREETEXT for meaning-based searching. CONTAINSTABLE and FREETEXTTABLE give relevance ranks. It handles stop words and language-specific word breaking, and the index updates automatically in the background as data changes. Azure SQL supports it too.
+
+It's a good choice when search is part of a transactional app, the data is already in SQL Server, and the requirements are moderate. Like searching notes, descriptions or document text.
+
+A dedicated search engine, like Elasticsearch, OpenSearch or Azure AI Search, is better when search is a core feature. Typo tolerance and fuzzy matching, faceted navigation, serious relevance tuning, autocomplete, searching across data from many services, very large volumes, or semantic and vector search. But that's another system to run and keep in sync, usually through events or change data capture, with eventual consistency.
+
+So I start with what the database already gives me, and move to a search engine only when the requirements clearly need it.
+
+@p17-247
+Okay, so SSDT, SQL Server Data Tools, is declarative, state-based. The database project holds the desired definition of every object, tables, views, procedures, indexes, as CREATE scripts in source control. Building the project validates all the references and produces a dacpac, which is a package describing the target schema.
+
+At deployment, SqlPackage compares the dacpac with the actual database and generates a script to make the database match. Adding columns, altering procedures, creating indexes. Pre-deployment and post-deployment scripts handle data changes, like filling a new column or seeding reference data, and those have to be written so they're safe to re-run.
+
+In the pipeline, the build creates the dacpac as an artifact. The release first generates the deployment script, or a deploy report, for review, which really matters in regulated environments. Then it publishes to each environment, with publish profiles setting options like BlockOnPossibleDataLoss, which stops the deployment if a change would drop data.
+
+What you get is the full schema always visible in source control, drift gets detected, and the same package can go to many databases. The risk is that auto-generated scripts can do expensive things, like rebuilding a large table just to change column order. So reviewing the generated script is not optional.
+
+Our CIRT platform uses SSDT database projects, and the same model schema gets deployed to every study database. So this is daily work for us.
+
+@p17-248
+A single DELETE of millions of rows is risky. It runs as one huge transaction, so the transaction log grows enormously. It can escalate to a table lock and block everyone. It can take forever. And if you cancel it, the rollback takes just as long.
+
+So I do it in batches. A loop deletes, say, 5,000 rows at a time, using DELETE TOP 5,000 with a condition on an indexed column like a date, and keeps going until no rows are affected. Each batch is its own short transaction, so locks get released quickly, under the escalation threshold, and log space can be reused between log backups. Sometimes I add a small delay between batches to reduce the impact on other users, and run it in quiet hours.
+
+For archiving, each batch first copies rows to the archive table and then deletes them, in the same transaction. Often with DELETE plus an OUTPUT clause into the archive table, which does both in one statement. Pretty neat.
+
+For tables partitioned by date, switching out an old partition is almost instant, which is much better for regular retention.
+
+A few more things. Make sure the delete condition uses an index. Check foreign keys and cascades, which can multiply the work. And think about regulatory retention rules. In clinical systems, data often has to be kept for many years, so honestly we archive much more than we delete.
+
+@p17-249
+Both are mature, powerful relational databases, and EF Core supports both well, with Npgsql as the PostgreSQL provider.
+
+Cost is the first big difference. PostgreSQL is open source and free, which makes it really attractive in the cloud, like RDS, Aurora PostgreSQL or Azure Database for PostgreSQL. SQL Server has licence costs, especially Enterprise edition.
+
+Feature-wise, PostgreSQL has excellent JSON support with jsonb and GIN indexes, arrays as a column type, rich extensions like PostGIS and pgvector for vector search, and partial and expression indexes. SQL Server has strong tooling, SSMS, Query Store, SQL Server Agent for jobs, built-in columnstore, in-memory OLTP, and deep integration with Windows and Microsoft tools.
+
+Then there are behaviour differences that bite you during a migration. PostgreSQL folds unquoted names to lowercase, so naming conventions matter. String comparison is case-sensitive by default in PostgreSQL. Concurrency internals differ, PostgreSQL uses MVCC by default, kind of like SQL Server's snapshot isolation, and needs VACUUM to clean up old row versions. The procedure language is different, T-SQL versus PL/pgSQL, so procedures have to be rewritten. And data types, like datetime2 versus timestamp with time zone, and identity versus serial or identity columns.
+
+For us, the CIRT core runs on SQL Server, while the developer RAG index uses PostgreSQL with pgvector. So I've touched both.
+
+@p17-250
+SELECT star returns every column of a table, and in application code, it causes a bunch of problems.
+
+Performance first. It reads and sends more data than needed, over the network and into memory. Wide columns, like big text or binary columns, make it much worse. It also stops covering indexes from being used, since no non-clustered index includes every column, so SQL Server has to do key lookups or scan the clustered index.
+
+Then it's fragile. If someone adds a column later, the query returns it automatically. Code that relies on column order breaks, views defined with SELECT star don't pick up changes properly until they're refreshed, and an INSERT SELECT star can fail or put data into the wrong columns.
+
+There's a security angle too. New sensitive columns can leak into results, logs and APIs without anybody deciding they should. And for readability, you can't tell which columns the code actually uses.
+
+In EF Core, loading entire entities is basically the same thing. For read-only screens, I project with Select into a DTO with only the needed columns, which EF turns into a SELECT of just those columns. That often makes a big difference.
+
+SELECT star is fine for ad hoc queries while you're exploring data. And EXISTS with SELECT star in a subquery is fine too, because the columns aren't actually returned there.
+
+@p17-251
+A transaction holds its locks until it commits or rolls back. So the longer it runs, the more damage it can do.
+
+Blocking is the obvious one. Other sessions that need the locked rows, pages or tables just wait, so the app slows down for lots of users, and deadlocks get more likely.
+
+Then transaction log growth. The log can't be truncated past the oldest active transaction, so a transaction left open for hours makes the log grow until the disk fills, even with regular log backups. People don't expect that.
+
+Version store growth too. With snapshot isolation or RCSI, old row versions in tempdb can't be cleaned up while an old transaction might still need them, so tempdb grows.
+
+And recovery and rollback time. If it fails or the server restarts, rolling it back takes ages, and the database may take longer to recover. Replication and availability group lag can go up as well.
+
+What causes it in applications? Doing slow work inside a transaction, like calling an external API, sending an email or waiting for user input. Processing a huge batch in one transaction. Or a bug where an exception skips the commit and the connection stays open with the transaction.
+
+So I keep transactions as short as possible. Prepare and validate data before starting, include only the writes that must be atomic, do external calls outside, process large changes in batches, and watch for old open transactions with DBCC OPENTRAN or the DMVs. That's how I keep it under control.

@@ -1,0 +1,141 @@
+@p17-264
+So Angular has a tree of injectors, and where you provide a service decides how many instances exist and who shares them.
+
+At the top you've got the environment injector hierarchy. providedIn root in the Injectable decorator registers a singleton for the whole app, and it's tree-shakable, so if nothing injects it, it's removed from the bundle. Services provided in the application's providers, or in a lazy-loaded route's providers, live in environment injectors. A lazy route with its own providers gets its own child injector, so a service provided there is a separate instance just for that feature.
+
+Then there's the element injector hierarchy, which follows the component tree. If a component lists a service in its providers array, each instance of that component gets its own instance of the service, shared with its children and destroyed with the component. That's handy for state that belongs to one part of the screen, like a form wizard's state service, or one editor instance per tab. viewProviders limits visibility to the component's own view, not projected content.
+
+When a component injects something, Angular searches up the element injectors first, then the environment injectors, until it finds a provider. Modifiers change the search, Optional, Self, SkipSelf and Host, and those are options on the inject function.
+
+A really common bug I've seen is accidentally providing a "global" service in a component's providers. You get separate instances, and shared state looks completely broken.
+
+@p17-265
+An InjectionToken is a key for dependency injection when there's no class you can use as the key. Like a config object, a primitive value, an interface, which doesn't exist at runtime in TypeScript, or a function. You create it with new InjectionToken of AppConfig with a description, and optionally a factory that gives a default value.
+
+Providers then tell Angular what to hand out for a token or class.
+
+useValue gives a fixed value, like an API base URL or a config object loaded at startup.
+
+useClass gives an instance of a class, which lets you swap the implementation. Provide LoggerService, useClass ConsoleLoggerService. That's useful for environment-specific implementations or test doubles.
+
+useFactory calls a function to create the value, and it can use inject inside, or a deps array in older code. It's for values that depend on other services or runtime conditions, like picking a storage implementation based on configuration.
+
+useExisting creates an alias, so asking for one token returns the same instance as another. Like a component providing itself under an abstract token, so child components can inject it through an interface.
+
+And the multi flag lets several providers contribute to the same token, so you get an array. Angular uses that for HTTP interceptors, form validators and app initialisers.
+
+In our Angular apps, actually, the API base URL and feature settings come through an InjectionToken filled from a runtime configuration file.
+
+@p17-266
+Since Angular 15, guards and resolvers can be plain functions instead of classes implementing interfaces like CanActivate. A guard has a type like CanActivateFn, gets the route and router state, and uses inject to get services. It returns true to allow, false to block, or a UrlTree to redirect, like to the login page, and it can return an Observable or Promise of those. Class-based guards are deprecated now.
+
+The guard types are canActivate, whether a route can be entered. canActivateChild for child routes. canDeactivate, whether the user can leave, usually to warn about unsaved changes. And canMatch, whether a route definition should even be considered. canMatch is great for loading different components for the same path based on a role or feature flag, and it stops the lazy-loaded code from even downloading when the user isn't allowed.
+
+Resolvers, ResolveFn, fetch data before the route activates, and the component gets it through the route data, or as an input when withComponentInputBinding is on.
+
+Honestly, I use resolvers sparingly. Navigation waits until the data arrives, so on slow requests the user sees nothing happening, and errors are harder to show nicely. Often it's better to navigate immediately and let the component show a loading state.
+
+And guards are for user experience, not security. The API still has to enforce authorization, because anyone can call it directly.
+
+@p17-267
+An auth interceptor adds the access token to outgoing requests and deals with expired tokens without the user noticing.
+
+How it flows, the interceptor attaches the bearer token to requests going to our API, and only to our API's URLs, never to third-party domains. If a response comes back 401, it tries to refresh the token, and if that works, retries the original request with the new token. If the refresh fails, it logs the user out and sends them to the login page.
+
+The tricky part is concurrency. A screen often fires several requests at once, and they might all get 401 together. Without care, each one triggers its own refresh, and with refresh token rotation, the second refresh uses an already-used refresh token and fails, and the user gets logged out for no reason. So the interceptor keeps a single in-flight refresh, a flag plus a BehaviorSubject, or a shared Observable with shareReplay. The first 401 starts the refresh, and the other requests wait for it with filter and take one, then retry with the new token.
+
+A few more details. Don't intercept the refresh call itself, or you get loops. Retry each request only once. And refresh proactively before expiry when you can, which avoids most 401s anyway. Libraries like angular-auth-oidc-client or keycloak-angular handle a lot of this.
+
+In our apps, the Keycloak adapter refreshes tokens before expiry, and the interceptor just attaches the current token.
+
+@p17-268
+A synchronous validator is just a function that gets an AbstractControl and returns null if it's valid, or an errors object, like noFutureDate true, if not. I write it as a ValidatorFn, often a factory that takes parameters, like maxKits of 10, and attach it to a FormControl. Then the template shows a message when the control hasError noFutureDate.
+
+For rules across several fields, like end date must be after start date, or quantity returned can't exceed quantity dispensed, I put the validator on the FormGroup instead of the individual controls, so it can read both values. It reports the error on the group, or sets it on a specific child control for display.
+
+An async validator returns an Observable or Promise of the errors or null. That's for checks that need the server, like "is this kit number valid and available?" or "is this username taken?". Angular runs async validators only after all the sync ones pass, and the control's status is PENDING while it runs, so the UI can show a small spinner.
+
+To avoid hitting the API on every keystroke, I use updateOn blur for that control, or debounce inside the validator with timer and switchMap. And make sure the Observable completes, with take one or first, otherwise the form stays pending forever. I've debugged that exact issue.
+
+Server-side validation is still the source of truth though, and I map server validation errors back onto the form controls.
+
+@p17-269
+Since Angular 14, reactive forms are strictly typed. A FormControl of string knows its value is a string or null, and a FormGroup knows the shape of its controls, so form.value and form.controls are fully typed. Typos in control names, or setting the wrong type with setValue or patchValue, become compile-time errors instead of runtime bugs.
+
+There are a few details you need to get. By default, a control's type includes null, because reset sets the value back to null. With nonNullable set to true, or the NonNullableFormBuilder through fb.nonNullable, reset goes back to the initial value instead, and the type excludes null. That's usually what I want.
+
+form.value has every property optional, because disabled controls are left out of value. form.getRawValue includes disabled controls, and it's fully typed without the optional parts.
+
+FormArray is typed by its element control type, and FormRecord was added for dynamic keys where all the controls are the same type.
+
+When upgrading older apps, the migration converted existing forms to UntypedFormControl and UntypedFormGroup, so they keep compiling, and teams can move to typed forms gradually.
+
+What I usually do is define an interface for the form model, build the form with the form builder, and map the typed raw value to the API DTO. And in Angular 21 there's a new experimental signal-based forms API as well, which I'm keeping an eye on.
+
+@p17-270
+Dynamic forms are generated at runtime from configuration or metadata, instead of being hard-coded in a template. That's essential when forms vary by customer or by study. Like screening questions in a clinical trial, where each study defines its own questions, types and rules.
+
+The configuration describes each field. A key, a label, a type like text, number, date, dropdown or checkbox, options, validation rules like required, min and max, and sometimes conditional logic, like show this question only if the previous answer is Yes.
+
+In Angular, a form service turns that config into a FormGroup, creating a FormControl for each field with validators mapped from the rules. The template loops over the field definitions with a for block, and uses a switch on the field type to render the right input component, bound with formControlName. FormArray handles repeating sections.
+
+Conditional logic subscribes to valueChanges, or uses signals, to show or hide fields and switch their validators on or off. Because a hidden required field must not block submission, that's a classic bug.
+
+For bigger needs, libraries like Formly give you this pattern out of the box, with custom field types and wrappers.
+
+The server has to apply the same rules too, ideally from the same configuration, since client-side validation can be bypassed.
+
+In my project, our IRT has dynamic forms with rule expressions for screening, configured per study in the study builder. So this is pretty close to what I work on.
+
+@p17-271
+ControlValueAccessor is the interface that connects an Angular form control to a UI element. There are built-in accessors for inputs, selects and checkboxes. When I build my own input component, like a date range picker, a kit quantity stepper or a searchable site selector, and I want it to work with formControlName and ngModel just like a native input, I implement ControlValueAccessor.
+
+It has four methods. writeValue is called by the forms API to set the component's value, like when the form gets initialised or patched. registerOnChange gives you a callback that you call whenever the user changes the value, so the form control updates. registerOnTouched gives you a callback for when the user leaves the control, usually on blur, which drives the touched state for showing validation messages. And setDisabledState, which is optional, gets called when the control is enabled or disabled.
+
+Then you register the component as a provider for the NG_VALUE_ACCESSOR token, with useExisting and forwardRef to the component, and multi set to true.
+
+If the component has built-in validation, you can also implement Validator and register it under NG_VALIDATORS, so the form knows about the errors.
+
+What you get is complex widgets becoming first-class form controls. Validation, disabled state, reset, value changes, all work consistently, and the forms using them stay clean. Honestly, once you've done one, it's pretty mechanical.
+
+@p17-272
+A structural directive changes the DOM structure by adding or removing elements, like the built-in ngIf used to. I write one when there's reusable display logic, like showing content only if the user has a certain permission.
+
+Let me take that example. A hasPermission directive, used as star hasPermission equals kits.return on an element. The star is shorthand. Angular wraps the element in an ng-template and passes it to the directive.
+
+Inside the directive, you inject TemplateRef, which represents that template, and ViewContainerRef, which is the spot in the DOM where views can be inserted. When the input, the permission name, is set, or the user's permissions change, the directive checks the permission. If allowed and not already shown, it calls createEmbeddedView with the templateRef. If not allowed, it calls clear on the view container. You can support an else template too, through a second input.
+
+You can also pass a context object to the template, which lets the directive expose variables using let syntax, the way the old ngFor exposed index.
+
+With signals, the input can be a signal input, and an effect or computed drives the view creation.
+
+And again, this is only for user experience. Hiding a button doesn't secure anything, the API is what enforces the permission. I always say that in reviews.
+
+@p17-273
+A pipe transforms a value for display in a template, like formatting a date or a status label. To make one, you write a class with the Pipe decorator, give it a name, and implement PipeTransform with a transform method that takes the value and optional arguments and returns the display value. In modern Angular, pipes are standalone by default, and components import them directly.
+
+Like a kitStatus pipe that turns a status code into a friendly label, or a siteTime pipe that formats a UTC timestamp in the site's time zone. You'd use it as kit.status piped into kitStatus, or created piped into siteTime with the time zone as an argument.
+
+Pipes are pure by default. A pure pipe only re-runs when its input value changes by reference, or its arguments change. That makes them very efficient, much better than calling a method in the template, which runs on every change detection cycle. So pure pipes should be pure functions, no side effects, same output for the same input.
+
+An impure pipe, pure set to false, runs on every change detection cycle. You need it when the output depends on something other than the input reference, like a mutable array that changes internally, or some external state. The async pipe is the famous impure one. Impure pipes have to be really cheap, or they slow the whole page down.
+
+Honestly, a better alternative to an impure pipe is often immutable data, or a computed signal.
+
+@p17-274
+The async pipe subscribes to an Observable or Promise right in the template and gives you the latest emitted value. Like shipments dollar piped into async.
+
+Why it's recommended, a few reasons. Subscription management is automatic. It subscribes when the component renders and unsubscribes when the component is destroyed, so no memory leaks from forgotten subscriptions. It works nicely with OnPush, because it marks the component for check whenever a new value comes in, so the view updates even though no input changed. And it pushes you toward a declarative style. The component exposes streams, the template consumes them, no manual subscribe calls copying values into fields.
+
+A few things to watch though. Each async pipe on the same Observable creates a separate subscription. So for an HTTP Observable used in three places, you'd make three HTTP calls. I've seen that in network tabs more than once. The fix is subscribing once with an if block, using the as syntax to alias the value, or sharing the stream with shareReplay. And errors in the stream need catchError in the component, otherwise the subscription just ends.
+
+With signals, toSignal plays a similar role. It converts the Observable to a signal once, and the template reads it without a pipe. In newer code I often go that way, but the async pipe is still a perfectly good pattern, especially in existing RxJS-heavy apps like our older Angular sub-apps.
+
+@p17-275
+ng-template defines a block of template that isn't rendered on its own. It's a template that something else can render later, maybe several times, with different data. Structural directives use it behind the scenes, and in older code, else branches pointed to an ng-template.
+
+ng-container is a grouping element that doesn't produce any DOM element at all. It's useful when you need to apply logic to several elements without adding a wrapper div that would break the layout or CSS, like inside a table row or a flex container. People used it a lot to combine ngIf and ngFor, since you can have only one structural directive per element.
+
+ngTemplateOutlet renders an ng-template at a specific place, optionally with a context object that gives variables to the template, accessed with let syntax. And this is the key to customisable components. Let me take a reusable data table component. It can accept an ng-template for how to display a cell, through a content child query or an input. The table renders that template for each row with ngTemplateOutlet, passing the row as context. So the consumer controls the cell markup, and the table controls the layout, sorting and paging.
+
+The same idea lets you define a piece of markup once in a template, like a status badge layout, and render it in a few places without creating a separate component. That's how I'd explain the three of them.

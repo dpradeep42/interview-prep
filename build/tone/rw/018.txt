@@ -1,0 +1,135 @@
+@p17-204
+So by default, System.Text.Json writes enums as their underlying numbers. A ShipmentStatus of Delivered just becomes 3 in the JSON. That's fragile and unreadable. Clients have to know what 3 means, and if someone reorders or inserts enum members, the numbers change and clients break silently. Nobody even notices until something goes wrong.
+
+So I usually serialise them as strings. In ASP.NET Core, you add a JsonStringEnumConverter to the JSON options. For controllers through AddJsonOptions, and for minimal APIs with ConfigureHttpJsonOptions. Then the JSON says Delivered, or delivered in lower case if you pass a camelCase naming policy. And incoming requests accept the string names too.
+
+From .NET 8 there's also a generic JsonStringEnumConverter of TEnum, which works with source generation and Native AOT, and you can put JsonConverter attributes on specific enums. .NET 9 added JsonStringEnumMemberName to customise individual member names.
+
+A few related habits. I still give enum members explicit numeric values, especially if they're stored in the database, so reordering doesn't corrupt data. I document in the API that new values may get added, so clients handle unknown values gracefully. And I check that OpenAPI shows the string values, which the built-in generator does once the converter is configured.
+
+For EF Core, storing enums as strings is a separate decision, done with HasConversion of string.
+
+@p17-205
+Kestrel's defaults are sensible, but for production I do review a few limits. It depends on whether Kestrel faces the internet directly or sits behind a reverse proxy.
+
+MaxRequestBodySize defaults to about 30 MB. I lower it for normal APIs, so nobody can send huge bodies, and raise it only on specific upload endpoints with the RequestSizeLimit attribute, or DisableRequestSizeLimit for streaming uploads to storage. Form and multipart limits are separate, in FormOptions.
+
+Request header limits, like MaxRequestHeadersTotalSize and MaxRequestLineSize, protect you against oversized headers. Sometimes I actually have to raise them, like when SSO cookies or large tokens make headers bigger. That's a known cause of random 400 or 431 errors.
+
+Then timeouts. KeepAliveTimeout and RequestHeadersTimeout stop slow clients holding connections open, which helps against slowloris-style attacks. MinRequestBodyDataRate and MinResponseDataRate drop connections that send or read data too slowly.
+
+Connection limits, MaxConcurrentConnections and MaxConcurrentUpgradedConnections for WebSockets, can cap resource use per instance. And there are HTTP/2 settings too, like max streams per connection.
+
+I configure these in appsettings under the Kestrel section, or in code with ConfigureKestrel. And I keep them consistent with the limits on the proxy or load balancer in front. Otherwise whichever one rejects first gives you a confusing error, and you waste time figuring out who rejected it.
+
+@p17-206
+A covering index is a non-clustered index that has every column a query needs, so SQL Server can answer the query from the index alone, without going back to the table.
+
+Normally a non-clustered index stores the key columns plus a pointer to the row. If the query needs other columns, SQL Server does a key lookup for each matching row, jumping to the clustered index to fetch them. For a few rows that's fine. For thousands of rows, those lookups get really expensive, and the optimiser may just give up on the index and scan the whole table.
+
+INCLUDE columns solve this. You create the index with key columns for filtering and sorting, and add the other columns with INCLUDE. Like an index on SiteId and Status, including ShipmentDate and KitCount. Included columns are stored only at the leaf level, not in the key, so they don't affect sorting and the key stays small, but the query is fully covered.
+
+It's not free though. Every included column makes the index bigger and makes inserts and updates slower, because the index has to be maintained. So I don't include everything. I cover the important, frequent queries, and check the execution plan to confirm the key lookup is actually gone.
+
+[Adding one covering index to the shipment search query removed a key lookup on about 40,000 rows and cut its time from several seconds to under 200 milliseconds.]
+
+@p17-207
+Okay, so a key lookup shows up in a plan when SQL Server uses a non-clustered index to find the matching rows, but the index doesn't have all the columns the query needs. For each row found, it goes back to the clustered index, using the clustering key, to fetch the missing columns. On a heap, a table without a clustered index, the same thing is called a RID lookup.
+
+In the plan, you see an Index Seek joined with Nested Loops to a Key Lookup. The cost is per row, one extra random read for every row. If the seek returns 10 rows, who cares. If it returns 50,000 rows, it can dominate the whole query.
+
+To fix it, I look at the key lookup operator's Output List, which shows exactly which columns it fetched. Then a few options. Add those columns to the index as INCLUDE columns, making it covering. Or drop columns from the query that aren't really needed, like a SELECT star where the screen only uses four columns. In EF Core that means projecting to a DTO with Select instead of loading whole entities. Or, if the predicate also uses columns that aren't in the key, rethink the index key order.
+
+I also watch for the opposite problem. When the estimate is wrong, SQL Server may choose a seek plus lookup for way more rows than it expected. That's usually a statistics or parameter sniffing issue, not an index issue.
+
+@p17-208
+Fragmentation happens as data gets inserted, updated and deleted. When a page is full and a new row has to go in the middle, SQL Server splits the page and moves half the rows to a new page somewhere else. Over time, the logical order of pages stops matching their physical order, that's external fragmentation. And pages get left partly empty, which is internal fragmentation, or low page density.
+
+On spinning disks, logical order really mattered for range scans. On modern SSDs and SANs, external fragmentation matters much less. Low page density matters more, because more pages means more I/O and more memory used in the buffer pool.
+
+You've got two maintenance options. Reorganize is lightweight and always online. It reorders the leaf pages and compacts them, good for moderate fragmentation. Rebuild drops and recreates the index, fully defragmenting it and updating its statistics with a full scan. It can be online in Enterprise edition and Azure SQL, but it's heavier.
+
+The old rule of thumb was reorganize between 5 and 30 percent fragmentation, rebuild above 30. These days, honestly, a lot of experts say focus on updating statistics regularly, which often gives most of the benefit, and maintain indexes less often, based on measured impact. Ola Hallengren's maintenance scripts handle all this nicely.
+
+And a suitable fill factor can reduce page splits on indexes with random inserts, like GUID keys.
+
+@p17-209
+By default, SQL Server uses read committed with locking. Readers take shared locks, so a reader can get blocked by a writer holding an exclusive lock, and a writer can get blocked by readers. Under heavy mixed load, you get blocking and sometimes deadlocks.
+
+Row versioning is the alternative. When it's on, SQL Server keeps previous versions of modified rows in the version store, in tempdb, or in the database itself with Accelerated Database Recovery. Readers read the last committed version instead of waiting on locks.
+
+Read committed snapshot isolation, RCSI, is a database setting that makes the default read committed level use versioning. Each statement sees data as it was when the statement started. Readers don't block writers, writers don't block readers. It's usually a big drop in blocking with zero code changes, and it's actually the default in Azure SQL Database.
+
+Snapshot isolation is a separate level that a transaction has to ask for explicitly. The whole transaction sees a consistent snapshot as of its start. If it tries to update a row that another transaction changed after that snapshot, it gets an update conflict error, so the code has to handle it and retry.
+
+What it costs you, more tempdb usage and a bit more overhead on updates. And code that relied on blocking behaviour, like a read-then-update pattern, may need explicit locking hints or a different approach. So I'd test that before switching it on.
+
+@p17-210
+WITH NOLOCK is the same as the READ UNCOMMITTED isolation level. It tells SQL Server to read without taking shared locks and to ignore other transactions' locks. People add it to stop queries getting blocked, and yeah, the blocking goes away, but it can return wrong data.
+
+The obvious problem is dirty reads. You read changes from a transaction that hasn't committed and might roll back, so you see data that never officially existed.
+
+The less obvious problems are actually worse. Since the scan isn't protected while pages split and rows move around, a NOLOCK query can miss rows entirely, or read the same row twice. So a count or a sum can just be wrong, even for data that wasn't logically being changed. Queries can even fail with an error about data movement.
+
+For approximate reports, like a dashboard estimate, maybe that's acceptable. But anywhere correctness matters, stock levels, financial data, clinical supply quantities, it's not acceptable at all.
+
+The better fix for blocking is read committed snapshot isolation, which gives readers a consistent, committed version of the data without blocking. Plus good indexes and short transactions, so locks are held only briefly.
+
+When I see NOLOCK sprinkled all over old stored procedures, I take it as a sign there was a blocking problem in the past, and I go looking for the real cause.
+
+@p17-211
+SQL Server normally takes fine-grained locks, row or page locks, so different transactions can work on different rows of the same table at once. But every lock uses memory. When a single statement grabs a lot of locks on one table, around 5,000, or when lock memory gets high, SQL Server converts them into a single table lock. That's lock escalation.
+
+It saves memory, sure. But a table-level exclusive lock blocks everyone else on that table until the transaction ends. So a big update or delete, like updating 100,000 rows in one statement, can suddenly block every other user, even people working on completely unrelated rows.
+
+What I do to avoid it is process large changes in batches. Like 2,000 to 4,000 rows per transaction in a loop, so each batch stays below the escalation threshold and locks get released frequently. That's my standard approach for purges, backfills and big data fixes. Good indexes help too, because without them a statement might scan and lock far more rows than it actually changes.
+
+For partitioned tables, you can set the LOCK_ESCALATION table option to AUTO, so escalation goes to the partition level instead of the whole table. You can also disable it for a table, but that risks high lock memory, so I rarely do that.
+
+Monitoring tools and extended events can show you when escalation is happening.
+
+@p17-212
+When users say the system is hanging, blocking is one of the first things I check, honestly.
+
+For a live problem, I query sys.dm_exec_requests. It shows each running request, its wait type, how long it's been waiting, and the blocking_session_id. Following those blocking session ids leads you to the head blocker, the session at the top of the chain, which is blocking others but isn't blocked itself. Then I look at what it's running with sys.dm_exec_sql_text, and at its open transactions.
+
+The community procedure sp_WhoIsActive makes this much easier. It shows all active sessions with SQL text, waits, blocking info, and optionally plans and locks, in one result. Older stuff like sp_who2 works too, just with less detail.
+
+What I usually find is one of a few things. A transaction left open by application code, like a transaction started and then an exception swallowed without a rollback, or a session that's sleeping with an open transaction. A long-running update or report without good indexes. Or a query waiting for user input inside a transaction.
+
+For recurring or past blocking, I turn on the blocked process report with a threshold, like 10 seconds, and capture it with Extended Events, or use a monitoring tool.
+
+Killing the head blocker is a last resort, because its transaction rolls back, and that can take a while. The real fix is shorter transactions, better indexes, or RCSI.
+
+@p17-213
+So Query Store is a SQL Server feature, on by default for new databases since SQL Server 2022 and in Azure SQL. It records the history of queries, their execution plans, and runtime stats like duration, CPU, reads and executions, over time. Basically a flight recorder for query performance.
+
+It's really useful in a few situations. Plan regression is the big one. When a query suddenly gets slow, Query Store shows whether its plan changed, and you can compare the old good plan with the new bad one. Then you can force the good plan as an immediate fix while you work on the root cause. It also helps find top resource consumers, which queries eat the most CPU or I/O over a period. And comparing before and after a release or an index change. On SQL Server 2022, things like parameter-sensitive plan optimisation and query store hints build on it too.
+
+To use it, I look at the Regressed Queries and Top Resource Consuming Queries reports in SSMS, or query the catalog views directly.
+
+[That's how we diagnosed a query that went from 200 milliseconds to 5 seconds in March 2025: Query Store showed a new plan compiled for an unusual parameter value, a classic parameter sniffing case. Forcing the previous plan fixed it within minutes, and then we fixed the query properly.]
+
+@p17-214
+Both store intermediate results in tempdb, but they behave quite differently.
+
+A temporary table, with a hash prefix, like hash Kits, is a real table in tempdb. It has statistics, so the optimiser can estimate row counts properly. You can add indexes after creating it. It's visible to nested stored procedures called from the same session. It's affected by transactions and rollbacks. And it can trigger statement recompilations when its data changes a lot.
+
+A table variable, like at Kits, is declared like a variable and scoped to the batch or procedure. Historically it had no statistics, and the optimiser assumed it held one row. That led to terrible plans when it actually held thousands. Since SQL Server 2019, deferred compilation helps by using the actual row count at first execution, but there are still no column statistics. Its data isn't rolled back by a transaction rollback, which is occasionally handy for logging. And it causes fewer recompilations.
+
+My rule is, table variables for small sets, a few hundred rows or less, and for passing data around simply. Temp tables for bigger intermediate results, especially when they get joined or filtered further, because good statistics really matter there.
+
+And table-valued parameters, which pass a set of rows from .NET into a procedure, are table variables too. So the same thinking applies to them.
+
+@p17-215
+A table-valued parameter lets you pass a whole set of rows from the app to a stored procedure or query in one parameter, instead of making lots of separate calls or building a long IN list.
+
+You start by creating a user-defined table type in SQL Server, like a KitIdList type with a KitId column, and a primary key if it helps. The procedure declares a parameter of that type, which has to be READONLY. Inside, you join to it like any table.
+
+From .NET, with ADO.NET or Dapper, you build a DataTable, or a list of SqlDataRecord, or use Dapper's AsTableValuedParameter, and pass it as a SqlParameter with SqlDbType.Structured and the type name. EF Core can use it through raw SQL with a SqlParameter too.
+
+And the gains are big. One round trip instead of thousands. Set-based processing in SQL, like inserting or updating many rows in one statement. Fully parameterised, so no SQL injection, and the plan gets reused. Dynamic IN lists of different lengths create a new plan for every different count, which is a hidden cost people miss.
+
+For really large data, hundreds of thousands of rows, SqlBulkCopy into a staging table is faster.
+
+Also, since EF Core 8, a list Contains in LINQ gets translated using OPENJSON with a single JSON parameter, which solves the varying plan problem for simple cases.

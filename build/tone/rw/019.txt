@@ -1,0 +1,129 @@
+@p17-216
+So a scalar user-defined function returns a single value, and people often use it in a SELECT list or a WHERE clause, like a GetKitStatus function taking a KitId. It looks clean, but traditionally it's had serious performance problems.
+
+The function runs once per row, like a hidden loop, with its own overhead on every call. If the function itself queries tables, now you're running a query for every row, which is basically an N+1 problem inside the database. The optimiser couldn't see inside the function, so it estimated the cost badly. And queries using scalar functions couldn't go parallel at all, the whole query was forced into a serial plan.
+
+SQL Server 2019 brought scalar UDF inlining, which automatically turns many simple scalar functions into inline expressions and removes a lot of that cost. But not every function qualifies, like ones with certain constructs or ones that depend on the time. So I don't rely on it blindly.
+
+What I'd use instead, an inline table-valued function, which is a single SELECT statement returning a table. The optimiser expands it into the calling query like a view with parameters, so it's set-based and fully optimised, and you use it with CROSS APPLY. Or put the logic directly in the query with a join or a CASE expression. Or a computed column, persisted and indexed if needed.
+
+Multi-statement table-valued functions have similar problems, so I keep them out of hot paths too.
+
+@p17-217
+A view is a stored SELECT query that acts like a virtual table. It doesn't store data itself. When you query it, SQL Server expands its definition into your query. Views help simplify complex joins, give consumers like a reporting tool a stable interface while the underlying tables change, and help with security, since you can give users access to a view with selected columns and rows instead of the base tables.
+
+Performance-wise, a normal view is just a query. It's as fast as whatever it expands to. But views stacked on views get hard for the optimiser, and they can hide expensive joins, so I avoid deep nesting. I've seen a simple-looking view turn out to be six joins deep.
+
+An indexed view, what other databases call a materialised view, has a unique clustered index, so its result is actually stored and kept up to date automatically when the base tables change. It's great for expensive aggregations that get read a lot, like totals of kits by site and status. The query reads pre-computed results instead of aggregating millions of rows.
+
+But it comes with requirements and costs. The view has to be created WITH SCHEMABINDING, use two-part names, and follow a bunch of restrictions, like no outer joins or certain aggregates. And every insert, update and delete on the base tables also has to update the indexed view, so writes slow down and blocking can increase.
+
+So I use indexed views for read-heavy aggregates on tables that aren't written to heavily.
+
+@p17-218
+A trigger is code that runs automatically in the database when data changes, like AFTER INSERT, UPDATE or DELETE on a table, or INSTEAD OF a change, which is often used on views. Inside it, the special inserted and deleted tables hold the new and old versions of the affected rows.
+
+The good part is, a trigger runs no matter how the data gets changed, by the application, a script, a data fix, or some other system. That makes triggers useful for audit trails and history tables, for enforcing complex integrity rules that constraints can't express, and for keeping denormalised data in sync.
+
+The downsides are serious though. Triggers are hidden. Developers reading the application code don't see them, so behaviour feels magical and debugging is harder. They run inside the same transaction, so every write gets slower and locks are held longer. A really common bug is writing a trigger that assumes one row, when a statement can affect many rows at once. They have to be set-based. Triggers can call other triggers, creating chains nobody can follow. And business logic in triggers is hard to test and version.
+
+So honestly, I use triggers sparingly. Mainly for audit or history capture, where guaranteed coverage matters, and I keep them simple and set-based. Business rules go in the application layer.
+
+And for history, temporal tables are often a cleaner option now.
+
+@p17-219
+System-versioned temporal tables keep a full history of every change to a table, automatically. When you enable them, SQL Server adds two period columns, valid from and valid to, and creates a linked history table. Whenever a row is updated or deleted, the old version moves to the history table with the time range it was valid for. The application doesn't need any code for it.
+
+Then you can query data as it was at any point using FOR SYSTEM_TIME. AS OF a specific date and time, or BETWEEN two times, or ALL to see every version of a row. That's great for audits, for figuring out who changed this and what it was before, for recovering from accidental updates, and for reports that need data as of some past date.
+
+EF Core supports them too. You configure IsTemporal in the model, and LINQ gets TemporalAsOf, TemporalAll and similar methods.
+
+A few limitations though. Period times are in UTC, based on when the transaction started. It records what changed and when, but not who changed it or why. So for a regulated audit trail, you still need the user and the reason, usually stored in columns on the row itself. History tables can grow big, so you need a retention policy. And schema changes need some care.
+
+For regulated systems like ours, I'd say temporal tables are a solid foundation for history, combined with application-level audit information.
+
+@p17-220
+Partitioning splits one large table into multiple partitions based on a column, usually a date, like one partition per month. To queries it's still one table. Underneath, each partition is stored separately and can sit on different filegroups.
+
+Now the thing is, it's mainly a data management feature, not a magic performance feature. The big wins are around managing data. Partition switching is the main one. You can move a whole partition in or out of the table almost instantly, as a metadata operation. So archiving or deleting a month of old data becomes switching that partition out to an archive table, instead of a huge, slow, log-heavy DELETE. Loading data can work the same way. You also get maintenance per partition, so index rebuilds and stats updates can target only the recent active partitions. And lock escalation can go to the partition level.
+
+For queries, partition elimination helps when the query filters on the partition column, because SQL Server only reads the relevant partitions. But if queries don't filter on it, partitioning can actually make them slower, since every partition gets checked. Good indexes usually matter way more for query speed.
+
+So I'd consider partitioning for really big tables, hundreds of millions of rows, with a natural time-based access pattern and data lifecycle needs, like logs, events or audit records. For normal-sized tables, it's just complexity with no benefit.
+
+@p17-221
+Sharding splits data across multiple separate databases, often on separate servers, where each shard holds a subset of the rows based on a shard key, like tenant id or customer id. It's horizontal scaling for the database, for when one server can't handle the data volume or the write load, even after scaling up, indexing, and adding read replicas.
+
+Picking the shard key is the most important decision. A good key spreads data and load evenly and keeps related data together, so most queries hit just one shard. Tenant id is a natural choice in multi-tenant systems. A bad key creates hotspots, where one shard takes most of the traffic.
+
+And the challenges are real. Queries across shards, like global reports, have to fan out to every shard and combine results, which is slow and complex. You don't get transactions across shards, so you need sagas or careful design. Unique constraints and joins only work within a shard. Resharding, when a shard gets too big, means moving data while the system is live. And operations, backups, schema changes, monitoring, all multiply with the number of shards.
+
+So for me sharding is a last resort. Before that, I'd try caching, read replicas, archiving old data, and splitting data by service.
+
+Actually, database per tenant, like our database per study in IRT, is a simple form of sharding by tenant, where each study is fully isolated.
+
+@p17-222
+A read replica is a copy of the primary database, kept up to date through replication, that accepts read-only queries. Sending reporting and read-heavy queries to replicas takes load off the primary, which handles all the writes. In SQL Server that's Always On availability groups with readable secondaries, in AWS it's RDS and Aurora read replicas, and in Azure SQL it's read scale-out.
+
+In the app, I use separate connection strings. One for the primary, and one with ApplicationIntent set to ReadOnly for the replica, and route queries accordingly. Like a separate read-only DbContext for reports and search.
+
+The main pitfall is replication lag. Asynchronous replicas can be seconds behind, or more under heavy load. So if a user saves something and the next screen reads from a replica, they might not see their own change, and that looks like a bug to them. For that, I read from the primary right after a write, or route that user's reads to the primary for a short window.
+
+There are other gotchas too. Long-running queries on a replica can interfere with replication, depending on the database. Replicas need the same indexes, maybe extra ones for reporting. And failover changes which server is primary, so connect through the listener or cluster endpoint, never a server name.
+
+So replicas suit reports, exports and search, where a little staleness is fine.
+
+@p17-223
+The recovery model controls how the transaction log is managed, and that decides which restore options you have.
+
+In the simple recovery model, the log gets truncated automatically after checkpoints, so it doesn't grow much, but there are no log backups. You can only restore to the time of your last full or differential backup, and anything after that is gone. That's fine for dev databases or data you can easily rebuild.
+
+In the full recovery model, every change stays in the log until a log backup is taken. With a chain of full, differential and regular log backups, say every 15 minutes, you can restore to any point in time. Like just before someone ran a bad update at 10:42. That's essential for production databases with important data. But the log has to be backed up regularly, otherwise it keeps growing until the disk fills up. Honestly, that's a classic production incident.
+
+Bulk-logged is a variation that minimally logs bulk operations, used temporarily during large loads.
+
+These choices tie into RPO, how much data we can afford to lose, which drives log backup frequency, and RTO, how fast we have to recover, which depends on database size and restore speed.
+
+And backups are only real if restores are tested. I'd regularly restore to a test server to prove the backups work and to measure how long it takes. In managed services like RDS or Azure SQL, point-in-time restore is built in.
+
+@p17-224
+An implicit conversion happens when SQL Server compares two values of different data types and silently converts one to match the other, following data type precedence rules.
+
+It becomes a problem when the conversion gets applied to the column instead of the parameter. Classic example, the column is varchar, but the app sends the parameter as nvarchar, which is .NET's default for strings. nvarchar has higher precedence, so SQL Server converts every value in the varchar column to nvarchar to compare. Depending on the collation, that can turn an index seek into a scan of the whole table, because the index is on the original varchar values. The query still returns the right result, just much slower, and CPU goes up. It's sneaky because nothing looks broken.
+
+In the execution plan, you'll see CONVERT_IMPLICIT, and a warning icon on the SELECT operator saying the conversion may affect the cardinality estimate or seek plan.
+
+The fix is making the types match. In EF Core, I configure the column as non-Unicode, IsUnicode false or column type varchar, so EF sends varchar parameters. In Dapper or ADO.NET, I specify DbType.AnsiString for varchar columns. In stored procedures, parameters should be declared with the same type and length as the columns.
+
+Other common mismatches I've seen are numbers stored in string columns, and dates being compared to strings.
+
+@p17-225
+GUIDs are attractive as keys, I get it. They're globally unique, the application can generate them before saving, they don't reveal record counts, and merging data from different databases is easy.
+
+The problem is using a random GUID, from NEWID or Guid.NewGuid, as the clustered index key in SQL Server. The clustered index orders the table by its key. Random values mean every new row goes to a random spot in the index, not at the end. So you get constant page splits, heavy fragmentation, lower page density, more I/O, and more memory needed to keep the active part of the index cached. It's also 16 bytes, four times an int, and the clustered key gets copied into every non-clustered index, so all your indexes get bigger.
+
+What are the alternatives? Sequential GUIDs, either NEWSEQUENTIALID in SQL Server, or sequential generation in the app, like EF Core's default value generator for SQL Server, or the new UUID version 7 with Guid.CreateVersion7 in .NET 9, which is time-ordered. Then inserts go to the end, like an identity.
+
+Or use an int or bigint identity as the clustered primary key, and add a GUID as a separate public identifier with a unique non-clustered index, so external APIs don't expose sequential ids.
+
+For DynamoDB or other distributed stores though, random keys are actually good, because they spread load. So it really depends on the database.
+
+@p17-226
+An identity column generates incrementing values automatically for one table when a row gets inserted. Simple, and the most common choice. The app only knows the new id after the insert, which EF Core reads back with OUTPUT. Identity values can have gaps, after rollbacks or server restarts, so don't use them where gaps matter, like invoice numbers that have to be continuous.
+
+A sequence is an independent database object that hands out numbers on request with NEXT VALUE FOR. It's not tied to a table, so one sequence can provide ids for several tables, or a business number like a shipment reference. You can get a value before inserting, and control start, increment, cycling and caching. It also has gaps after restarts when caching is on.
+
+HiLo is an EF Core strategy that uses a sequence efficiently. EF reserves a block of ids at once, say 10, with one round trip, and hands them out to new entities in memory. So the app knows ids before saving, which helps when building object graphs, and batched inserts get more efficient, because EF doesn't need to read back generated ids one by one. What you give up is bigger gaps, and ids that aren't strictly in insert order.
+
+For business-facing numbers though, like a kit or shipment number with a format and no gaps allowed, I'd build a separate dedicated mechanism with proper locking. I wouldn't rely on identity values for that.
+
+@p17-227
+Soft delete means marking a record as deleted, with an IsDeleted flag and usually DeletedAt and DeletedBy columns, instead of physically removing it. It's common when data has to be kept for audit, regulatory reasons or undo, and in clinical systems that's basically the norm.
+
+In EF Core, I do it in two parts.
+
+One part is intercepting deletes. In a SaveChanges interceptor, or a SaveChanges override, I look in the ChangeTracker for entities in the Deleted state that implement an ISoftDeletable interface, switch their state to Modified, and set IsDeleted, DeletedAt and DeletedBy. So the application code just calls Remove like normal.
+
+The other part is hiding deleted rows. A global query filter, HasQueryFilter where not IsDeleted, gets added automatically to every query on that entity, Includes too. So deleted records disappear without every developer having to remember a Where clause. For admin or audit screens, IgnoreQueryFilters shows them. EF Core 10 adds named filters, so soft delete and tenant filters can be switched off separately.
+
+A few gotchas I've run into. Unique constraints have to allow a deleted duplicate, so you use a filtered unique index where IsDeleted equals 0. Related entities aren't deleted automatically, so you decide how cascades work. Performance needs indexes that include IsDeleted. And soft-deleted personal data may still need real deletion for privacy laws. That's easy to forget.

@@ -1,0 +1,135 @@
+@p17-252
+Okay, so a normal rowstore index stores data row by row. A columnstore index stores it column by column, in compressed segments of around a million rows each.
+
+That's ideal for analytics, queries that scan lots of rows but only a few columns. Like summing quantities by site and month over millions of shipments. The query reads only the columns it needs, the data is heavily compressed, often 10 times smaller, and SQL Server processes it in batch mode, many rows per operation, so aggregations get dramatically faster. Segment elimination also skips segments that can't match the filter.
+
+There are two main ways to use it. A clustered columnstore index makes the whole table columnar, which suits data warehouse fact tables and big history or log tables that are mostly appended and aggregated. A non-clustered columnstore index on a transactional table gives you real-time operational analytics. The OLTP workload keeps using the normal rowstore indexes, while reports use the columnstore, and you don't need a separate warehouse.
+
+The downside is they're bad for single-row lookups and frequent small updates. Updates go through a delta store and deleted bitmaps, and they need maintenance to stay efficient.
+
+So I'd consider a non-clustered columnstore for heavy reporting on a big transactional table, and clustered columnstore for warehouse or history tables. Aggregating supply and dispensing history for forecasting reports, for example, is a typical fit.
+
+@p17-253
+Both are SQL Server features for finding out what changed in tables, so other systems can sync or react, without adding timestamp columns or triggers everywhere.
+
+Change Tracking is the lightweight one. It records that a row changed, the primary key and the type of change, plus a version number, but not the old or new values. A consumer asks "what changed since version X?", and then reads the current values from the table. It's synchronous with the transaction, low overhead, and great for syncing caches, mobile clients or search indexes, where only the latest state matters.
+
+Change Data Capture is richer. It reads the transaction log asynchronously and records the full history of changes in change tables, inserts, deletes, and the before and after values of updates, in order. That suits auditing, data warehouse loading, and streaming changes to other systems. Tools like Debezium read CDC and publish each change as an event to Kafka, which is a common way to do the outbox pattern, or feed other services without touching application code.
+
+CDC costs more storage, needs SQL Server Agent jobs for capture and cleanup on-premise, and adds some latency and ops work. Change Tracking is simpler but you lose the intermediate values.
+
+So honestly the way I remember it, Change Tracking is "give me what's changed so I can sync", and CDC is "give me every change, with history".
+
+@p17-254
+Honestly there are a few ways, and the right one depends on what kind of data it is.
+
+HasData, in the model configuration, defines seed rows for an entity with explicit primary key values. EF Core puts inserts, updates and deletes for that data into migrations, by comparing with the previous model. It works well for small, stable reference data, statuses, country codes, types, stuff that should be identical in every environment. But keys have to be hard-coded, it can't depend on data already in the database, and changing large seed sets creates noisy migrations.
+
+EF Core 9 added UseSeeding and UseAsyncSeeding, configured on the DbContext options, which run custom seeding code when EnsureCreated or Migrate runs. That's more flexible. It can check whether the data's already there and use any logic you like.
+
+Custom migration code with migrationBuilder.Sql, or a post-deployment script in a database project, is another option. Especially when the data change has to happen at a precise point in the schema's evolution.
+
+For test data and local development, I keep it separate from reference data, in a seeding tool or test fixtures. Never in production migrations.
+
+In regulated systems, reference data changes are part of the validated release, reviewed just like code. And configuration that differs per study or customer isn't seed data at all. That belongs in configuration tooling, like our Admin console.
+
+@p17-255
+Row-level security lets the database itself filter which rows a user can see or change, based on who's running the query, without changing the queries at all.
+
+You create an inline table-valued function, the predicate, that returns a row when access is allowed. Like when the row's TenantId equals the tenant id stored in the session context. Then a security policy applies that function as a filter predicate on the table. So SELECT, UPDATE and DELETE silently see only allowed rows. Optionally you add a block predicate too, which stops anyone inserting or updating rows into another tenant.
+
+For apps that connect with one shared database login, the user or tenant identity gets set per connection with sp_set_session_context. For example through an EF Core connection interceptor right after the connection opens. And the predicate reads it with SESSION_CONTEXT.
+
+For multi-tenant databases it's a strong extra layer of defence. Even if a developer forgets a WHERE clause, or a reporting tool queries the table directly, other tenants' data isn't exposed.
+
+A few cautions though. The predicate runs on every query, so it has to be simple and backed by indexes, or performance suffers. Session context must be reset properly on pooled connections, that one's easy to miss. Admin and maintenance processes need a safe way to bypass it. And it doesn't replace authorization in the application, which still decides what each user is allowed to do.
+
+@p17-256
+So zone.js is a library that patches the browser's async APIs, setTimeout, promises, DOM events, XHR, so Angular knows whenever some async work finishes. After any of those, Angular runs change detection to update the view. That's why in classic Angular, changing a component property inside a click handler or an HTTP callback just works, without calling anything.
+
+But there are downsides. It's a fairly heavy library. It triggers change detection very often, even when nothing relevant changed. Async stack traces get harder to read. And native async await can't be patched, so Angular had to downgrade it during builds.
+
+The NgZone service lets you control it a bit. Like runOutsideAngular for frequent events, mousemove or a polling timer, so they don't trigger change detection on every tick.
+
+Zoneless Angular removes zone.js completely. Change detection is triggered explicitly by things Angular knows about, signals changing, the async pipe, event handlers bound in templates, and markForCheck. It was experimental in Angular 18, stable in 20, and it's the default for new apps since Angular 21. In older versions you configure it with provideZonelessChangeDetection.
+
+You get smaller bundles, better performance and cleaner debugging. To migrate though, components need to work properly with OnPush and signals, because code that changes state outside those triggers just won't update the view anymore. That's where most of the migration effort goes.
+
+@p17-257
+Since Angular 17, templates have built-in control flow blocks that replace the structural directives, ngIf, ngFor and ngSwitch.
+
+At-if with an expression shows a block, with else-if and else branches, and you can alias the result, like at-if user async as user. At-switch with case and default replaces ngSwitch. At-for loops over a collection, and it requires a track expression, like track item.id. That tells Angular how to identify each item so it can reuse DOM elements instead of recreating them when the list changes. There's also an empty block that shows when the collection is empty, and implicit variables like index, first, last and count.
+
+Why it's better, it's built into the compiler, so no importing CommonModule or the directives. It's more readable, especially else branches, which used to need ng-template references. Type narrowing works better inside if blocks. And it's faster. The mandatory track also fixes a really common performance mistake, because lots of teams forgot trackBy with ngFor and got full re-rendering of lists.
+
+The Angular CLI has a migration schematic for control-flow that converts existing templates automatically, so moving over isn't painful.
+
+In our newer Angular 17 study builder, we use the new syntax, while the older Angular 8 and 12 sub-apps still use the directives. So I go back and forth between both, honestly.
+
+@p17-258
+Okay so defer blocks came in Angular 17. A defer block lazily loads part of a template and its dependencies. Components, directives and pipes used only inside the defer block get split into a separate JavaScript chunk, which is downloaded and rendered only when some trigger condition happens.
+
+The triggers are on idle, which is the default, when the browser's idle. On viewport, when the placeholder scrolls into view. On interaction, when the user clicks or types in the placeholder. On hover. On timer, after a delay. On immediate. And when, with a condition. There's also prefetch, so you can download the code earlier, like on idle, but render it later, on interaction.
+
+Related blocks control what shows in the meantime. Placeholder before loading starts, with an optional minimum display time so it doesn't flicker. Loading while the chunk downloads. And error if loading fails.
+
+It's useful for heavy parts of a page that aren't needed straight away. Charts below the fold, a rich text editor, a comments section, a big dialog. The initial bundle gets smaller and the first render is faster, which helps metrics like Largest Contentful Paint.
+
+Before defer, lazy loading in Angular was mostly at the route level, or manual dynamic imports with ViewContainerRef. Now it's declarative and fine-grained. And with server-side rendering, Angular 19 added incremental hydration, where deferred blocks hydrate only when they're triggered.
+
+@p17-259
+Since Angular 17.1, components can declare inputs with the input function instead of the Input decorator. Like name equals input of string, or input.required of string. The input is a read-only signal, so in the template you read it as name with brackets, and in code you can use it in computed signals, like fullName as a computed of first plus last. Angular updates the signal whenever the parent passes a new value. So this replaces ngOnChanges and setters for reacting to input changes. And with required inputs, the compiler errors if the parent doesn't provide them. Transforms like booleanAttribute still work.
+
+The model function creates a writable input for two-way binding. A child declares value equals model of number, and can set it with value.set. The parent binds with the banana-in-a-box syntax, square brackets and parentheses, to a property or a signal, and changes flow both ways. Way simpler than the old pattern of an Input plus an Output with the Change suffix.
+
+The output function replaces the Output decorator with EventEmitter. Like saved equals output of Shipment, and you call saved.emit. It's lighter, and outputFromObservable can turn an RxJS stream into an output.
+
+There are also signal-based queries, viewChild, viewChildren, contentChild and contentChildren, which return signals instead of being set later.
+
+Put together, they make components fully signal-based, which plays really well with OnPush and zoneless change detection.
+
+@p17-260
+A computed signal derives its value from other signals, like total as a computed of the items reduced to a sum. It's lazy and memoised. It only recalculates when one of the signals it read has changed, and only when someone actually reads it. It's read-only and should be a pure function. That's the right tool for derived state, filtered lists, totals, flags.
+
+An effect runs a side-effect function whenever the signals it reads change. It tracks dependencies automatically, runs at least once, and gets cleaned up when its component is destroyed. Effects are meant for syncing with stuff outside Angular's signal world. Writing to local storage, logging, calling a third-party chart library, manual DOM work.
+
+Now the pitfalls, and I've seen people fall into these. Using effects to derive state, like an effect that sets another signal whenever some signal changes. That's what computed is for. The effect version causes extra change detection cycles, timing issues, and maybe even loops. Angular originally blocked signal writes inside effects by default for exactly this reason. Then unintended dependencies. Every signal you read inside the effect becomes a dependency, so reading something incidental re-runs it. untracked lets you read a signal without tracking it. And async work inside effects can race, so use the cleanup function, onCleanup, to cancel the previous work.
+
+For data loading driven by signals, the newer resource and httpResource APIs are usually a better fit than effects.
+
+@p17-261
+These are newer signal APIs, from around Angular 19 and 20. They fill the gaps between computed and writable signals, and between signals and async data.
+
+linkedSignal creates a writable signal whose value is derived from other signals, but the user can also set it. When the source changes, it resets to a new computed value. Classic example is a selected option. The list of options comes from an input, and the selected item should default to the first option, but the user can change it. When the options list changes, the selection resets. Before this, people did it with an effect writing to a signal, which was honestly messy.
+
+resource connects signals to async data. You give it a params function that reads signals, like the selected site id, and a loader function that fetches data. Whenever the params change, it calls the loader again and cancels the previous request with an AbortSignal. It exposes signals for value, status, isLoading and error, so the template can show a spinner or an error easily. rxResource does the same with an Observable loader, and httpResource wraps HttpClient directly, so interceptors still apply.
+
+They kill a lot of boilerplate for the common "reload data when a filter changes" pattern. And they avoid race conditions where a slower response arrives after a faster one and overwrites it.
+
+They're still evolving though, so I check their stability status for whichever Angular version we're on.
+
+@p17-262
+They're the bridge between RxJS and signals, from the rxjs-interop package.
+
+toSignal subscribes to an Observable and gives you back a signal with its latest value. I use it when a service exposes an Observable, like an HTTP call, route parameters or a store selector, but I want the value in a template or in computed signals. It subscribes immediately and unsubscribes automatically when the component or service is destroyed, so no manual subscription management. Since an Observable might not emit synchronously, the signal's initial value is undefined, unless you give an initialValue, or use requireSync for observables that emit right away, like a BehaviorSubject. Errors from the Observable are thrown when the signal is read, so I handle them in the stream first.
+
+toObservable goes the other way. It turns a signal into an Observable that emits when the signal changes. Useful when you need RxJS operators on signal values, like debounceTime and switchMap on a search term signal, to call an API and cancel outdated requests. And then often I convert the result back with toSignal.
+
+Both have to be called in an injection context, like a constructor or a field initialiser, or be given an Injector. People forget that and get an error.
+
+My general approach is signals for synchronous state and templates, RxJS for complex async event streams, and these two functions right at the boundary between them.
+
+@p17-263
+So Angular has two ways to get dependencies. Constructor injection declares them as constructor parameters, like private http of type HttpClient in the constructor. The inject function, available since Angular 14, gets them from inside the class body or a function, like private http equals inject HttpClient.
+
+Both use the same injector hierarchy, so you get the same dependency either way. The differences are practical.
+
+inject works in functions, not just classes. That's what enabled functional route guards, resolvers and HTTP interceptors, which are much shorter than the class-based ones. It also allows reusable helper functions that inject things, like an injectStudyId function that reads the route.
+
+Inheritance gets easier. With constructor injection, a subclass has to repeat all the base class's dependencies and pass them to super. With inject, the base class just gets its own.
+
+It also works better with modern TypeScript and the useDefineForClassFields setting, where constructor parameter properties had ordering issues with field initialisers.
+
+The constraint is that inject only works in an injection context. During construction, in field initialisers, in factory functions, or inside runInInjectionContext. If you call it later, like in ngOnInit or a click handler, it throws.
+
+The Angular team recommends inject now, and there's a migration schematic to convert constructor injection. For unit tests, both work the same with TestBed, so that's not a concern.

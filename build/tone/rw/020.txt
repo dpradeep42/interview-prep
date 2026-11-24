@@ -1,0 +1,129 @@
+@p17-228
+Okay, so when you load an entity with several collection navigations using Include, like a Shipment with its Kits and its StatusHistory, EF Core by default generates one SQL query with JOINs. The problem is that joining two independent collections multiplies the rows. A shipment with 100 kits and 20 history entries returns 100 times 20, so 2,000 rows, each one repeating all the shipment's columns. Add more collections or more parent rows and the data transferred just explodes. That's the cartesian explosion, and EF Core actually logs a warning about it.
+
+AsSplitQuery tells EF Core to load each collection with a separate SQL query. One for the shipments, one for the kits, one for the history, and they get stitched together in memory. Total rows become 1 plus 100 plus 20, instead of 2,000. You can turn it on per query, or make it the default with UseQuerySplittingBehavior.
+
+But split queries aren't free. More round trips to the database. And consistency, because the separate queries don't run as one snapshot. If data changes between them, results can be inconsistent, unless you use a transaction with snapshot or serialisable isolation. And ordering with Skip and Take needs a unique, stable sort.
+
+So I use single queries for one collection or small data, split queries for multiple large collections. And honestly, often the best option is projecting with Select into exactly the DTO shape the screen needs.
+
+@p17-229
+Interceptors let you hook into EF Core's operations and inspect, change or suppress them. You register them with AddInterceptors when configuring the DbContext, and they can use dependency injection.
+
+You've got a few kinds. SaveChanges interceptors run before and after SaveChanges, with access to the ChangeTracker. Command interceptors wrap every SQL command, so they see the command text and parameters and can modify them or the results. Connection interceptors run when connections open and close, transaction interceptors around transactions, and materialisation interceptors when entities get created from query results.
+
+In my project, what we used them for, audit fields first of all. A SaveChanges interceptor sets CreatedBy, CreatedAt, ModifiedBy and ModifiedAt on any entity implementing IAuditable, using the current user service, so no developer has to remember. Audit trail too, capturing old and new values of changed properties into audit records in the same SaveChanges. Soft delete, turning deletes into updates of an IsDeleted flag. Outbox, converting domain events raised by entities into outbox rows in the same transaction. Slow query logging, a command interceptor that logs commands above a threshold with their duration. And connection setup, like setting session context with the tenant id through sp_set_session_context, for row-level security.
+
+The nice part is all these cross-cutting things live in one place, not scattered through business code.
+
+@p17-230
+Value converters transform a property's value when it's written to the database and when it's read back. You configure them with HasConversion in the model configuration.
+
+Where I use them, enums as strings is the most common. HasConversion of string stores Delivered instead of 3, which is readable in the database and safe if enum members get reordered. Strongly typed ids, like a ShipmentId record struct wrapping a Guid or int, converted to the primitive for storage, so the domain model can't mix up a ShipmentId with a SiteId. Value objects, like a Money or EmailAddress type stored as a simple column. Collections or small objects stored as a delimited string or JSON, though JSON columns are better for that now. Date handling, like always storing DateTime as UTC and restoring the Kind on read. And encryption, encrypting a sensitive column on write and decrypting on read, though database features like Always Encrypted are usually stronger.
+
+EF Core has lots of built-in converters, and since EF Core 6, pre-convention model configuration can apply a converter to every property of a type in one go.
+
+The main catch is querying. EF translates queries using the stored values, so some operations on converted properties just can't be translated to SQL, like calling methods on a value object. Equality comparisons usually work fine, but anything fancier might fail or force client evaluation. So I always test the queries I actually need.
+
+@p17-231
+From EF Core 7, you can map an owned type, or a collection of owned types, to a single JSON column, using ToJson in the configuration. Like a Study entity storing its flexible settings, or a shipment its list of temperature readings, as JSON, while the rest of the entity stays in normal columns.
+
+The nice part is queries still work in LINQ. EF translates filters on JSON properties into SQL Server's JSON functions, like JSON_VALUE and OPENJSON. So you can write a Where on Settings.MaxKits greater than 10, and it becomes SQL. Updates can modify just part of the JSON. EF Core 8 added primitive collections, like a List of int stored as JSON. And SQL Server 2025 and Azure SQL now have a native json data type, which is more efficient than nvarchar.
+
+When does it fit? Data that's naturally a document, owned by one entity and usually read together with it. Flexible attributes that vary by study or customer, configuration blobs, small nested lists. It saves you lots of tiny tables and joins.
+
+When doesn't it fit? Data that needs relational integrity, foreign keys, frequent filtering and sorting, or joins with other tables. Filtering on JSON properties can't use normal indexes unless you add computed columns with indexes on the extracted values.
+
+So I use it selectively. Honestly, it shouldn't become a way to avoid designing a schema.
+
+@p17-232
+Normally ASP.NET Core creates a new DbContext for each request and disposes it at the end. Creating one is fairly cheap, but in very high-throughput services, the setup work, initialising internal services and the change tracker, does add up.
+
+With AddDbContextPool instead of AddDbContext, EF Core keeps a pool of DbContext instances. A request takes one from the pool, and at the end the context gets reset, tracked entities and state cleared, and goes back for the next request. That cuts allocation and setup overhead. AddPooledDbContextFactory does the same for code that creates contexts through a factory, like background services or Blazor.
+
+Benchmarks show real gains only at very high request rates with simple queries, so for a lot of apps it's a minor optimisation. I'd turn it on when profiling shows context creation in the hot path.
+
+Now the important limitation. Since instances are reused, the DbContext must not hold per-request state in its own fields, like a tenant id or current user injected through the constructor. A pooled instance could carry one request's state into another one, which is scary in a multi-tenant system. Constructor injection of scoped services into a pooled DbContext doesn't work the usual way. For multi-tenant cases, I set the per-request state after getting the context from the pool, with a factory or some custom approach that resets it.
+
+And just to be clear, this is different from database connection pooling, which ADO.NET does anyway.
+
+@p17-233
+ADO.NET keeps a pool of open database connections per connection string, 100 by default. When code opens a connection, it gets one from the pool, and closing or disposing it gives it back. If all connections are in use, the next request waits, and after the timeout it fails with that famous error, "Timeout expired, the timeout period elapsed prior to obtaining a connection from the pool", which says max pool size was reached.
+
+What usually causes it? Connection leaks, number one. Code opening connections or data readers without disposing them, especially when an exception skips the close, so they never go back. Then long-running queries or transactions hogging connections. Sync-over-async or thread pool starvation, where connections are held while threads wait. A traffic spike with slow database responses, so more requests hold connections at once. And slightly different connection strings creating separate pools, which people don't expect.
+
+To diagnose, I check how many connections the app's host has in sys.dm_exec_sessions, look at what those sessions are doing, and review the code for missing using statements or DbContexts that aren't disposed. EF Core with DI handles disposal correctly if contexts are scoped properly.
+
+The fix is disposing connections with using, shorter transactions, faster queries, and async all the way. Bumping Max Pool Size just hides the problem, honestly, and it can overload the database.
+
+@p17-234
+Dapper is a micro-ORM. You write the SQL yourself, and Dapper maps results to objects and handles parameters. It's very fast, almost no overhead over raw ADO.NET, and you have full control over the SQL.
+
+EF Core is a full ORM. LINQ queries translated to SQL, change tracking, relationships, migrations, concurrency handling, interceptors, a lot more. Developers are productive, and the code is strongly typed and easy to refactor.
+
+The performance gap has narrowed a lot in recent versions. EF Core with AsNoTracking and projections to DTOs is close to Dapper for most queries, so performance alone rarely decides it anymore.
+
+I use EF Core for most application code, especially writes. Change tracking, relationship handling, concurrency tokens and transactions save a lot of code and a lot of mistakes. And for typical queries too.
+
+I reach for Dapper, or EF Core's raw SQL features like SqlQuery, when I need hand-tuned SQL. Complex reporting queries with window functions or CTEs, calls to legacy stored procedures, bulk reads where every millisecond counts, or databases EF doesn't model well.
+
+And using both in the same service is completely fine, they can even share the same connection and transaction.
+
+In our CIRT platform, the newer APIs use EF Core, while the legacy parts lean heavily on stored procedures with ADO.NET-style data access. So I work with both every week.
+
+@p17-235
+EnableRetryOnFailure turns on EF Core's retrying execution strategy for SQL Server. When a command fails with a transient error, like a brief network drop, a failover, or Azure SQL throttling, EF Core waits and retries automatically, with increasing delays, up to a max number of attempts. In cloud environments, where short blips are normal, that makes the app a lot more resilient.
+
+The catch is transactions. If I start a transaction myself with BeginTransaction, and a command fails halfway, EF can't just retry that one command, because the earlier work in the transaction was rolled back. So EF Core throws an error saying user-initiated transactions aren't supported with the retrying strategy. First time you see that it's confusing.
+
+The fix is wrapping the whole unit of work in the strategy. You get it with Database.CreateExecutionStrategy and call ExecuteAsync with a delegate that begins the transaction, does all the work, saves and commits. If a transient failure happens, the strategy re-runs the whole delegate from the top, including starting a new transaction.
+
+So the delegate has to be safe to repeat. It should reload any data it depends on instead of reusing state from the failed attempt, and avoid side effects outside the database, like sending an email, inside the retried block.
+
+There's also a subtle case where the commit actually succeeded but the connection failed before confirming it. Making operations idempotent, or using verifySucceeded, protects you from applying it twice.
+
+@p17-236
+char is fixed-length. char 10 always uses 10 bytes, padding shorter values with spaces. It's good for values that are always the same length, like a two-letter country code or a fixed-format code.
+
+varchar is variable-length, it uses only the bytes needed plus two bytes overhead, so it's better for values of varying length, like names or descriptions.
+
+nvarchar and nchar store Unicode, traditionally UTF-16, two bytes per character for most text. They can store any language, Japanese, Arabic, Hindi, accented names. varchar uses a code page, so characters outside it get lost or turn into question marks. Unless the column uses a UTF-8 collation, available since SQL Server 2019, which lets varchar store Unicode as UTF-8.
+
+So for any text users type, names, addresses, comments, especially in a global system, I use nvarchar, or varchar with a UTF-8 collation. For internal codes and identifiers that are guaranteed ASCII, varchar saves space.
+
+A couple more things I watch. Size columns realistically, not nvarchar max everywhere. Max types are stored differently, can't be index keys, and the declared size affects the memory grants the optimiser asks for. And match the parameter types from the app to the column types, because a mismatch, like nvarchar parameters against a varchar column, can cause implicit conversions and index scans. I've actually seen that one slow down a search screen badly.
+
+@p17-237
+NULL means unknown or missing. Not zero, not empty string. And it follows three-valued logic, so comparisons with NULL return unknown, not true or false.
+
+That gives you the classic surprises. WHERE Column equals NULL returns nothing, you have to use IS NULL. WHERE Status not equals Shipped excludes rows where Status is NULL, because NULL not equals Shipped is unknown. And NOT IN with a subquery that returns even one NULL returns no rows at all. That's a nasty one. NOT EXISTS doesn't have that problem, so I prefer it.
+
+COUNT star counts all rows. COUNT of a column counts only rows where that column isn't NULL. COUNT DISTINCT ignores NULLs too. Aggregates like SUM and AVG ignore NULLs, so AVG of a column with NULLs isn't the same as SUM divided by COUNT star. And SUM of all NULLs gives NULL, not zero, so I wrap it in COALESCE.
+
+For defaults, COALESCE is standard SQL and takes many arguments, while ISNULL is SQL Server-specific, takes two, and uses the first argument's data type, which can truncate values. That one's caught people out.
+
+NULLs in unique constraints, SQL Server allows only one NULL in a unique column, unlike some databases, so you use a filtered unique index to allow many.
+
+In design, I make columns NOT NULL unless a missing value genuinely means something.
+
+@p17-238
+WHERE filters individual rows before they're grouped. HAVING filters groups after GROUP BY and aggregation. So conditions on raw columns go in WHERE, and conditions on aggregates, COUNT, SUM, AVG, go in HAVING.
+
+Let me take an example. Find sites with more than 50 dispensed kits this year. WHERE dispense date is this year and status is Dispensed limits the rows first, then GROUP BY SiteId, then HAVING COUNT star greater than 50 keeps only the groups with enough kits.
+
+This follows the logical processing order of a query. FROM and JOINs, then WHERE, then GROUP BY, then HAVING, then SELECT, then ORDER BY, and last TOP or OFFSET. That order also explains why you can't use a SELECT alias in WHERE, because SELECT hasn't happened yet, but you can use it in ORDER BY.
+
+For performance, I put row conditions in WHERE whenever possible, not HAVING, so fewer rows get grouped. The optimiser can often move simple HAVING conditions on grouping columns into WHERE, but writing it properly makes the intent clear and doesn't depend on that.
+
+It sounds basic, but I've seen real bugs from it. Like a condition put in HAVING on a non-aggregated column. Or a filter on an outer-joined table sitting in WHERE, which quietly turned a LEFT JOIN into an inner join. That second one took a while to spot.
+
+@p17-239
+An upsert updates a row if it exists, or inserts it if it doesn't. Super common when syncing data from external systems, like vendor shipment statuses.
+
+SQL Server's MERGE can do it in one statement. MERGE into the target, USING the source, ON the key, WHEN MATCHED THEN UPDATE, WHEN NOT MATCHED THEN INSERT, and optionally WHEN NOT MATCHED BY SOURCE THEN DELETE. It's powerful for syncing a whole set of rows from a staging table.
+
+But MERGE has a reputation, and honestly it's earned. It isn't safe under concurrency by default. Two sessions can both see a row doesn't exist and both try to insert, and you get primary key violations, unless you add a HOLDLOCK or SERIALIZABLE hint. It's had a bunch of bugs over the years, especially with filtered indexes, triggers and certain features. And it's easy to write it in a way that does something you didn't expect.
+
+For single-row upserts, a lot of SQL Server developers, me included, prefer an explicit pattern inside a transaction. UPDATE with UPDLOCK and SERIALIZABLE hints, and if no rows were affected, INSERT. The lock hints prevent the race. For sets of rows, an UPDATE joined to the staging table, then an INSERT of the rows that don't exist yet, all in one transaction.
+
+EF Core doesn't have a built-in upsert yet, so for high volumes I go to SQL directly or use a library.
