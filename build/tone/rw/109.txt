@@ -1,0 +1,107 @@
+@p4-32
+Nullable reference types are a C# 8 feature that basically makes null-safety part of the type system.
+
+Once you enable it in the project, a normal reference type like string means "should never be null", and you mark something that can be null with a question mark, like string question mark. The compiler then does flow analysis and warns you if you might dereference something that could be null without checking, or if you assign null to a non-nullable reference. It doesn't change runtime behaviour, but it moves a whole class of NullReferenceException bugs to compile time.
+
+All our newer IRT projects have it enabled, and we treat the warnings seriously in code review. It also makes APIs self-documenting. If a method returns Shipment question mark, callers know they have to handle the not-found case.
+
+When enabling it on an older project, I do it file by file, so the team isn't hit with hundreds of warnings at once. I can talk about how we rolled it out.
+
+@p4-33
+Pattern matching lets me test the shape or type of a value and pull data out of it in a single, readable step.
+
+C# has quite a few forms of it. The is keyword with type patterns, like if x is Shipment s. Switch expressions, which return a value. Property patterns, which check properties, like a status equal to Dispatched. Relational patterns like greater than 10, logical patterns with and, or and not, and list patterns. It replaces long if-else chains and casting code, and the compiler can warn you if a switch doesn't cover every case.
+
+In our code, I use a switch expression on shipment status to decide the next allowed status, and a property pattern to calculate shipping priority, like express shipments at the top, then heavy ones, then the rest. It also helps when handling messages. A switch on the message type routes each event to the right handler.
+
+Honestly, it makes business rules much easier to read and review. I can write a small example if you like.
+
+@p4-34
+An extension method is a static method that you can call as if it were an instance method on an existing type, without modifying that type.
+
+You write it in a static class, and you put the this keyword before the first parameter, which is the type you're extending. Then it shows up in IntelliSense on that type. It's resolved at compile time, so it can't access private members, and a real instance method with the same signature always wins. All of LINQ, like Where and Select, is built as extension methods on IEnumerable and IQueryable.
+
+I use them for small, focused helpers. Like, a ToPagedResultAsync method on IQueryable, so every list API pages the same way. And for clean dependency injection registration, like services dot AddSftpProviders and app dot UseCorrelationId, so Program.cs reads like a story instead of fifty lines of setup.
+
+My rule is don't overuse them for business logic, because it hides where behaviour lives. I can show how we organise registration extensions.
+
+@p4-35
+An enum is a set of named constants backed by an integer type. Like ShipmentStatus with Created, Dispatched, Delivered and Cancelled.
+
+It makes code readable and type-safe compared with magic numbers or strings. The compiler stops you passing a random int where a ShipmentStatus is expected, and switch expressions can warn about missing cases. With the Flags attribute, values can be combined bitwise, like permissions. One thing people forget is that any integer can be cast to an enum, even if it isn't defined, so values coming from APIs or files have to be validated, say with Enum.IsDefined.
+
+We also decide deliberately how to store them. EF Core stores enums as int by default, but for audit-friendly tables we sometimes store them as strings, so the data is readable, and so reordering the enum can't silently change meaning. In APIs we serialise them as strings with JsonStringEnumConverter.
+
+And when an enum starts needing behaviour, like each status having its own rules about which next status is allowed, I replace it with a small class or a state machine, so the rules live in one place instead of being spread across switch statements.
+
+@p4-36
+An async deadlock happens when code blocks on async work, like calling dot Result or dot Wait on a task, in an environment that has a synchronization context.
+
+In classic ASP.NET or desktop UI apps, the synchronization context means the continuation after an await has to resume on the original thread. If that same thread is blocked waiting on dot Result, the task can never finish, because it needs the thread that's waiting for it. So both wait forever. ASP.NET Core doesn't have that synchronization context, so you don't get this exact deadlock, but blocking still causes thread-pool starvation under load, where requests pile up and the API slows to a crawl.
+
+The fix is async all the way. Await instead of blocking, and make callers async too. In library code we use ConfigureAwait false so it's safe in any environment.
+
+I've actually seen the starvation version in practice. An old helper that called dot Result on an HTTP call caused timeouts under load, and making it async fixed it. I can explain how I spotted it.
+
+@p4-37
+ConfigureAwait controls where the code after an await carries on running. ConfigureAwait false says "I don't need to come back to the original synchronization context, any thread-pool thread is fine."
+
+This matters in environments that have a synchronization context, like WinForms, WPF or classic ASP.NET. There, by default, the continuation is posted back to the original UI or request thread. That costs a context switch, and if someone blocks on the task with dot Result, it can deadlock, because the thread the continuation needs is the one that's blocked. With ConfigureAwait false, the continuation runs on the pool, so it's a bit faster and avoids that deadlock.
+
+ASP.NET Core has no synchronization context, so in application code like controllers and services it makes no practical difference, and we don't clutter our code with it. But in reusable libraries, which might be used from any kind of app, I still add ConfigureAwait false to every await. Our shared SFTP library does that, for example.
+
+The real fix for deadlocks is still async all the way, I'd say. I can explain that in more detail if useful.
+
+@p4-38
+LINQ stands for Language Integrated Query. It's a set of query operators built into C#, like Where, Select, OrderBy, GroupBy, Join, Any and Sum, that work the same way on lots of data sources.
+
+Over in-memory collections, which are IEnumerable, LINQ runs as normal C# code using delegates. Over IQueryable, like an EF Core DbSet, it builds an expression tree that the provider translates into SQL, so the work happens in the database. You can write it with method syntax, which is most common, or query syntax that looks like SQL. Most operators use deferred execution, so the query only runs when you enumerate it or call ToList.
+
+I use LINQ every day. The important skill, honestly, is knowing where each part runs. Like, on our shipment search I make sure the filters and paging are translated to SQL, and I check the generated SQL in logs, so we don't accidentally pull thousands of rows into memory or trigger client-side evaluation.
+
+LINQ makes data code short and readable. I can explain IEnumerable versus IQueryable in more detail.
+
+@p4-39
+These three collection interfaces build on each other, each one adding more abilities.
+
+IEnumerable is the simplest. It only lets you loop over items, forward only, and it supports deferred execution. ICollection adds Count, Add, Remove, Contains and Clear, so you know the size and can change the contents. IList adds access by index, like getting item number five, plus Insert and RemoveAt. There are also read-only versions, IReadOnlyCollection and IReadOnlyList, which give Count and indexing without allowing changes.
+
+My rule for API design is accept the smallest interface you need, and return the most useful read-only type. If a method only loops over items, it takes IEnumerable, so callers can pass a list, an array or a query. If it needs the count up front, it takes IReadOnlyCollection. And methods usually return IReadOnlyList, so callers can index but can't modify our internal list.
+
+One caution though. Accepting IEnumerable and enumerating it twice can run an expensive query twice. I can explain that trap if useful.
+
+@p4-40
+These four LINQ methods all return one element, but they behave differently when there are zero or multiple matches.
+
+First returns the first matching element and throws if there's none. FirstOrDefault returns the first match, or the default value, which is null for reference types, if there's none. Single expects exactly one match. It throws if there are none, and also throws if there's more than one. SingleOrDefault allows zero, returning default, but still throws if there's more than one. In SQL terms, Single fetches up to two rows to check for duplicates, while First fetches one.
+
+So the choice expresses intent. I use Single or SingleOrDefault when looking up by something that has to be unique, like a study code or a kit number, because if duplicates exist, that's a data bug and I want to know about it immediately rather than silently picking one. I use FirstOrDefault when "not found" is normal, usually with an OrderBy so "first" is well-defined.
+
+Using First without an order is a subtle bug, because the database can return rows in any order. That one bites people. I can give more examples if helpful.
+
+@p4-41
+Any and Count can both tell you whether there are items, but Any is the right tool for checking existence.
+
+Any stops as soon as it finds one matching item, so it's cheap no matter how big the data is. Count has to go through every item to count them, unless the collection already knows its size. In EF Core, Any translates into an EXISTS query, which SQL Server can stop at the first row, while Count translates to SELECT COUNT, which has to count every matching row. On a big table that difference is huge.
+
+Note that the Count property on a List or an array is different, it's already stored, so reading it is free. The issue is the Count method on queries and lazy sequences.
+
+So in our code, a check like "does this study already have an active import" is written with AnyAsync, never CountAsync greater than zero. Code analyzers even flag that pattern now, which I think is great. I can explain how to verify the generated SQL if useful.
+
+@p4-42
+A closure is a lambda or local function that captures variables from the code around it, and keeps using them even after that outer method has finished.
+
+Under the hood, the C# compiler moves captured variables into a hidden class, and both the outer method and the lambda share that object. That's why the lambda sees the latest value of the variable, not a copy from when it was created. It's really useful, like in LINQ filters that use a method parameter, or in callbacks.
+
+Now, a couple of classic pitfalls. Capturing a loop variable is the famous one. In old C# a foreach loop shared one variable, so all the lambdas saw the last value. Modern C# fixed foreach, but a for loop index can still surprise you. And a closure can keep a large object alive longer than expected, like an event handler lambda that captures a big service, which becomes a memory leak if it's never unsubscribed.
+
+In performance-sensitive code, I also watch for closures allocating on every call, and use static lambdas where possible. I can show the loop-variable bug in code if you like.
+
+@p4-43
+The Liskov Substitution Principle says that objects of a derived type should work anywhere the base type is expected, without the caller getting surprises. A subtype can add behaviour, but it has to keep the base type's promises.
+
+The textbook violation is Square inheriting from Rectangle. If code sets the width of a rectangle and expects the height to stay the same, a Square breaks that expectation. A more realistic violation is a read-only repository that inherits a Save method and throws NotSupportedException. The fix there is to split the interface, not to throw.
+
+In my SFTP component, Liskov was a real design goal. All three providers implement ISftpClient, and they have to behave the same way for the caller, same behaviour when a file already exists, same timeout handling, and every failure surfaces as our own SftpTransferException, never a silent failure or a library-specific exception. I enforced that with a shared set of contract tests that every provider has to pass.
+
+Honestly, that's why we could switch a vendor from ComponentPro to Rebex with only a configuration change. I can explain the contract tests if useful.
