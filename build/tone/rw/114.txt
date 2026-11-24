@@ -1,0 +1,107 @@
+@p4-92
+Both control what an authenticated user can do, but policies are more flexible, honestly.
+
+Role-based authorization checks whether the user is in a role, like Authorize with Roles equals StudyManager. It's simple, but coarse. You end up with lots of roles and checks scattered across code. Policy-based authorization defines a named policy, made of one or more requirements. A requirement can check a claim, a role, or run custom logic in an authorization handler. I register policies in AddAuthorization in Program.cs, then use Authorize with Policy, or RequireAuthorization on minimal API endpoints. Roles are really just one kind of policy underneath.
+
+For checks that depend on the actual data, there's resource-based authorization. I inject IAuthorizationService, and call AuthorizeAsync with the user, the resource and a requirement.
+
+That's essential in our clinical system. Being a study manager isn't enough, you have to be assigned to that specific study. So we have a StudyAccess requirement and handler that checks the user's study assignments, and returns 403 if they're not on the study. I can show that handler.
+
+@p4-93
+Over-posting, also called mass assignment, is when a client sends extra fields that the server didn't intend to accept, and they get saved because the API binds directly to an entity.
+
+Like, a user updates their profile, but adds "isAdmin: true" or "status: Approved" to the JSON. If the action takes the EF entity as its parameter and saves it, those fields get written to the database. It's a well-known security issue in the OWASP API Top 10.
+
+The main prevention is input DTOs. Each endpoint has a request DTO containing only the fields that the client is allowed to set. Then the service layer loads the entity and maps only those fields onto it. Server-controlled values, like status, created-by and approval flags, are set by the server logic, never by the client. The Bind attribute is an older alternative, but I'd say DTOs are cleaner.
+
+We also have tests that send extra fields, like a different study id or an approval flag, and assert they're ignored. In a GxP system, an unauthorised status change would be an audit finding, so we take it seriously. I can talk about how this relates to authorization checks.
+
+@p4-94
+Large payloads can exhaust memory and threads, so I handle them a few different ways.
+
+Limits come before anything. Kestrel has a default maximum body size of about 30 MB, and I set tighter limits per endpoint with the RequestSizeLimit attribute, so oversized requests get rejected early, before we read them. Then streaming. Instead of buffering the whole body into memory, or into a big model object, I read the request stream directly and process it incrementally. For really large files, I don't send them through the API at all. The client uploads directly to S3 using a presigned URL, and the API only gets the object key. For heavy processing, the API accepts the request, returns 202 Accepted, and a background worker does the work. And on the response side, pagination and response compression.
+
+Our CSV import basically follows this. Files are limited to [5 MB, roughly 10,000 rows], the parser streams rows instead of loading everything, and processing runs in the background with a status endpoint. Each user can have at most [2] imports running at once.
+
+I can explain the presigned URL flow in more detail.
+
+@p4-95
+For file uploads, I think about three things, size, safety and where the file ends up.
+
+For small files, I accept an IFormFile with a request size limit. For larger ones, I stream the multipart body with MultipartReader, so the file isn't buffered in memory, or I use presigned S3 uploads, where the client uploads straight to S3. Then validation. I check the size, the extension against an allow-list, and the actual content, like magic bytes, because the extension and content type can be faked. I never trust the original file name, I generate a random one. Files are stored outside the web root, usually in S3 with encryption, and scanned for malware when required. Processing happens asynchronously.
+
+Our CSV import is a good example. The upload is limited to [5 MB]. We check it's really a CSV, then a streaming parser validates the header and each row, collecting all row errors with their line numbers, before anything is saved. Users get a clear error report instead of a partial import, which honestly they really like.
+
+I can explain how we avoided importing the same file twice.
+
+@p4-96
+For me, production-ready means the API isn't only correct, but also safe, observable and easy to operate at 2 a.m.
+
+I think in six areas. Contract, so DTOs, OpenAPI documentation, versioning, which matters for us because our APIs serve the legacy portal, the new React modules and integrations, validation, and consistent ProblemDetails errors. Security, so HTTPS, JWT authentication, policy and resource-level authorization, rate limiting, restricted CORS, and secrets in a secret store. Resilience, timeouts and retries with Polly for downstream calls, idempotency keys for creates, health checks and graceful shutdown. Observability, structured logs with correlation ids, metrics, tracing and CloudWatch alarms. Performance, async all the way, paging, caching and efficient queries. And quality, automated tests, and a CI/CD pipeline with quality gates and security scans.
+
+A detail people often skip is validating configuration at startup, with ValidateOnStart, so a missing setting fails the deployment instead of the first request.
+
+When I joined new work, I turned this into a checklist that every new service in our team follows. That's how our correlation-id middleware ended up in [4] services. I can go deeper into any area.
+
+@p4-97
+Validation should happen at every boundary, but each layer validates for a different purpose.
+
+At the API layer, I validate the shape and format of the request, required fields, lengths, ranges, formats, using data annotations or FluentValidation. ApiController returns a 400 automatically when that fails, so bad input is stopped as early and cheaply as possible. In the service or domain layer, I validate business rules, which need context or data, like "a site must belong to an active depot", or "you can't ship more kits than are available". Those return a 422 with a clear message. And in the database, constraints are the final safety net, primary and foreign keys, unique indexes and check constraints. They catch anything that slips through, including race conditions between two concurrent requests.
+
+UI validation is useful for user experience, but it's never trusted, because anyone can call the API directly. People forget that.
+
+In our system, the unique site number is checked in the service for a friendly message, and enforced by a unique index for correctness. I can explain how we report multiple validation errors at once.
+
+@p4-98
+Duplicate requests happen all the time. Users double-click, clients retry after a timeout, and message brokers redeliver. So I design for it on purpose.
+
+The main technique for creates is an idempotency key. The client sends a unique key, often in an Idempotency-Key header. The server stores the key with the result of the first request. If the same key comes again, it returns the stored result instead of executing again. I back that with database protection, natural keys with unique constraints, so even a race between two requests can't create two rows, and optimistic concurrency for updates. On the client side, disabling the button after submit helps, but honestly it's never enough.
+
+For messaging, consumers are idempotent too. We store processed message ids, so redelivered messages are skipped.
+
+A real example is our CSV import. We store a hash of each uploaded file per study. If the same file is uploaded again, we reject it with a clear message instead of importing the rows twice. I can explain how idempotency keys expire.
+
+@p5-1
+Entity Framework Core is Microsoft's open-source ORM, an object-relational mapper, for .NET. It lets me work with the database using C# classes and LINQ, instead of writing SQL and mapping rows by hand.
+
+It maps entity classes to tables and properties to columns, using conventions plus configuration in OnModelCreating. When I write a LINQ query over a DbSet, EF Core translates it into SQL, runs it, and turns the rows back into objects. When I change objects and call SaveChanges, its change tracker works out the INSERT, UPDATE and DELETE statements and runs them in one transaction. Migrations keep the database schema in step with the model. It supports many databases through providers, like SQL Server, PostgreSQL, SQLite and Cosmos DB.
+
+The cost is a little overhead and the risk of inefficient queries if you don't watch the generated SQL. So I always check the SQL for important queries, that's my rule.
+
+In our IRT services, EF Core with SQL Server is the main data access layer. We use AsNoTracking and projections for reads, ExecuteUpdate for bulk changes, and reviewed idempotent migration scripts for releases. I can go into any of those.
+
+@p5-2
+ADO.NET and EF Core both talk to the database, but at very different levels of abstraction.
+
+ADO.NET is the low-level foundation. You open a connection, create a command with SQL text and parameters, execute it, and read rows with a data reader, mapping each column to your objects by hand. It's the fastest option and gives full control, but it's a lot of repetitive code and easy to get wrong. EF Core sits on top of ADO.NET. You write LINQ, and it generates the SQL, maps the results, tracks changes, handles relationships, and manages migrations. That's much more productive and safer for everyday work, with a small performance overhead that rarely matters.
+
+There's also a middle ground, Dapper, a micro-ORM, where you write the SQL yourself, and it maps the results to objects really quickly.
+
+My rule is EF Core for most CRUD and business operations, and Dapper or raw ADO.NET for hot paths or complex reporting SQL that's been tuned by hand. In our services, almost everything is EF Core, with a few heavy reports using Dapper. I can explain when EF Core's overhead actually matters.
+
+@p5-3
+DbContext and DbSet are the two central types in EF Core.
+
+DbContext represents a session with the database. It combines several responsibilities. It's a unit of work, because it collects changes and saves them together in one transaction, it holds the change tracker, which knows the state of every loaded entity, and it manages the database connection, opening it only when needed. The model, meaning table names, keys, relationships and indexes, is configured in OnModelCreating, usually with separate configuration classes per entity. In ASP.NET Core, a DbContext is registered as scoped, one per request, and it's not thread-safe.
+
+A DbSet of T represents a table, or more precisely the collection of entities of that type. I use it to query, with LINQ, which starts as an IQueryable that's translated into SQL, and to add or remove entities, which are saved on SaveChanges.
+
+In our IRT services, each bounded context has its own DbContext, like inventory and shipments, with only the DbSets it needs, rather than one giant context for the whole database. I think that keeps the models smaller and clearer. I can explain how we configure entities.
+
+@p5-4
+Both are used for eager loading related data, but at different levels of the object graph.
+
+Include loads a navigation property of the root entity you're querying. ThenInclude carries on from that navigation to load the next level down. Like, querying studies, Include sites, then ThenInclude shipments, loads each study with its sites, and each site with its shipments, all in one query. You can chain multiple Includes for different branches, and since EF Core 5 you can filter inside Include too, like only active sites.
+
+The thing to watch is that deep or multiple collection includes can create a huge result set, because SQL joins multiply the rows, which is called cartesian explosion. If a study has 300 sites and each has 50 shipments, the parent data is repeated for every row. AsSplitQuery fixes this by running a separate query for each collection. Often the better option is a Select projection into a DTO with just the fields needed.
+
+In our IRT services, I prefer projections for read endpoints and use Include mainly when loading an aggregate to update it. I can show an example of split queries.
+
+@p5-5
+EF Core migrations are how the database schema evolves in step with the C# model.
+
+When I change the model, like adding a property or an index, I run dotnet ef migrations add with a descriptive name, like AddShipmentStatusIndex. EF Core compares the current model with the last snapshot and generates a migration class with an Up method, to apply the change, and a Down method, to reverse it. I review that code like any other code, because generated migrations can do surprising things, like dropping and recreating a column on a rename, which loses data. If needed, I edit it, say to add a data migration step.
+
+For deployment, I don't run migrations automatically at application startup. I generate an idempotent SQL script with dotnet ef migrations script with the idempotent option. That script checks the migrations history table, so it can safely run against any environment. It's reviewed and applied by the release pipeline.
+
+In our regulated environment, honestly, that script is part of the release evidence for FV, UAT and production. I can explain how we keep migrations backward-compatible during rolling deployments.
