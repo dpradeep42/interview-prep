@@ -1,0 +1,147 @@
+@p7-34
+SFTP is the SSH File Transfer Protocol. It transfers files over an SSH connection, usually on port 22, so both the login and the data are encrypted. It's widely used for exchanging files between companies, like the order and status files we exchange with depot vendors.
+
+FTP is the original File Transfer Protocol. It sends everything, including the username and password, in plain text, so anyone on the network could read it. It also uses two connections, a control channel and a separate data channel, which makes firewalls harder to configure. Honestly, it shouldn't be used for anything sensitive.
+
+FTPS is FTP with TLS encryption added, the same encryption used by HTTPS. It's secure, but it's still FTP underneath, with separate control and data connections and ranges of ports, so it's more painful with firewalls and proxies. It also uses certificates, like HTTPS.
+
+SFTP, despite the similar name, isn't FTP at all, it's a completely different protocol built on SSH. It uses a single connection and a single port, which is simple for firewalls, and it supports authentication with SSH keys as well as passwords, plus host key verification.
+
+That's why SFTP is the standard choice for secure business file transfers, and it's what our IRT system uses with external vendors. I own the SFTP integration component, which works with three different SFTP libraries behind one interface.
+
+@p7-35
+So SFTP authentication basically happens in two directions. The client checks the server, then the server checks the client.
+
+Host key verification comes first. When the client connects, the server presents its host key. The client compares the key's fingerprint with the one it expects. If they don't match, it could be a man-in-the-middle attack, so the connection has to be refused. That's why we pin the expected fingerprint for each vendor in configuration, instead of accepting any key.
+
+Then the client authenticates, usually with a password or a private key.
+
+With password authentication, the client sends a username and password over the encrypted SSH connection. It's simple, but passwords can be guessed, reused or leaked, and they have to be shared with the other party.
+
+With private key authentication, the client has a key pair. The public key is given to the vendor and added to their server, and the private key never leaves our side. When connecting, the server sends a challenge, and the client proves it has the private key by signing it. Nothing secret is sent over the network, it can't be brute-forced in practice, and keys can be revoked individually.
+
+So private keys are much more secure, and they're what we prefer with vendors. Some vendors still need passwords, so our component supports both. Either way, the keys and passwords are stored in [an encrypted secrets store], never in code or configuration files.
+
+@p7-36
+Okay, so our SFTP integration supports three libraries, ComponentPro, SSH.NET and Rebex, because different vendors' servers work best with different ones. The key to switching between them was one abstraction.
+
+I defined an ISftpClient interface with the operations we need, connect, upload, download, list and delete. Each library has its own implementation of that interface, an adapter that translates our calls into that library's API and its errors into our own exception types. The rest of the code, like the jobs that send order files or collect status files, only uses the interface, and has no idea which library is underneath.
+
+A factory decides which implementation to use for each vendor, based on configuration. Like, the configuration for DepotA says Rebex, and another vendor says SSH.NET. When a job runs for a vendor, it asks the factory for a client, and gets the right one. So moving a vendor to a different library is just a configuration change, which still goes through our change control, but needs no code change or deployment.
+
+Every implementation passes the same set of contract tests, for things like overwriting files, timeouts and errors, so they really are interchangeable.
+
+This design made it safe to introduce Rebex in [2024]. We moved vendors over one at a time, starting with [one low-volume vendor] for [two weeks], and could switch back instantly.
+
+@p7-37
+SFTP connections to external vendors fail for lots of reasons, like network problems, vendor server restarts, or timeouts on slow links, so I built retries and failure handling into the shared base of our SFTP component, so every vendor and library gets the same behaviour.
+
+Every operation, like connect, upload or download, is wrapped in a Polly policy, with [3] retries, exponential backoff and jitter. So it waits a little longer before each attempt, with some randomness, to avoid hammering the vendor's server. Each retry uses a fresh connection, because a broken SSH session can't be trusted.
+
+The thing is, not every error is retried. Temporary errors, like timeouts, dropped connections or "server busy", are retried. Permanent errors, like a failed login, or a host key that doesn't match, aren't retried, because they won't fix themselves, and repeated failed logins could even get our account locked by the vendor. Those fail immediately with a clear message.
+
+There are also sensible timeouts on connecting and on each operation, so nothing hangs forever.
+
+If all retries fail, the job is marked as failed, the error is logged with the vendor, the file and a correlation id, and an alert goes to our support team. The next scheduled run tries again automatically, and because processing is idempotent, a retried upload or download never causes duplicates.
+
+This turned what used to be manual follow-ups into mostly self-healing transfers.
+
+@p7-38
+File integrity matters a lot for us, because these files carry shipment orders and status updates for clinical trial medication. I protect against corrupted and partial files on both upload and download.
+
+For uploads, the biggest risk is the vendor picking up a file while we're still writing it. So I upload with a temporary name, like a .tmp extension, and only rename it to the final name when the upload is complete. The rename is a quick, atomic operation on the server, so the vendor only ever sees complete files. After uploading, I compare the remote file size with the local size, and where the vendor supports it, we also exchange a SHA-256 checksum, so we can confirm the content is identical.
+
+For downloads, I only pick up files that are complete, following the vendor's convention, like a final name, a matching checksum file, or a marker file. After downloading, I check the size and checksum, and validate the content, like the header, the expected format and the record count in the trailer, before processing anything. If a file fails validation, it's moved to an error folder and an alert is raised, instead of importing bad data.
+
+For large files on slow connections, I use longer timeouts and resumable transfers where the library supports it.
+
+So basically, a network problem can delay a file, but never silently corrupt our data.
+
+@p7-39
+Duplicate files happen for normal reasons. A vendor resends a file, a retry after a timeout uploads it again, or a file stays on the server and gets picked up twice. Processing the same shipment update twice could cause wrong data, so I made the processing idempotent.
+
+It starts with predictable names. Files follow a naming convention with the vendor, the file type, a timestamp and a sequence number, so each file has a unique, meaningful name.
+
+Then a processed-files table in the database. Before processing a file, we check whether we've already seen it, using the file name and a SHA-256 hash of its content. The hash matters, because the same content might arrive with a different name, or a corrected file might come with the same name. If it's already been processed, we skip it, log it, and move it aside, without importing it again. The record is saved in the same transaction as the import, so a crash can't leave the file half-recorded.
+
+After successful processing, the file is moved to an archive folder on the server, so it isn't picked up again in the next run.
+
+And the records inside the files are handled idempotently too, using business keys like the shipment id and status, so even if two different files contain the same update, it's only applied once.
+
+So honestly, resends and retries are completely safe.
+
+@p7-40
+SFTP credentials give access to our vendors' systems, so I treat them like any other production secret.
+
+Storage comes first. Private keys and passwords are stored [encrypted in a secrets store]. They're never in the code, the repository, configuration files or build pipelines. The service reads them at runtime, under a service account that only has permission to read the specific secrets it needs.
+
+Then key-based authentication wherever the vendor supports it, because private keys are much stronger than passwords and are never sent over the network. Each vendor gets its own key, so one can be revoked without affecting the others.
+
+Host key pinning too. Each vendor's expected host key fingerprint is stored in configuration, and the connection is refused if it doesn't match, which protects against man-in-the-middle attacks.
+
+Rotation. Keys and passwords are rotated on a schedule, and immediately if there's any suspicion of exposure. The rotation is coordinated with the vendor and goes through our change control process, like any production change.
+
+No leaks in logs. Credentials are never logged, and error messages don't include them.
+
+And access to the secrets is limited to a few people, and every access is recorded in an audit log, which honestly helps a lot with auditing in our regulated environment.
+
+@p7-41
+Honestly, SFTP looks simple, but vendors' servers all behave slightly differently, so I've hit a few real problems.
+
+The biggest one was in [2024]. A depot vendor hardened their server and disabled older algorithms, like ssh-rsa with SHA-1. Our original library, ComponentPro, couldn't connect anymore, and shipment files stopped flowing to that vendor. We used SSH.NET for some vendors, but it had its own limitations there, so I evaluated options and brought in Rebex, which supported the modern algorithms. Because of our ISftpClient abstraction, I added Rebex behind the same interface, tested it, including with a [500 MB] file, and moved that vendor over by configuration.
+
+Another one, [one Monday], a vendor told us our order file hadn't arrived, though our logs showed a successful upload. The vendor had moved their pickup folder to [/inbound/irt], and announced it to a distribution list we weren't on. The file was sitting in the old folder. We fixed the configuration, and I added a post-upload check that confirms the file is visible in the expected folder, plus an alert if the vendor hasn't picked it up in time.
+
+And large files timing out on slow vendor links. I increased the operation timeouts and used resumable transfers where supported.
+
+What I took away is to verify outcomes, not just assume success, and to design for change.
+
+@p7-42
+I test an SFTP integration at several levels, because honestly the most painful bugs only show up against real servers.
+
+Unit tests come first. The business logic, like naming files, deciding which files to process, detecting duplicates and handling errors, depends only on our ISftpClient interface, so I test it with a mocked client. I can easily simulate failures, like a timeout on the second attempt, to check that retries and alerts behave correctly.
+
+Then contract tests for each library implementation. All three implementations, ComponentPro, SSH.NET and Rebex, run the same test suite against a real SFTP server, to prove they behave the same way, uploading, downloading, listing, overwriting existing files, handling a missing folder, and the errors they raise.
+
+Then integration tests against a real SFTP server in a container, an OpenSSH server started with Testcontainers in our CI pipeline. These cover key exchange, host key verification, password and key authentication, large files, like a [500 MB] file, timeouts and reconnects. I also configure the server to reject old algorithms, to mimic hardened vendor servers.
+
+In the test environments, connectivity tests against the vendors' test servers, if they provide them, before any change reaches production.
+
+And in our regulated process, changes go through FV, TechOps and UAT with recorded evidence, and a new library is rolled out to [one low-volume vendor] first.
+
+@p7-43
+WCF and Web API are two Microsoft technologies for building services, from different eras and with different goals.
+
+WCF, Windows Communication Foundation, came with .NET Framework 3.0. It's a general communication framework, designed mainly for SOAP services. It supports lots of transports, like HTTP, TCP, named pipes and message queues, and the WS-star standards, for things like message-level security, reliable messaging and transactions. It's very powerful, but complex, with a lot of configuration in XML, of endpoints, bindings and behaviours, and it's tied to the Windows-based .NET Framework.
+
+Web API, now part of ASP.NET Core, is designed specifically for HTTP services, usually REST with JSON. It uses HTTP the way it was meant to be used, resources in URLs, methods like GET, POST, PUT and DELETE, and status codes. It's lightweight, simple to configure, easy to call from any client, including browsers and mobile apps, easy to test, and runs cross-platform in containers.
+
+The practical point people miss is that WCF server isn't supported in modern .NET. There's a community project, CoreWCF, that helps migrate existing services, and modern .NET still has a WCF client for calling SOAP services. But new services are built with ASP.NET Core Web API for REST, or gRPC when you need high-performance, strongly typed service-to-service communication, which covers lots of the cases WCF was used for.
+
+Our IRT platform has some older WCF services, and new work is in ASP.NET Core Web API.
+
+@p7-44
+SOAP, the Simple Object Access Protocol, is basically a messaging protocol for web services, where every message is an XML document.
+
+A SOAP message is an envelope with two parts, an optional header, for things like security tokens, routing or transaction information, and a body, which has the actual request or response. Errors come back in a standard structure called a SOAP fault. Messages are usually sent over HTTP POST, but SOAP can use other transports too.
+
+A SOAP service is described by a WSDL document, the Web Services Description Language. It's a formal, machine-readable contract that defines every operation, its inputs and outputs, and the data types, using XML Schema. Tools read the WSDL and generate a strongly typed client proxy automatically, so the client code calls methods as if they were local. In .NET, that's Add Service Reference, or the dotnet-svcutil tool.
+
+SOAP also has a family of WS-star standards, like WS-Security for signing and encrypting messages, and others for reliable messaging and transactions. That's why it was popular in enterprise environments.
+
+The downsides are that it's verbose, heavier to process, and harder to use from browsers and mobile apps than REST with JSON.
+
+It's still common in older enterprise and healthcare systems. Our platform has some older WCF SOAP services, and some external systems still expose SOAP interfaces, so I work with it when integrating.
+
+@p7-45
+So in WCF, contracts basically define what a service offers, and you've got three main kinds, each marked with an attribute.
+
+A service contract defines the service itself. It's an interface marked with the ServiceContract attribute, and it describes the set of operations the service exposes, like IShipmentService. Clients see this as the service's public API.
+
+An operation contract marks each method of that interface that should be exposed, using the OperationContract attribute. Only methods with this attribute are part of the service. It can also control details, like whether the operation is one-way, meaning the client doesn't wait for a reply, and the action names used in SOAP messages.
+
+A data contract describes the data that's passed in and out. A class is marked with the DataContract attribute, and each property that should be serialised is marked with DataMember. It controls exactly which fields are included, their names, their order and whether they're required, and it supports versioning, so new optional members can be added without breaking old clients. The DataContractSerializer uses these to convert objects to and from XML.
+
+There are also fault contracts, which define the typed errors an operation can return as SOAP faults, and message contracts, for full control of the SOAP message.
+
+Together, these generate the WSDL that clients use. When we migrate a WCF service to ASP.NET Core, these contracts map pretty naturally to controllers, endpoints and DTOs.
