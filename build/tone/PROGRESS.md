@@ -1,6 +1,6 @@
 # Spoken-tone rewrite (t28u)
 - Tools: tone/check.py (AI-tell checker; args like p17-1:35, -v), tone/tool.py dump IDs / apply tone/rw/NNN.txt
 - Baseline before (all 1873): ban_ans 281, spoken_ans 203, spoken_open 9, contr/100w 1.40, burst 0.479, consec_open 149
-- Done: ALL p17 (rw 001..087); old o00..o10 (p1-1..p2-51, rw 088..098). Next: old batch o11 (bash tone/ob.sh 11), rw 099. Before-stats old: tone/before-old.txt
+- Done: ALL p17 (rw 001..087); old o00..o14 (p1-1..p3-23, rw 088..102). Next: old batch o15 (bash tone/ob.sh 15), rw 103. Before-stats old: tone/before-old.txt. NOTE: X lines are per paragraph; use unanchored unique-string seds.
 - Order: p17-36.. then p1..p16
 - NOTE: box refresh wipes build/ (untracked + gitignored files incl. tone/orig, node_modules). Commit locally after EVERY batch; restore with git restore build/ + npm install in build/.
