@@ -1,0 +1,133 @@
+@p17-396
+So Python 3.10 added the match statement, which compares a value against a series of patterns and runs the first case that matches. It's a lot more than a switch on values. It can match on the actual structure of data.
+
+The patterns you get, literal values, like case "pending". The wildcard underscore as a default. OR patterns, like case "shipped" or "delivered". Capture patterns, which bind parts of the value to names. Sequence patterns, like case first, then star rest, for lists. Mapping patterns, like a case with a "type" key equal to "kit_dispensed" and a "kit_id" key captured into a variable, which is really nice for handling JSON events or messages. And class patterns, like case Shipment with status equal to "cancelled", which match on type and attributes, using dataclass fields. Guards add extra conditions with an if after the pattern.
+
+Where I find it useful is routing messages or events by type and shape, parsing command-style inputs, and handling different variants of a result object. Kind of like discriminated unions in TypeScript, or switch expressions with pattern matching in C#.
+
+One gotcha that bites people. A bare name in a case is a capture pattern, not a comparison with a variable. case STATUS captures anything into a new variable called STATUS. To compare with constants, they need to be dotted names, like Status.PENDING from an Enum, or literals.
+
+@p17-397
+Okay, so Python gives you two ways to describe an interface-like contract.
+
+Abstract base classes, from the abc module, are nominal. A class has to explicitly inherit from the ABC and implement its abstract methods, otherwise it can't be instantiated. That's close to an abstract class or interface in C#, and it's enforced at runtime.
+
+Protocols, from typing, are structural, basically formalised duck typing. A Protocol defines the methods and attributes something must have, like an Embedder protocol with an embed method that takes a list of strings and returns a list of vectors. Any class with a matching method counts as an Embedder for the type checker, without inheriting from it or even knowing the Protocol exists. That's like interfaces in TypeScript or Go.
+
+Protocols are great for dependency injection and testing. In my RAG code, things depend on the Embedder protocol, not on the Azure OpenAI client. Production passes the real client wrapper, tests pass a simple fake class with an embed method, and mypy checks both fit the protocol. Even third-party classes I can't modify can satisfy a protocol.
+
+By default protocols are only checked statically, by mypy or Pyright. With the runtime_checkable decorator, isinstance checks work too, but they only check the methods exist, not their signatures.
+
+So I use Protocols for boundaries between components, and ABCs when I actually want to share implementation in a base class.
+
+@p17-398
+See, LEGB is the order Python uses to look up a name. Local, the current function's scope. Enclosing, the scopes of any outer functions. Global, the module's scope. And Built-in, names like len and print. First match wins.
+
+A closure is an inner function that remembers variables from its enclosing function's scope, even after the outer function has returned. Let me take an example. make_multiplier of n returns an inner function that multiplies its argument by n, and each returned function keeps its own n. Decorators rely on closures too, the wrapper remembers the original function.
+
+Assigning to a name inside a function makes it local by default. So if an inner function tries to increment a counter from the outer function, Python raises an UnboundLocalError, because the assignment makes it local and it's read before being assigned. The nonlocal keyword says the name refers to the enclosing function's variable, and global refers to the module-level one. I use nonlocal occasionally, global almost never, because module-level mutable state is hard to reason about and test.
+
+The classic gotcha is late binding. Closures capture variables, not values. Create lambdas in a loop, like functions that return i, and they all return the last value of i, because they look up i when called. The fix is binding the current value as a default argument, or using functools.partial.
+
+Honestly it's the same as the old C# closure-in-a-loop problem from older versions.
+
+@p17-399
+Actually SQS gives you two queue types.
+
+Standard queues give nearly unlimited throughput and at-least-once delivery, which means a message can occasionally come through more than once, and best-effort ordering, so messages can arrive out of order. They're the default for most workloads, as long as consumers are idempotent and don't depend on order.
+
+FIFO queues guarantee exactly-once processing within a deduplication window and strict ordering within a message group. Their names have to end in .fifo. Each message has a message group id, like a shipment id. Messages in the same group are delivered in order, one at a time, while different groups get processed in parallel. A deduplication id, or content-based deduplication, makes SQS drop duplicates sent within five minutes, which protects against producer retries.
+
+What you give up with FIFO is throughput. 300 messages per second per API action without batching, 3,000 with batching, and much higher with high-throughput mode, which partitions by message group. And if one message in a group keeps failing, it blocks that group until it's handled or moves to the dead-letter queue.
+
+So I use FIFO when order per entity really matters, like applying status changes for the same shipment in sequence, and standard queues everywhere else, with idempotent consumers and version checks to deal with duplicates and reordering.
+
+@p17-400
+Okay, when a consumer receives a message from SQS, the message isn't deleted. It just becomes invisible to other consumers for the visibility timeout, 30 seconds by default. The consumer has to process it and then explicitly delete it. If the consumer crashes or doesn't delete it in time, the message becomes visible again and another consumer picks it up. That's how SQS makes sure messages aren't lost.
+
+So the timeout has to be longer than the processing time. If processing takes 50 seconds and the timeout is 30, the message reappears while it's still being processed, a second consumer processes it too, and you get duplicates and wasted work. If the timeout is way too long, a message from a crashed consumer sits around a long time before being retried.
+
+My approach, set the visibility timeout comfortably above the typical max processing time, like six times the Lambda timeout when Lambda consumes the queue, which is what AWS recommends. For work with variable duration, the consumer extends the timeout while working, with ChangeMessageVisibility, like a heartbeat. On a known transient failure, the consumer can set visibility to a short value so the message is retried sooner, or a longer one for backoff.
+
+Combined with maxReceiveCount on a redrive policy, messages that keep failing go to the dead-letter queue instead of looping forever.
+
+And consumers stay idempotent, because duplicates can still happen anyway.
+
+@p17-401
+So fan-out means one event gets delivered to several independent consumers. On AWS, the classic way is publishing to an SNS topic with several SQS queues subscribed to it. Each subscribed queue gets its own copy of every message, and each consumer service reads from its own queue.
+
+Let me take an example. When a shipment is delivered, the shipment service publishes one ShipmentDelivered message to an SNS topic. The notification service's queue, the reporting service's queue and the inventory service's queue each get a copy. The publisher doesn't know who's listening, and new consumers can be added just by subscribing a new queue, without touching the publisher.
+
+Why put SQS queues between SNS and the consumers, instead of subscribing consumers directly? Because the queues buffer messages. If a consumer is down or slow, its messages wait in its own queue, with retries and its own dead-letter queue, and it doesn't affect anyone else. SNS alone only retries delivery for a limited time.
+
+Handy features, subscription filter policies, so a queue only gets messages with certain attributes or body content, like only "Damaged" status events. Raw message delivery, so the queue gets the original payload without the SNS envelope. FIFO topics with FIFO queues when ordering matters. And encryption with KMS.
+
+The queue policies have to allow the topic to send to them, people forget that one.
+
+EventBridge is the alternative when you need more advanced routing rules.
+
+@p17-402
+Honestly they solve different messaging problems, so it's not really either-or.
+
+SQS is a queue. Messages wait until a consumer pulls and processes them, with one consumer group per queue. It's for buffering and distributing work, load levelling, and decoupling a producer from a single consumer that might be slow or temporarily down.
+
+SNS is publish-subscribe. A message published to a topic gets pushed immediately to all subscribers, like SQS queues, Lambda functions, HTTP endpoints, email or SMS. It's for simple, high-throughput fan-out, with basic filtering by attributes or payload.
+
+EventBridge is an event bus with rule-based routing. Events are JSON, and rules match on any part of the event's content with rich patterns, then route to lots of targets, over 20 AWS services, plus API destinations for third-party HTTP APIs, with input transformation. It receives events from AWS services and SaaS partners automatically, has a schema registry, can archive and replay events, and supports cross-account buses. EventBridge Scheduler handles cron-like schedules, and Pipes connects sources like SQS or DynamoDB Streams to targets with filtering and enrichment.
+
+My rule of thumb, SQS when work must be queued and processed reliably by one service. SNS for simple, very high-volume fan-out. EventBridge as the event backbone for event-driven architectures, with lots of event types, consumers and content-based routing. And they're often combined, EventBridge routing events into SQS queues that consumers process at their own pace.
+
+@p17-403
+See, SQS is a message queue, not a stream. Once a message is processed and deleted, it's gone. No replay, no multiple independent readers. It's ideal for task processing.
+
+Kinesis Data Streams is AWS's managed streaming service. Records are stored in shards for 24 hours by default, extendable up to a year. Multiple consumers can read the same stream independently, each tracking its own position, and replay data. Ordering is guaranteed per partition key within a shard. Capacity is per shard, about 1 MB per second in and 2 MB per second out, and there's an on-demand mode that scales automatically. It integrates closely with Lambda, with Firehose for loading into S3 or Redshift, and with analytics services. It's simpler to run than Kafka, but less flexible.
+
+Amazon MSK is managed Apache Kafka, with a serverless option too. It's the pick when the team or ecosystem already uses Kafka. Kafka clients, Kafka Connect connectors, Kafka Streams, existing tooling and skills, or portability across clouds and on-premise. You get longer retention, higher throughput per partition, compaction, and the full Kafka feature set, but you need more Kafka expertise.
+
+So yeah, SQS for job queues. Kinesis for AWS-native streaming, like clickstreams, logs, IoT telemetry and real-time analytics. MSK when Kafka compatibility matters.
+
+IQVIA's newer AWS services use Kafka for shipment events, since several consumers need the same stream and replay.
+
+@p17-404
+So Step Functions orchestrates multi-step workflows as state machines, defined in Amazon States Language. Tasks that call Lambda or over 200 AWS services directly, choices, parallel branches, maps over items, waits, and built-in retries and catch blocks per step. It's visual, so the workflow and each execution's progress are easy to see.
+
+You get two workflow types, and they're quite different.
+
+Standard workflows can run for up to one year. Each step executes exactly once, full execution history is kept for 90 days and visible in the console, and they support long waits and human approval steps using task tokens, where the workflow pauses until something calls back. Pricing is per state transition. They're for long-running, business-critical processes where auditability matters, like an order or onboarding workflow, or a data transfer with manual approval.
+
+Express workflows run for up to five minutes, with really high throughput, over 100,000 executions per second. Execution is at-least-once for asynchronous express, or at-most-once for synchronous, so steps should be idempotent. History goes to CloudWatch Logs instead of being kept by the service. Pricing is by number of executions, duration and memory, which is much cheaper for high-volume short workflows, like processing each incoming event or IoT message, or orchestrating a few calls behind an API request.
+
+A pattern I like combines them. A Standard workflow for the overall business process, calling Express workflows for the high-volume inner steps.
+
+@p17-405
+Okay, so when Lambda is triggered by SQS, it gets a batch of messages, up to 10 by default, or more with a batching window. Without special handling, if the function throws, the whole batch is treated as failed. All messages become visible again and get retried, including the ones that were processed fine. That means duplicate processing, and one bad message can keep the whole batch failing until everything ends up in the dead-letter queue.
+
+The fix is partial batch responses. I turn on ReportBatchItemFailures on the event source mapping. The function processes each message individually, catching errors per message, and returns a response listing only the message ids that failed, in batchItemFailures. Lambda deletes the successful messages from the queue and only makes the failed ones visible again.
+
+A few details I've learned. If the function throws instead of returning the list, the whole batch still fails, so the handler has to catch per-message exceptions. For FIFO queues, once a message fails, you should stop processing and report it and all the following messages in that group as failed, to keep ordering. The redrive policy's maxReceiveCount sends repeatedly failing messages to the DLQ. And consumers stay idempotent, since retries and duplicates still happen.
+
+Powertools for AWS Lambda, available for .NET, Python, TypeScript and Java, has a batch processing utility that implements this pattern cleanly.
+
+@p17-406
+Actually you can package Lambda functions in two ways.
+
+A zip archive has the function code and its dependencies, up to 50 MB zipped when uploaded directly and 250 MB unzipped. It's the classic option, with the fastest cold starts for small packages.
+
+Layers let you put shared code or dependencies, like a common library, a runtime extension or large packages, into a separate archive that several functions reference, up to five layers per function. They cut duplication and deployment size for each function. But there are downsides. Versioning layers across lots of functions is awkward, the code isn't visible in one place, which makes local testing harder, and the total unzipped size limit still includes layers. For compiled languages like .NET, where dependencies are bundled at build time anyway, layers add very little. They're more useful for Python or Node, and for Lambda extensions like monitoring agents.
+
+Container images package the function as an OCI image, up to 10 GB, built from AWS base images or any image that implements the runtime interface. They suit large dependencies, like machine learning libraries, teams already standardised on Docker tooling and scanning, and custom runtimes. Images live in ECR. Cold starts are optimised with caching and lazy loading, though large images can still be slower.
+
+My default is zip for small functions, bundled at build time, and container images for large or complex dependencies. For .NET, Native AOT zip packages give the fastest cold starts.
+
+@p17-407
+So when Lambda is invoked asynchronously, like by S3 events, SNS, EventBridge, or an InvokeAsync call, the caller doesn't wait for the result. Lambda queues the event internally and runs the function. If it fails, Lambda retries automatically, twice by default, with delays between attempts. Events can also expire if they wait too long, up to six hours by default.
+
+Then what happens to events that still fail? You've got two options.
+
+A dead-letter queue, an SQS queue or SNS topic configured on the function, gets the original event after all retries fail. It only captures failures, and only the event payload, with no details of the error.
+
+Destinations are the newer, richer option. You can configure an on-failure destination and an on-success destination, SQS, SNS, EventBridge, another Lambda function, or S3 for failures. The record sent includes the original request, the response or error details, like the error message and type, and metadata like the number of attempts. That makes troubleshooting and automated handling much easier, and on-success destinations allow simple chaining without the function calling the next step itself.
+
+I also tune the retry count and maximum event age to the use case. For time-sensitive events, fewer retries and a shorter age.
+
+One thing to keep in mind, these settings only apply to async invocation. For SQS triggers, the queue's own redrive policy and DLQ handle failures, and for Kinesis and DynamoDB Streams, the event source mapping has its own failure destinations.

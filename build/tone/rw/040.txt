@@ -1,0 +1,141 @@
+@p17-468
+So Azure API Management is a gateway that sits in front of your APIs, with a developer portal and analytics. Policies are where its real power is. They're XML statements executed on requests and responses, in four sections, inbound, backend, outbound and on-error. You can apply them globally, per product, per API or per operation, and they inherit using the base element.
+
+The ones I use most. Security, validate-jwt to check tokens from Entra ID or any OIDC provider, including audience, issuer and required claims. Header checks or IP filtering. Authentication to backends using managed identity, so backends trust APIM without secrets. And validate-content to check request bodies against schemas. Traffic control, rate-limit and quota per subscription key or any key, like a user id or IP, returning 429 when exceeded, which protects backends. Transformation, rewrite URLs, set or remove headers, convert between JSON and XML, and modify bodies, handy for legacy backends or hiding internal details. Caching, in the built-in cache or external Redis. Routing, set-backend-service to route to different backends based on conditions, with load balancing and circuit breakers across backend pools. Retry policies for resilience. And logging to Application Insights and Event Hubs, with correlation ids.
+
+There are also AI gateway policies for Azure OpenAI, like token limits and semantic caching.
+
+Products and subscriptions group APIs for different consumers, like internal teams or partners, with different quotas.
+
+One rule I stick to, business logic stays out of policies. They're for cross-cutting gateway concerns only.
+
+@p17-469
+Okay, by default PaaS services like App Service, Azure SQL, Storage, Key Vault and Cosmos DB have public endpoints on the internet. For secure architectures, I keep traffic on private networks, and that uses two features that work together.
+
+Private endpoints handle inbound access to a service. A private endpoint is a network interface with a private IP from your virtual network, connected to one specific resource, like a storage account or SQL server, through Private Link. Clients in the VNet, or on-premise networks connected through VPN or ExpressRoute, reach the service at that private IP. Then you disable public network access on the service completely. DNS is the key detail. A private DNS zone, like privatelink dot database dot windows dot net, linked to the VNet, makes the normal hostname resolve to the private IP, so connection strings don't change. Honestly, misconfigured DNS is the most common reason connections still go to the public endpoint, or just fail.
+
+VNet integration handles outbound traffic from App Service or Functions into a VNet. It lets the app call resources in the VNet, like a database behind a private endpoint, internal APIs or VMs, and route all outbound traffic through the VNet, for example through a firewall with a fixed outbound IP.
+
+Put together, the web app uses VNet integration to reach the database's private endpoint, the database has public access turned off, and the web app itself can have a private endpoint too, with Front Door or Application Gateway as the only public entry point.
+
+@p17-470
+See, both filter network traffic, but at really different levels.
+
+Network security groups, NSGs, are basic stateful filters at layers 3 and 4, applied to subnets or network interfaces. Rules allow or deny traffic by source and destination IP or CIDR, port and protocol, with priorities. They can use service tags, like Storage or AzureLoadBalancer, instead of IP ranges, and application security groups, which group VMs by role, like web or database servers, so a rule can say "web servers can talk to database servers on 1433" without listing IPs. NSGs are free, distributed, and good for micro-segmentation inside a VNet. But they don't understand domain names or applications, and they don't inspect traffic.
+
+Azure Firewall is a managed, centralised network firewall, usually deployed in a hub VNet, with spoke VNets routing traffic through it using route tables. It supports network rules, application rules with fully qualified domain names, like allowing outbound traffic only to api.github.com, threat intelligence filtering, and NAT rules for inbound traffic. The Premium tier adds TLS inspection, intrusion detection and prevention, and URL filtering. It logs all traffic centrally and is managed with firewall policies across regions. It does cost a lot more though.
+
+In practice you use them together. Azure Firewall for central control of traffic between spokes, to the internet, and to on-premise networks, and NSGs for fine-grained filtering within each subnet.
+
+@p17-471
+Actually management groups organise subscriptions into a hierarchy, under the tenant root group. Let me take an example. A root, then Platform, with identity, management and connectivity subscriptions, and Landing Zones, split into Corp and Online, then Sandbox and Decommissioned. Policies and role assignments applied to a management group are inherited by all subscriptions and resources under it, so governance gets applied once, consistently.
+
+Azure Policy evaluates resources against rules and enforces standards. Each policy definition has a condition and an effect. Deny blocks non-compliant resources from being created or updated, like storage accounts that allow public access. Audit flags non-compliance without blocking. Modify and Append change requests, like adding required tags. DeployIfNotExists automatically deploys a related resource, like diagnostic settings sending logs to Log Analytics, or Defender for a resource type. And DenyAction blocks specific actions, like deleting critical resources.
+
+Initiatives group lots of policies, like the Microsoft cloud security benchmark or regulatory standards. The compliance dashboard shows non-compliant resources across the estate, and remediation tasks fix existing resources for Modify and DeployIfNotExists policies. Exemptions handle justified exceptions, with expiry dates.
+
+Common policies I've seen, allowed regions, required tags, allowed SKUs, enforcing HTTPS and TLS versions, requiring private endpoints, and disabling local authentication on services.
+
+Together with landing zones, this is how organisations let teams move fast but still stay inside the guardrails.
+
+@p17-472
+Okay, so Bicep is Azure's domain-specific language for infrastructure as code. It compiles to ARM templates, but it's much more readable, with type safety and good tooling.
+
+Modules let you break infrastructure into reusable pieces. A module is just another Bicep file with parameters and outputs, like a storage account module that enforces our standards, TLS 1.2 minimum, no public access, a private endpoint and diagnostics. The main file calls modules with parameters and wires up outputs, like passing a Key Vault id into an app module. Modules can be shared through a private Bicep registry in Azure Container Registry, versioned, and Azure Verified Modules give you well-maintained, Microsoft-supported modules for most resources.
+
+Parameter files, in the .bicepparam format, hold environment-specific values, like dev, test and prod, with the same template for all environments. Secrets are referenced from Key Vault, never stored in files.
+
+What-if is a preview of a deployment. az deployment group what-if shows what will be created, modified and deleted, plus property-level differences, without changing anything. I run it in pull request pipelines and before production deployments, kind of like Terraform plan. It can be noisy for some resource properties, so reviewers kind of learn to read through it.
+
+Deployment stacks manage a group of resources as a unit, so resources removed from the template can be deleted or detached automatically, and deny settings protect managed resources from changes outside the stack.
+
+The Bicep linter and policy checks round off the pipeline.
+
+@p17-473
+So two services work together for configuration in Azure.
+
+Key Vault references let App Service and Functions app settings point to secrets instead of holding them. An app setting value that starts with at-Microsoft-dot-KeyVault and gives the secret URI is resolved by the platform using the app's managed identity, and the app just reads a normal setting. Without a version in the URI, it picks up the latest version of the secret, refreshed periodically. So the code doesn't change, and secrets never show up in configuration or pipelines.
+
+Azure App Configuration is a central store for app settings and feature flags, shared across services and environments. Keys can have labels, like dev or prod, and the .NET configuration provider loads them into IConfiguration, alongside appsettings.json, so options classes just work. App Configuration can also hold Key Vault references, which the provider resolves with the app's identity.
+
+Dynamic refresh, the provider can watch settings and reload them without restarting the app. The usual pattern is a sentinel key. The app checks just one key periodically, and when it changes, all settings reload, so a set of related changes lands together. IOptionsSnapshot or IOptionsMonitor then gives the code the new values.
+
+Feature flags, the Microsoft.FeatureManagement library reads flags from App Configuration, with filters for percentage rollouts, targeting specific users or groups, and time windows. So features get turned on without deployments and can be switched off quickly if something goes wrong.
+
+And access uses managed identities with data reader roles, not connection strings. In our team that's pretty much non-negotiable.
+
+@p17-474
+Honestly KQL is one of my favourite tools. Log Analytics workspaces collect logs from Azure Monitor, Application Insights, VMs, containers and more, and KQL, the Kusto Query Language, is how you query them. It reads like a pipeline, you start with a table and pipe it through operators.
+
+Let me take a spike in failures in a web API, using Application Insights tables.
+
+I start with AppRequests, filter where TimeGenerated is within the last hour and Success is false, then summarize the count by five-minute bins and ResultCode, and render a timechart. That shows when failures started and which status codes.
+
+Then the top failing operations. AppRequests where Success is false, summarize the failure count by OperationName, and take the top 10.
+
+Then exceptions. AppExceptions, summarize the count by ProblemId and OuterMessage, which groups identical exceptions together.
+
+To trace one request across components, I union AppRequests, AppDependencies, AppExceptions and AppTraces, filter where OperationId equals the id, and order by TimeGenerated. Everything sharing that operation id is one end-to-end transaction.
+
+For latency, summarize the 50th, 95th and 99th percentiles of DurationMs by OperationName.
+
+Other operators I use a lot, extend to compute columns, project to pick columns, join to combine tables, parse and extract for text, and mv-expand for arrays. Custom dimensions from structured logging sit in a dynamic Properties column, which you read by converting, say, Properties dot TenantId to a string.
+
+Queries can become alert rules, or get pinned to workbooks and dashboards. And the same KQL works in Azure Data Explorer, Microsoft Sentinel and Fabric.
+
+@p17-475
+See, Azure Monitor alerts notify people or trigger automation when something in the monitoring data needs attention.
+
+You've got a few kinds. Metric alerts evaluate platform or custom metrics at short intervals, like CPU above 80 percent for 10 minutes, HTTP 5xx count, or Service Bus dead-letter messages above zero. They support dynamic thresholds, which learn normal patterns and alert on deviations, and multiple dimensions, like one alert per instance. Log search alerts run a KQL query on a schedule, like failed requests for a specific operation above a threshold, so you can do complex conditions across tables. Activity log alerts fire on control-plane events, like a resource getting deleted or a service health incident in your region. Application Insights also has smart detection for anomalies like failure rate spikes.
+
+Action groups define what happens. Email, SMS, push or voice notifications. Webhooks. Azure Functions, Logic Apps or Automation runbooks for automatic remediation. And integrations with ITSM tools, or Teams and incident management tools through webhooks. One action group can be reused by lots of alerts, like a production on-call group.
+
+Alert processing rules suppress notifications during planned maintenance windows, or add action groups to alerts at scale.
+
+What I've learned, alert on symptoms users actually feel, like errors and latency, not every resource metric. Set severity levels properly, so only severity zero and one wake people up at night. Put links to runbooks and dashboards in alert descriptions. And review noisy alerts regularly, otherwise people just start ignoring them.
+
+@p17-476
+Okay, so Azure has offered Redis as a managed service for years, as Azure Cache for Redis, with Basic, Standard and Premium tiers, plus Enterprise tiers run with Redis Inc. Basic is a single node with no SLA, only for development. Standard adds a replica for high availability. Premium adds clustering, persistence, VNet injection and geo-replication.
+
+Microsoft then brought out Azure Managed Redis, based on Redis Enterprise software, as the new offering, and announced Azure Cache for Redis will be retired. So new projects should use Azure Managed Redis, and existing caches need a migration plan. Managed Redis has tiers optimised for memory, balanced workloads, compute, or flash storage for large datasets, high availability across zones, active geo-replication across regions, and Redis modules like search, JSON and time series, which also enable vector search for AI scenarios.
+
+From .NET, usage is the same. StackExchange.Redis directly, or through IDistributedCache, output caching, or HybridCache with Redis as the second level.
+
+What I do in practice. Entra ID authentication with managed identities instead of access keys, which are being discouraged anyway. Private endpoints and no public access. TLS only. A single, long-lived ConnectionMultiplexer per app, because creating connections per request is a classic cause of timeouts. Sensible timeouts and retries. Monitoring server load, memory, evictions and connected clients. And designing for the cache being briefly unavailable, falling back to the database instead of failing.
+
+@p17-477
+Actually HA and DR in Azure work at two levels, zones within a region, and regions.
+
+Availability zones are physically separate data centres within a region, with independent power, cooling and networking. Zone-redundant services spread instances across zones automatically. Zone-redundant App Service plans, Azure SQL zone redundancy, ZRS storage, zone-redundant Service Bus Premium, AKS node pools across zones, and so on. That protects against a data centre failure with very little effort, and it's my default for production.
+
+Regions protect against a whole-region outage. Lots of regions have a paired region, used for geo-redundant storage replication and staggered platform updates, though newer regions may not have pairs, so you pick the secondary region yourself.
+
+DR patterns, roughly by cost and recovery time. Backup and restore to another region, with hours of recovery time. Pilot light or warm standby, with data replicated and minimal compute ready to scale up. And active-active, with traffic in both regions through Front Door, for near-zero downtime.
+
+Data replication is honestly the hard part. Azure SQL failover groups with a listener endpoint that stays the same after failover. Cosmos DB multi-region with automatic failover. GZRS storage. And Service Bus geo-replication.
+
+It all starts from the business's RTO and RPO, how long can the system be down, and how much data can we lose. Infrastructure as code makes rebuilding possible, and DR has to be tested regularly with real failovers, not just on paper.
+
+@p17-478
+So they all automate work, but for different people and different problems.
+
+Logic Apps is a workflow and integration service. You build workflows visually, or as JSON definitions, from triggers and actions, with hundreds of managed connectors. Office 365, SharePoint, Salesforce, SAP, SQL Server, Service Bus, FTP, and on-premise systems through a data gateway. It handles retries, long-running workflows, approvals and B2B integration with EDI. The Standard plan runs on a single-tenant runtime with VNet integration and local development in VS Code. It's great for integration-heavy processes, like "when a file lands on SFTP, validate it, transform it, post it to an API and send an email", with minimal code.
+
+Azure Functions is code-first. You write C#, Python, JavaScript or other code, triggered by HTTP, queues, timers, events and more. It's better for complex logic, high performance, custom algorithms, and when engineers want testable, version-controlled code. Durable Functions adds code-based orchestrations.
+
+Power Automate is a low-code tool for business users, part of the Power Platform, for personal and team productivity flows in Microsoft 365, like approvals, notifications and moving data between SharePoint and Teams. It shares the connector ecosystem with Logic Apps, but it's governed by Power Platform admins, not Azure.
+
+So yeah, Power Automate for business-user automation, Logic Apps for enterprise integration workflows, Functions for custom code. They combine nicely too, with Logic Apps calling Functions for the complex steps.
+
+@p17-479
+Okay, traditionally Azure DevOps service connections to Azure used a service principal with a client secret. Secrets expire, usually every year or two, which breaks pipelines out of nowhere, and they can leak, giving attackers access to deploy or change resources.
+
+Workload identity federation removes the secret completely. It uses OpenID Connect. Azure DevOps issues a short-lived token for each pipeline run, identifying the organisation, project and service connection. In Entra ID, the app registration or user-assigned managed identity has a federated credential that trusts tokens from Azure DevOps with that specific issuer and subject. The pipeline exchanges the token for an Azure access token that's only valid for that run. Nothing long-lived is stored anywhere.
+
+Setting it up, you create a service connection using the workload identity federation option, either automatic, where Azure DevOps creates the identity and federated credential, or manual, using an existing identity. Then assign Azure RBAC roles to the identity, scoped narrowly, like Contributor on one resource group, not the whole subscription. Existing secret-based connections can be converted.
+
+GitHub Actions works the same way, with federated credentials trusting tokens for a specific repository, branch or environment.
+
+Extra controls I'd add, separate service connections per environment, with production ones needing approvals and checks, and restricted to specific pipelines and branches.
+
+For on-premise Azure DevOps Server, like our setup, federation depends on the version and network reachability, so we follow the same least-privilege idea with whatever the server supports.

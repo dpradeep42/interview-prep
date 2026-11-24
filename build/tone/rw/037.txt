@@ -1,0 +1,149 @@
+@p17-432
+So AWS X-Ray gives you distributed tracing. It records requests as they flow through services, with segments for each service and subsegments for calls to databases, HTTP APIs and AWS services, and it shows a service map with latencies and error rates between components.
+
+These days the recommended way to instrument apps is OpenTelemetry, using the AWS Distro for OpenTelemetry, ADOT. Apps use the standard OpenTelemetry SDK, like OpenTelemetry for .NET with ASP.NET Core, HttpClient, SQL and AWS SDK instrumentation, and export spans over OTLP to a collector, which sends them to X-Ray, and metrics to CloudWatch. AWS has also announced the older X-Ray SDKs and daemon are moving to maintenance, so OpenTelemetry is the way forward, and X-Ray accepts OTLP directly now.
+
+How it fits each compute type. On ECS, run the ADOT collector or CloudWatch agent as a sidecar container in the task definition, with the task role allowing X-Ray writes. On Lambda, turn on active tracing and use the ADOT Lambda layer or Powertools for traces. On EKS, run the collector as a DaemonSet or use the CloudWatch Observability add-on.
+
+CloudWatch Application Signals builds on top of this, giving service-level dashboards with latency, errors and SLOs automatically.
+
+What I always do, propagate trace context across HTTP calls and messages, including SQS and Kafka message attributes. Sample sensibly, but keep all errors. And log the trace id on every log line, so you can jump from a trace straight to its logs.
+
+@p17-433
+Okay, ECS services support a few deployment strategies.
+
+Rolling update is the default. ECS replaces tasks gradually, controlled by minimumHealthyPercent and maximumPercent. Say 100 and 200, that means ECS starts new tasks first, up to double the desired count, waits for them to pass health checks, then stops old tasks, so capacity never drops. 50 and 100 replaces half at a time without extra capacity.
+
+The deployment circuit breaker watches a rolling deployment. If new tasks keep failing to start or fail health checks, it marks the deployment as failed, and with rollback on, automatically goes back to the last successful deployment. You can also attach CloudWatch alarms to deployments, so if error rate or latency alarms fire during the rollout, it rolls back too. Without this, a bad deployment can just loop forever trying to start failing tasks. I've seen that happen, it's not fun.
+
+Blue/green creates a full new set of tasks, the green environment, next to the old blue one, then shifts traffic at the load balancer. Since 2025, ECS supports blue/green natively, with lifecycle hooks to run tests, a test listener to check green before production traffic, and a bake time before old tasks are removed, so rollback is instant by switching traffic back. Before that you needed CodeDeploy, which also does canary and linear traffic shifting. ECS now has native linear and canary strategies as well.
+
+I'd use rolling with circuit breaker and alarms as the baseline, and blue/green or canary for critical services.
+
+@p17-434
+See, ECS service auto scaling adjusts the desired number of tasks in a service, using Application Auto Scaling underneath.
+
+Target tracking is the simplest and usually the best. You pick a metric and a target, like average CPU at 60 percent, memory at 70 percent, or ALB request count per target at 500, and auto scaling adds or removes tasks to keep the metric near that target. For web APIs, request count per target is often better than CPU, because it reacts directly to load.
+
+Step scaling uses CloudWatch alarms with steps, like add two tasks when CPU is above 70 percent and four when above 85, which gives more control for unusual patterns.
+
+Scheduled scaling changes the min and max capacity at specific times, like scaling up before business hours or a known batch window. Predictive scaling, now available for ECS, forecasts load from history and scales ahead of time.
+
+For queue workers, I scale on queue backlog. The best metric is backlog per task, the approximate number of visible messages divided by running tasks, published as a custom metric or computed with metric math, with a target based on how many messages one task can get through within acceptable latency.
+
+What I tune, min and max tasks, so there's always some capacity and costs stay bounded. Cooldowns, with scale-out fast and scale-in slower, to avoid flapping. And enough cluster capacity, which Fargate handles for you, while EC2 needs capacity providers.
+
+@p17-435
+Actually capacity providers decide where ECS tasks run and manage the underlying capacity.
+
+For Fargate, you get two built-in capacity providers, FARGATE and FARGATE_SPOT. Fargate Spot runs tasks on spare AWS capacity at up to about 70 percent discount, but tasks can be interrupted with a two-minute warning when AWS wants the capacity back. ECS sends SIGTERM, and the app should shut down gracefully, finishing or handing back in-flight work.
+
+For EC2-based clusters, a capacity provider links to an Auto Scaling group. With managed scaling, ECS scales the group based on the capacity tasks need, so instances get added when tasks can't be placed, and removed when they're empty. Managed termination protection stops scale-in from killing instances that still have tasks running. And ECS Managed Instances is a newer option where AWS manages the EC2 instances for you.
+
+A capacity provider strategy on a service splits tasks between providers using base and weight. Say base 2 on FARGATE, that means the first two tasks always run on regular Fargate. Then weight 1 on FARGATE and 3 on FARGATE_SPOT puts three quarters of the additional tasks on Spot. So you keep a guaranteed baseline but cut cost.
+
+Fargate Spot fits stateless, interruption-tolerant workloads. Queue workers with idempotent processing, batch jobs, dev and test environments, and extra capacity for web APIs above a stable baseline. Honestly I wouldn't use it for singletons or work that can't be retried.
+
+@p17-436
+So Amazon ECR is AWS's container registry, and a few habits keep it secure and tidy.
+
+Tag immutability, I turn it on, so a tag like 1.4.2 or a commit SHA can't be overwritten with a different image. Deployments reference immutable tags or digests, so what was tested is exactly what gets deployed, and rollback just means redeploying a previous tag. I avoid deploying "latest".
+
+Scanning. Basic scanning checks images for operating system vulnerabilities on push. Enhanced scanning, using Amazon Inspector, scans continuously, including language packages like NuGet and npm dependencies, and rescans when new vulnerabilities are published, so already-deployed images get flagged too. Findings go to EventBridge and Security Hub, so the pipeline can fail on critical vulnerabilities and alerts get raised.
+
+Lifecycle policies automatically delete old images to keep storage cost and clutter down. Let me take an example, keep the last 30 images tagged with a release prefix, delete untagged images after seven days, and expire feature-branch images after 14 days. I'm careful never to delete images that are currently deployed or needed for rollback.
+
+Access, repository policies and IAM control who can push and pull. CI pipelines push using OIDC-based roles, and ECS pulls with the task execution role. Cross-account pull works through repository policies for multi-account setups, and replication copies images to other regions for disaster recovery.
+
+Image signing with AWS Signer, plus verification at deployment, adds supply chain protection.
+
+@p17-437
+Okay, both of these matter a lot for zero-downtime deployments.
+
+Health checks first. The target group periodically calls a path, like slash health slash ready, on each target. A target is healthy after some consecutive successes, and unhealthy after some failures. Only healthy targets get traffic. During a deployment, new tasks only get traffic once they pass, and ECS only stops old tasks once new ones are healthy. I tune the interval, timeout and thresholds, and make sure the health endpoint reflects real readiness. The app has started, warmed up and can reach its essential dependencies, but it's not so strict that a minor dependency blip takes down every task. ECS also has a health check grace period, so slow-starting apps don't get killed before they're ready.
+
+Deregistration delay, or connection draining, is how long the ALB keeps an old target registered while it finishes in-flight requests, after it stops sending it new ones. The default is 300 seconds, which slows deployments down. For APIs with short requests, 30 to 60 seconds is usually enough. Too short though, and in-flight requests get cut off, and you see 502 errors during deployments.
+
+The app has to cooperate too. On SIGTERM, it should stop accepting new work but finish in-flight requests, within the ECS stop timeout.
+
+Slow start mode ramps traffic to new targets gradually, which helps apps with cold caches. That one's underused, honestly.
+
+@p17-438
+So the Well-Architected Framework is AWS's set of design principles and questions for evaluating architectures, organised into six pillars.
+
+Operational excellence is about running and monitoring systems and improving processes continuously. Infrastructure as code, small reversible changes, runbooks, observability, and learning from failures through post-incident reviews.
+
+Security is protecting data and systems. Strong identity with least privilege, traceability with logging and auditing, security at every layer, encryption in transit and at rest, and being ready for incidents.
+
+Reliability means the workload behaves correctly and recovers from failures. Automatic recovery, actually testing recovery procedures, scaling horizontally, managing service quotas, multi-AZ designs, and handling change through automation.
+
+Performance efficiency is using resources efficiently as demand changes. Choosing the right services and instance types, using managed and serverless services, going global with CDNs, and experimenting.
+
+Cost optimisation is avoiding unnecessary cost. Paying only for what you use, right-sizing, Savings Plans and Spot, measuring efficiency, and attributing costs to teams with tags.
+
+Sustainability is minimising environmental impact by maximising utilisation, using efficient hardware like Graviton, and cutting unnecessary data and processing.
+
+You use the framework through Well-Architected reviews, often with the Well-Architected Tool, where teams answer questions per pillar, find high-risk issues and plan improvements. There are also lenses for specific domains, like serverless, SaaS, machine learning and generative AI.
+
+In interviews, what I try to do is tie each pillar to a real decision I've made, like Multi-AZ for reliability or right-sizing for cost.
+
+@p17-439
+Honestly these are AWS's main pricing models besides on-demand, and the trick is mixing them.
+
+On-demand pays by the second, no commitment. Most flexible, most expensive, good for unpredictable or short-term workloads.
+
+Savings Plans give a discount, up to around 66 percent for Compute Savings Plans and up to 72 percent for EC2 Instance Savings Plans, in exchange for committing to a consistent spend per hour, like 10 dollars per hour, for one or three years. Compute Savings Plans apply automatically across EC2 instance families, sizes, regions, Fargate and Lambda, which makes them flexible and usually the first choice. EC2 Instance Savings Plans are tied to an instance family in a region, for bigger discounts.
+
+Reserved Instances are the older model, committing to specific instance attributes. They're still used for services like RDS, ElastiCache, OpenSearch and Redshift, where Savings Plans don't apply, though AWS brought out Database Savings Plans recently.
+
+Spot Instances use spare capacity at up to 90 percent discount, but can be interrupted with a two-minute notice. They fit fault-tolerant, flexible workloads. Batch processing, CI runners, stateless web tiers above a baseline, and big data. Spreading across instance types and zones cuts interruptions.
+
+My approach, right-size first, using Compute Optimizer recommendations. Turn off non-production environments at night. Cover the steady baseline with Savings Plans. Use Spot for interruptible work. And on-demand for the rest. I'd commit conservatively, based on actual historical usage, not hopes.
+
+@p17-440
+Actually the old way was a bastion host. A public EC2 instance with SSH open, used as a jump box into private subnets. It's an attack surface, needs patching, and managing SSH keys is painful and hard to audit.
+
+AWS Systems Manager Session Manager is the modern alternative. An SSM agent on the instance, installed by default on a lot of AMIs, connects outbound to the Systems Manager service, so no inbound ports need to be open at all, not even SSH, and you don't need a bastion or a public IP. Instances in private subnets need either a NAT gateway or VPC endpoints for SSM.
+
+Access is controlled by IAM policies, so you can allow specific people to start sessions only on specific instances, by tag, and require MFA through the identity provider. Every session is logged. Who started it and when goes to CloudTrail, and the full session commands and output can be recorded to S3 or CloudWatch Logs, which is great for audits. It supports interactive shells on Linux and Windows, running commands, and port forwarding, including to remote hosts. So I can reach a private RDS database from my laptop through an instance, without exposing the database. That's really handy for debugging.
+
+EC2 Instance Connect Endpoint is another option, allowing SSH or RDP to private instances through an endpoint, with IAM-controlled, short-lived access.
+
+For ECS containers, ECS Exec uses the same Session Manager mechanism to open a shell into a running container for debugging.
+
+@p17-441
+See, they're three really different kinds of storage.
+
+EBS is block storage. A virtual disk attached to one EC2 instance at a time, in a single availability zone, except Multi-Attach for special cases. Low latency, used for OS disks, databases running on EC2, and apps that need a fast local file system. Volume types like gp3 let you set IOPS and throughput independently. Snapshots back it up to S3 incrementally. ECS on Fargate now supports attaching EBS volumes to tasks too.
+
+EFS is a managed network file system over NFS, for Linux. Lots of instances, containers and Lambda functions can mount it at the same time, across availability zones. It grows and shrinks automatically, and has lifecycle tiers to cut cost for rarely accessed files. It's for shared files. Content management, shared config or uploads in legacy apps, home directories, and lifting and shifting apps that expect a shared file system. Latency is higher than EBS. For Windows file shares, there's FSx for Windows File Server.
+
+S3 is object storage accessed over HTTP APIs, not mounted like a disk, although Mountpoint for S3 gives file-like access for reading. It's virtually unlimited, very durable, cheap, and the right default for files, uploads, backups, logs, data lakes and static assets.
+
+So for new cloud-native apps, I'd go with S3 for files, EFS only when software genuinely needs a shared POSIX file system, and EBS for instance-level storage.
+
+@p17-442
+Okay, so API Gateway has two main types for RESTful APIs, plus WebSocket APIs.
+
+HTTP APIs are the newer, simpler option. They're cheaper, up to around 70 percent less per request, with lower latency. They support JWT authorizers natively, which work with Cognito or any OIDC provider, plus Lambda authorizers, IAM authorisation, CORS configuration, integrations with Lambda and HTTP backends, private integrations to ALB, NLB and Cloud Map through VPC links, and automatic deployments.
+
+REST APIs have more features. API keys and usage plans with per-client throttling and quotas, which matters for partner APIs. Request validation against models. Request and response transformation with mapping templates. Response caching. AWS WAF integration. Private APIs reachable only from VPCs through interface endpoints. Edge-optimised endpoints. Canary release deployments. And direct integration with lots of AWS services, like putting a message on SQS or starting a Step Functions execution without a Lambda function in between.
+
+My choice, HTTP API by default, for most Lambda or container backends with JWT auth, because it's cheaper and simpler. REST API when I need usage plans and API keys, WAF, caching, private APIs, request validation, or service integrations. AWS has been adding features to REST APIs recently, like routing rules.
+
+WebSocket APIs are for real-time two-way communication, like live notifications or chat.
+
+And for ECS services, an ALB alone is often enough. API Gateway earns its place mainly for those extra features.
+
+@p17-443
+So authorizers let API Gateway authenticate and authorise requests before they reach the backend, so bad requests get rejected early.
+
+JWT authorizers, in HTTP APIs, validate JSON Web Tokens from any OIDC-compliant provider, like Cognito, Keycloak, Entra ID or Auth0. You configure the issuer and audience, and API Gateway checks the signature using the provider's published keys, plus expiry, issuer and audience, and can require specific scopes per route. Claims are passed to the backend. No code needed.
+
+Cognito user pool authorizers are the REST API equivalent for Cognito tokens.
+
+Lambda authorizers run your own function to make the decision. A token-based one gets the bearer token, and a request-based one gets headers, query strings and context. The function validates the request, maybe checking a custom token, an API key in a database, or calling an external authorisation service, and returns an IAM policy allowing or denying, or a simple boolean for HTTP APIs, plus context values passed to the backend, like user id and tenant. Results can be cached for a TTL, keyed by the token, to cut latency and cost. But caching means revoked access may still work until the cache expires, and a cached policy has to cover all the routes the token will be used for. That second bit catches people.
+
+IAM authorisation needs requests signed with AWS Signature Version 4, which suits service-to-service calls inside AWS.
+
+And fine-grained authorisation, like whether this user can see this shipment, still belongs in the service.

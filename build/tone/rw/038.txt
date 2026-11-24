@@ -1,0 +1,141 @@
+@p17-444
+Okay, so cold starts happen when Lambda creates a new execution environment. Downloading code, starting the runtime, running initialisation code. For .NET, JIT compilation and loading dependencies, like dependency injection setup and SDK clients, can push cold starts to a second or more.
+
+SnapStart, available for .NET 8 and later managed runtimes since late 2024, as well as Java and Python, tackles this. When you publish a function version, Lambda runs the initialisation phase once, takes a snapshot of the memory and disk state of the initialised environment, encrypts it and caches it. New execution environments are resumed from the snapshot instead of initialising from scratch, which can cut cold start times dramatically.
+
+Things to be careful about. Uniqueness, anything generated during init, like random seeds, unique ids or cached credentials, is the same in every environment restored from that snapshot. There are runtime hooks, before snapshot and after restore, to refresh that kind of state, and network connections opened during init may need re-establishing after restore. It works with published versions and aliases, not dollar LATEST. There's a cost for caching and restoring snapshots for .NET. And you can't combine it with provisioned concurrency.
+
+The alternatives I'd look at, Native AOT compilation, which removes JIT and gives very fast starts, but needs trimming-compatible code and libraries. Provisioned concurrency, which keeps environments warm, at a cost. And honestly just reducing init work, lazy loading what isn't always needed, and choosing more memory, which also gives you more CPU.
+
+@p17-445
+See, you can build .NET APIs on Lambda in a few different ways.
+
+Running a whole ASP.NET Core API in Lambda. The Amazon.Lambda.AspNetCoreServer.Hosting package lets an existing minimal API or controller-based app run in Lambda with one line, AddAWSLambdaHosting, where you specify the event source, like an HTTP API or ALB. API Gateway sends every request to the same function, and the package translates Lambda events into ASP.NET Core requests, so routing, middleware, model binding and DI all just work. It's the easiest migration path, and the same code still runs locally or in a container. The downside is a bigger function with longer cold starts, since the whole app initialises, so SnapStart or Native AOT help there.
+
+The Lambda Annotations Framework is the more Lambda-native way. You write normal C# methods with attributes, like LambdaFunction, and HttpApi with a route, plus dependency injection through a Startup class, and a source generator produces the Lambda handler code and the CloudFormation or SAM template. Each function is small and focused, with good cold start performance, and it supports Native AOT.
+
+Plain handlers, implementing a function handler method directly, give full control for event-driven functions, like processing SQS messages or S3 events.
+
+Tooling, the .NET Lambda tools and test tool for local testing, SAM or CDK for deployment, and Powertools for AWS Lambda for .NET for structured logging, metrics, tracing, idempotency and batch processing.
+
+One thing I'd add, for steady high-traffic APIs, containers on ECS are often cheaper and simpler than Lambda.
+
+@p17-446
+So ElastiCache is AWS's managed in-memory cache, and it supports a few engines.
+
+Memcached is a simple, multi-threaded key-value cache. Good for straightforward caching of strings and objects, scales by adding nodes with client-side sharding, and uses multiple cores well. But no persistence, no replication, no rich data types, and no failover. If a node dies, its cached data is just gone.
+
+Redis, and now Valkey, the open-source fork of Redis that AWS backs after the Redis license change, give you much more. Data structures like hashes, lists, sets, sorted sets and streams. Atomic operations and Lua scripting. Pub-sub. Replication with automatic failover across availability zones. Optional persistence and backups. And cluster mode, which shards data across multiple node groups for horizontal scaling. So they work not just for caching but for sessions, leaderboards, rate limiters, distributed locks and queues. Valkey on ElastiCache is cheaper than Redis OSS and fully compatible, so it's the default for new clusters.
+
+ElastiCache Serverless removes capacity planning, scaling automatically with usage, priced per GB and per request, which suits variable workloads.
+
+MemoryDB is related. Redis or Valkey compatible, but durable, with a multi-AZ transaction log, so it can actually be a primary database, not just a cache.
+
+I'd pick Valkey for nearly everything new. IQVIA's newer AWS services use ElastiCache for caching. On-premise, our CIRT platform uses Redis in a similar way.
+
+@p17-447
+Actually the AWS SDK for .NET resolves credentials through a default credential provider chain. It checks several sources in order, so the same code works everywhere without changes.
+
+Roughly the order is credentials passed explicitly in code. Then environment variables, like AWS_ACCESS_KEY_ID. Then the shared credentials and config files with profiles, including IAM Identity Center SSO profiles for developers. Then web identity tokens, used by EKS IRSA and OIDC in CI. Then the ECS container credentials endpoint, which gives tasks their task role credentials. And the EC2 instance metadata service, for the instance role.
+
+So in practice, developers run aws sso login and use a profile with short-lived credentials. CI pipelines assume a role through OIDC federation, with no stored secrets. ECS tasks use their task role. Lambda functions use their execution role. EKS pods use Pod Identity or IRSA. All temporary credentials that rotate automatically.
+
+Long-lived access keys in code, config files, or environment variables are a serious risk. They get committed to Git, leaked in logs or container images, they never expire unless someone rotates them by hand, and they're usually over-privileged. Attackers scan public repos for AWS keys within minutes. Honestly, minutes.
+
+For workloads outside AWS, like on-premise servers that need AWS access, IAM Roles Anywhere issues temporary credentials based on X.509 certificates from a trusted certificate authority, instead of access keys.
+
+And if keys really can't be avoided, they get least privilege, rotation, and storage in a secrets manager.
+
+@p17-448
+Okay, Terraform's state file maps configuration to real resources, so for a team it has to be stored remotely, shared and locked.
+
+On AWS the standard backend is S3. I create a dedicated bucket, often in a separate management or tooling account, with versioning on, so previous states can be recovered after corruption or a bad apply. Encryption with KMS. Block Public Access. And a bucket policy limiting access to the CI roles and a few administrators, because state can contain sensitive values like generated passwords.
+
+Locking stops two applies running at the same time and corrupting the state. Historically you used a DynamoDB table referenced in the backend config. Since Terraform 1.10, the S3 backend supports native locking with use_lockfile set to true, which creates a lock file in the bucket using S3 conditional writes, and DynamoDB locking is deprecated now. If a run crashes, a stale lock can be removed with terraform force-unlock, carefully.
+
+Structure, separate state files per environment and per component, like network, data and services, using different keys, so a mistake has a limited blast radius and plans run faster. Teams then read outputs from other states, or better, look up resources with data sources.
+
+Access, CI uses an OIDC role to read and write state, and humans normally don't apply from laptops. That rule has saved me from some bad days.
+
+Terraform Cloud or HCP Terraform are alternatives that manage state, locking and runs for you.
+
+@p17-449
+So as Terraform code evolves, you often need to change how resources are tracked without destroying and recreating them. Get this wrong and you can delete a production database, so modern Terraform gives you declarative blocks that get reviewed in pull requests like any other code.
+
+Import blocks bring existing resources, created manually or by another tool, under Terraform management. You write an import block with the resource address and the real resource id, and run terraform plan with the generate-config-out flag to generate a starting configuration, then clean it up. The plan shows the import, and apply records it in state without changing the resource. Import blocks can use for_each for many resources.
+
+Moved blocks handle renames and restructuring. Renaming a resource, moving it into a module, or converting from count to for_each. Without a moved block, Terraform would plan to destroy the old address and create a new one. With moved from and to, it just updates the state. These replace manual terraform state mv commands, which weren't reviewed or repeatable across environments.
+
+Removed blocks, since Terraform 1.7, stop managing a resource without destroying it, using a lifecycle setting with destroy set to false. Like when you're handing a resource over to another team's configuration.
+
+Through all of it, the plan is my safety net. Before applying, I check it shows no unexpected destroys or replacements. I also add prevent_destroy to critical resources, like databases and state buckets. Trust me, that one's worth it.
+
+@p17-450
+Honestly policy as code catches insecure or non-compliant infrastructure before it's even created, which is way cheaper than finding it in production.
+
+Static scanning of Terraform code. Tools like Checkov, Trivy, which absorbed tfsec, and KICS scan configurations for misconfigurations. S3 buckets without encryption or Block Public Access, security groups open to the internet, unencrypted databases, missing logging, or overly broad IAM policies. They run in the pull request pipeline and annotate findings. Teams can suppress specific checks with a documented reason in code.
+
+Policy checks on the plan. Since the plan shows exactly what will change, including computed values, you can evaluate the JSON plan output with Open Policy Agent, using Conftest, or Sentinel in HCP Terraform, against custom rules. Like every resource must have owner and cost-centre tags, only approved instance types and regions, no public IPs on databases, or deletions of certain resource types need a special approval.
+
+Linting and validation, terraform fmt, terraform validate and TFLint catch errors and provider-specific mistakes early.
+
+What a typical pipeline looks like for me. On pull request, run format, validate, lint, security scan and plan, post the plan summary and findings as a comment, and fail on high-severity issues. On merge, apply the reviewed plan, with an approval for production.
+
+Runtime controls back this up. AWS Config rules and Service Control Policies catch anything created outside Terraform.
+
+@p17-451
+See, deployment slots are live copies of an App Service app, like a staging slot next to production, each with its own hostname, running on the same App Service plan. You get them on Standard tier and above.
+
+The flow is, I deploy the new version to the staging slot, warm it up and test it at its own URL, then swap staging with production. During a swap, App Service first applies the production slot's settings to the staging instances, restarts them, and warms them up by calling the site, optionally a specific warm-up path set with applicationInitialization. Only when they're ready does it switch the routing, so production traffic lands on already-warm instances with no downtime. The old version is now sitting in the staging slot, so rollback is just swapping back.
+
+Settings matter here. App settings and connection strings can be marked as deployment slot settings, or sticky, so they stay with the slot instead of moving with the code. Like the staging slot keeps pointing to a staging database, or has a flag disabling background jobs. Non-sticky settings move with the app during the swap.
+
+Swap with preview does it in two phases, applying production settings to staging first, so you can validate before completing. Auto swap swaps automatically after a deployment to a slot, which suits continuous deployment.
+
+Traffic routing can also send a percentage of production traffic to a slot, for simple testing in production.
+
+One caution I always mention, database schema changes have to work with both versions, because the swap is instant but the database is shared.
+
+@p17-452
+Okay, an App Service plan defines the compute your apps run on. The region, the OS, the pricing tier, the instance size, and the number of instances. Several apps can share one plan, so they share and compete for the same VMs. Putting a heavy app with others can cause noisy neighbour issues, so I keep critical apps in their own plans.
+
+Tiers, Free and Shared for experiments. Basic for low-traffic apps without slots or autoscale. Standard and Premium, with Premium v3 or v4 recommended, for production with deployment slots, autoscale, VNet integration and zone redundancy. And Isolated, in an App Service Environment, for single-tenant network isolation.
+
+Scaling up means a bigger instance size, more CPU and memory. Scaling out means more instances, with the load balancer spreading traffic across them, so apps have to be stateless, with sessions and caches in external stores.
+
+For scaling out, you can go two ways. Autoscale rules, through Azure Monitor, scale based on metrics like CPU percentage, memory, or HTTP queue length, or on schedules, with min, max and default instance counts and cool-down periods. Or automatic scaling, on Premium plans, which the platform manages based on HTTP traffic, with prewarmed instances and a maximum burst, without you writing rules.
+
+I also turn on Always On to avoid idle unloading, and turn ARR affinity off for stateless apps, so traffic spreads evenly. People forget that affinity setting a lot.
+
+@p17-453
+So managed identities give Azure resources, like App Service, Functions, Container Apps, AKS workloads and VMs, an identity in Entra ID, so they can authenticate to other Azure services without storing any credentials. Azure manages the identity's credentials and rotates them automatically.
+
+They come in two flavours. A system-assigned identity is created for one specific resource and tied to its lifecycle, so when the resource is deleted, the identity goes too. Simple, and good when one resource needs its own permissions. A user-assigned identity is a standalone Azure resource, created separately and attached to one or more resources. It survives resource deletion, can be created and granted permissions before the app is deployed, which helps infrastructure as code, and can be shared, like by all instances of a scaled set of resources. You also need it for things like AKS workload identity and some deployment cases.
+
+How I use it, I grant the identity an Azure RBAC role on the target. Key Vault Secrets User on a Key Vault, Storage Blob Data Contributor on a storage account, or a database user in Azure SQL created from the identity. In .NET, the Azure.Identity library's DefaultAzureCredential, or ManagedIdentityCredential in production, gets tokens automatically. Locally, the same code uses my developer login through Visual Studio or the Azure CLI.
+
+End result, no connection string passwords or client secrets in config, nothing to rotate or leak, and access is auditable and revocable through RBAC.
+
+@p17-454
+Actually these are two separate role systems that people mix up all the time.
+
+Entra ID roles, formerly Azure AD roles, control administration of the directory itself. Managing users, groups, app registrations, licences and identity settings. Examples are Global Administrator, User Administrator, Application Administrator and Security Reader. They apply to the tenant, or to administrative units.
+
+Azure RBAC roles control access to Azure resources. Subscriptions, resource groups, and resources like VMs, storage accounts and databases. Built-in roles include Owner, full access including granting access to others. Contributor, which can manage resources but not grant access. Reader. And lots of service-specific roles, like Storage Blob Data Reader or Key Vault Secrets User, which control data-plane access, meaning reading the actual data rather than managing the resource.
+
+A role assignment has three parts. A security principal, like a user, group, service principal or managed identity. A role definition, which is a set of allowed actions. And a scope, management group, subscription, resource group or resource. Permissions inherit downward, so a role at the subscription applies to everything in it. Deny assignments and Azure Policy can restrict further.
+
+What I do, assign roles to groups, not individuals. Use the narrowest scope and the least powerful role. Use data-plane roles instead of keys. Use Privileged Identity Management for just-in-time, time-limited elevation to powerful roles, with approval. And review assignments regularly.
+
+A Global Administrator can elevate themselves to manage all subscriptions, so that role is tightly controlled.
+
+@p17-455
+Okay, so when you integrate an app with Entra ID, two objects are involved, and the portal shows them in two places. That's where the confusion comes from.
+
+An app registration is the application object, the global definition of the app, living in its home tenant. It has the client id, redirect URIs, supported account types like single-tenant or multi-tenant, certificates and secrets or federated credentials, the API permissions the app requests, scopes and app roles it exposes if it's an API, and token configuration, like optional claims.
+
+An enterprise application is the service principal, the local instance of the app in a specific tenant. It's what actually gets access in that tenant. Which users and groups are assigned, whether user assignment is required, admin consent for permissions, single sign-on settings, conditional access, and sign-in logs. For a single-tenant app, there's one app registration and one service principal in the same tenant. For a multi-tenant app, each customer tenant that consents gets its own service principal, all pointing to the one app registration. Gallery apps from vendors, like a SaaS tool, only show up as enterprise applications in your tenant.
+
+Practical bits, to restrict an app to certain users, set assignment required on the enterprise application. App roles are defined on the registration and assigned on the enterprise application. And for app credentials, prefer managed identities or federated credentials over client secrets, which expire and leak.
+
+In our on-premise platform, Keycloak plays this role, with clients and roles, but the concepts map pretty closely.

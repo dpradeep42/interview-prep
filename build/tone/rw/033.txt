@@ -1,0 +1,153 @@
+@p17-384
+See, FastAPI's BackgroundTasks lets an endpoint schedule a function to run after the response is sent, in the same process. It's simple and great for small, quick follow-up work, like sending a notification email or writing an audit entry, where the user shouldn't have to wait.
+
+But it has clear limits. The work runs in the web server's process, so heavy tasks compete with request handling. Nothing is persisted, so if the process restarts or crashes, pending tasks are just gone. No retries, no scheduling, no visibility into what's running. And it doesn't spread work across machines.
+
+A task queue fixes that. Celery, or lighter options like RQ, Dramatiq, or arq for async code. The API puts a task message on a broker, like Redis or RabbitMQ, and returns immediately, often with a job id. Separate worker processes, which scale independently, pick up tasks and run them. You get retries with backoff, time limits, result storage, scheduled and periodic jobs, monitoring with tools like Flower, and tasks survive web server restarts.
+
+So my rule is BackgroundTasks for small, best-effort stuff, and a task queue for anything long-running, CPU-heavy, that must not be lost, or needs retries. Like re-indexing documents, generating large reports, or calling slow external APIs.
+
+On AWS, SQS with a worker container or a Lambda is the managed alternative. In our developer RAG system, re-indexing runs from the pipeline, outside the API process.
+
+@p17-385
+So SQLAlchemy is Python's main database toolkit and ORM. Version 2.0 brought a modern, fully typed style. Models declared with Mapped and mapped_column type annotations, and queries built with select and executed through the session, instead of the old query API.
+
+For async, I create an async engine with create_async_engine and an async driver, like asyncpg for PostgreSQL, set the connection pool size, and create an async_sessionmaker. In FastAPI, a get_db dependency opens an AsyncSession per request with async with, yields it to the endpoint, and closes it afterwards. Queries are await session.execute of a select statement, then scalars to get model objects. Writes add objects to the session and await session.commit, with rollback on errors.
+
+A few things I've learned to watch. Lazy loading doesn't work in async code. Touching a relationship that isn't loaded triggers I/O implicitly, and that raises an error. So I load relationships explicitly with selectinload or joinedload in the query, which also avoids N+1 problems. Setting expire_on_commit to False in the sessionmaker stops attributes being expired and reloaded after commit. One session per request, never shared across concurrent tasks. And the engine is created once at startup, in the lifespan, and disposed on shutdown.
+
+It's honestly quite similar to EF Core. The session is like the DbContext, with a unit of work and identity map, and Alembic is like EF migrations.
+
+@p17-386
+Okay, so Alembic is the migration tool for SQLAlchemy, similar to EF Core migrations.
+
+After initialising it, I configure env.py to use the app's database URL and SQLAlchemy metadata, so it knows the models. When I change a model, alembic revision with autogenerate compares the models against the current schema and generates a migration script with upgrade and downgrade functions, using operations like add_column, create_table and create_index. Each migration has a revision id and points to its parent, so they form a chain. alembic upgrade head applies all pending ones, and the current version sits in an alembic_version table.
+
+But autogenerate is a starting point, not the final answer, so I always review the generated script. It doesn't catch everything. Some renames it sees as drop and add, which loses data. Some constraint or server default changes. Custom types. And data migrations, like backfilling a new column, I write by hand with op.execute or batch updates.
+
+In production it's the same practices as with any database. Migrations stay backward compatible with the code that's currently running, expand and contract style. They run as a separate step in the deployment pipeline, not automatically on every app start, especially with several instances. Big table changes are done carefully, like creating indexes concurrently in PostgreSQL. And I test migrations against a copy of production-sized data, because that's where the surprises come from.
+
+@p17-387
+Honestly pytest is just the standard in Python. Tests are plain functions starting with test_, using simple assert statements, and pytest shows detailed info about what didn't match.
+
+Fixtures give you setup and teardown through dependency injection. A test function declares a parameter with the fixture's name, and pytest calls the fixture and passes in the result. A fixture that yields runs its cleanup after the test. Fixtures have scopes, function, module or session, so expensive setup, like a test database container, can be created once per session. Shared fixtures live in conftest.py files.
+
+parametrize runs the same test with multiple inputs, like a table of chunk sizes and expected counts. It's like InlineData in xUnit.
+
+For mocking, unittest.mock gives you Mock, MagicMock and patch, and pytest's monkeypatch fixture replaces attributes or environment variables for one test. I mock external boundaries, like HTTP APIs or the embedding service, not internal functions. For HTTP, libraries like respx or responses fake responses at the transport level.
+
+For FastAPI, TestClient, or httpx's AsyncClient with ASGI transport, calls endpoints in-process, and dependency_overrides swaps dependencies. pytest-asyncio handles async tests. For integration tests, Testcontainers starts a real PostgreSQL in Docker.
+
+pytest-cov measures coverage, and markers let me split slow integration tests from fast unit tests in the pipeline. So yeah, that's pretty much my setup.
+
+@p17-388
+Actually Python's built-in logging module is the foundation. Each module gets a logger with logging.getLogger of dunder name, and configuration, done once at startup, decides levels, formats and handlers. Libraries should only create loggers, never configure logging themselves.
+
+For services I want structured JSON logs, so the central log system can search by fields. You can go two ways here. A JSON formatter, like python-json-logger, on top of standard logging, where extra fields go in the extra parameter. Or structlog, which I prefer. It builds log entries as dictionaries through a chain of processors, adding timestamps, log level, logger name and exception details, and renders JSON in production and nice colourful output in development. It also hooks into standard logging, so library logs come out in the same format.
+
+For request context, I use contextvars, Python's version of AsyncLocal, which works with asyncio. A middleware binds the request id and user id at the start of each request, and structlog's contextvars processor adds them to every log line in that request automatically. OpenTelemetry's logging instrumentation can add trace and span ids too, linking logs with traces.
+
+My habits, log events with key-value context instead of formatted sentences. Use the right levels. Log exceptions with logger.exception, which includes the traceback. Never log secrets, tokens or personal data. And write to standard output in containers.
+
+@p17-389
+So it's similar principles to .NET and Node images, really.
+
+Base image, an official slim image with a pinned version, like python 3.12 slim. Alpine usually isn't a good fit for Python, because a lot of packages ship pre-built wheels for glibc, and on Alpine's musl they have to be compiled, which is slow and can break.
+
+Multi-stage build. A builder stage installs dependencies, plus any build tools needed to compile packages, into a virtual environment, ideally with uv for speed, using the lockfile. The final stage copies only that virtual environment and the app code, so compilers and caches don't get shipped.
+
+Layer caching, copy pyproject.toml and the lockfile first, install dependencies, then copy the source.
+
+Environment settings, PYTHONDONTWRITEBYTECODE to skip .pyc files, and PYTHONUNBUFFERED, so logs show up immediately instead of being buffered. That second one catches people.
+
+Security, create a non-root user and switch to it, keep the image minimal, and scan it in the pipeline.
+
+The process, for a FastAPI app, run Uvicorn directly with a fixed number of workers, or Gunicorn managing Uvicorn workers, as the main process with an exec-form CMD, so it gets SIGTERM and shuts down gracefully. With ECS or Kubernetes, I often run one worker per container and scale containers instead.
+
+Add a health endpoint, and set memory limits sensibly, since each worker process has its own memory.
+
+@p17-390
+Okay, WSGI is the original standard interface between Python web servers and frameworks, used by Flask and Django traditionally. It's synchronous. Each request occupies a worker, a process or thread, until it's done. So concurrency is limited by the number of workers, and long-lived connections like WebSockets don't really fit.
+
+ASGI is the async successor. It supports async request handling, so one worker can handle lots of concurrent requests while they wait on I/O, and it supports WebSockets, HTTP/2, and lifespan events for startup and shutdown. FastAPI and Starlette are ASGI frameworks, and Django supports ASGI too.
+
+Uvicorn is a fast ASGI server, built on uvloop and httptools. It runs the FastAPI app. On its own it can run several worker processes with the workers option.
+
+Gunicorn is a mature process manager and WSGI server. For ASGI apps, it's used as a process manager with Uvicorn's worker class. Gunicorn starts several Uvicorn worker processes, monitors them, restarts any that crash, and handles graceful restarts and timeouts. That combo was the classic production setup, because one Python process only uses one core for Python code.
+
+In containers there's another common approach. Run a single Uvicorn process per container, and let ECS or Kubernetes run multiple containers and restart them. That's simpler and gives the orchestrator better visibility, so it's what I lean towards.
+
+Either way, the number of workers is roughly tuned to CPU cores and memory.
+
+@p17-391
+See, I always start by working out where the time actually goes, rather than guessing.
+
+At the service level, tracing with OpenTelemetry shows whether a slow request is spending time in our code, the database, or external calls like an embedding API. Often it's I/O. An N+1 query, a missing index, or calls made one after another that could run concurrently with asyncio.gather.
+
+If the time is in Python code itself, then a profiler. cProfile, built in, records every function call with call counts and cumulative time. I view the output with snakeviz as a graph, or sort by cumulative time. It has overhead though, and the code has to run under it.
+
+py-spy is a sampling profiler that attaches to a running process without restarting it or changing code, so it's safe in production. py-spy top shows live hot functions, and py-spy record produces a flame graph. py-spy dump shows what every thread is doing right now, which is great for hangs. Newer ones include Scalene, which also profiles memory and separates Python time from native time, and Pyinstrument.
+
+For one specific hot function, line_profiler shows time per line.
+
+The usual fixes, better algorithms or data structures, like a set for membership checks instead of a list. Vectorising with NumPy or pandas instead of Python loops. Caching with functools.cache. Batching database or API calls. And moving CPU-heavy work to a process pool.
+
+@p17-392
+So LBYL, look before you leap, means checking conditions before acting. If key in dictionary, then read it. EAFP, easier to ask forgiveness than permission, means just trying the operation and handling the exception. Try reading the key, except KeyError.
+
+Python culture generally prefers EAFP. It avoids race conditions where the condition changes between the check and the action, like a file getting deleted right after you checked it exists. It's often cleaner, and exceptions in Python are fairly cheap. LBYL is still fine for simple expected cases, and things like dict.get with a default sidestep both.
+
+How I handle exceptions in practice. Catch specific exceptions, never a bare except, which also catches KeyboardInterrupt and SystemExit, and avoid catching Exception broadly except at the top level of a request or job, where I log it and return an error. Keep the try block small, so I only catch errors from the line I expect. Use raise from to chain exceptions when translating them, like raising a custom EmbeddingServiceError from the original httpx error, which keeps the original traceback. Have a small hierarchy of custom exceptions, like a base AppError with NotFoundError and ValidationError, which FastAPI exception handlers map to HTTP responses. And finally blocks or context managers for cleanup.
+
+Python 3.11 added exception groups and except star for handling multiple errors from concurrent tasks, like the ones in a TaskGroup.
+
+@p17-393
+Okay, for HTTP calls in Python I use httpx, which does both sync and async with the same API, or requests for simple synchronous scripts.
+
+What makes it reliable is a handful of things.
+
+Reuse the client. Creating a new client per request loses connection pooling and keep-alive, so I create one httpx.AsyncClient at startup, in the FastAPI lifespan, with a base URL, default headers and limits, and close it on shutdown. Same lesson as HttpClient in .NET, honestly.
+
+Timeouts. requests has no default timeout at all, so a hung server blocks forever. httpx defaults to five seconds. I set explicit connect and read timeouts suited to the API.
+
+Check status codes. Call raise_for_status, or check the status explicitly and handle errors.
+
+Retries with backoff. The tenacity library gives you a retry decorator with stop_after_attempt, wait_exponential with jitter, and retry_if_exception_type, so I retry only transient failures, connection errors, timeouts, 429 and 503, and respect Retry-After. For non-idempotent POST requests, I retry only with an idempotency key.
+
+Concurrency limits. When making lots of calls with asyncio.gather, I use an asyncio.Semaphore to cap concurrent requests and respect the API's rate limits.
+
+And logging with the request id, plus OpenTelemetry instrumentation for httpx, so external calls show up in traces.
+
+For the embedding API calls in our RAG service, batching and rate-limit-aware retries were essential.
+
+@p17-394
+Honestly Python has a few specific risks on top of the usual web security stuff.
+
+pickle. Unpickling data can execute arbitrary code, so I never unpickle data from untrusted sources, like uploads, network messages or shared caches. JSON is the safe choice for data exchange. Same applies to tools built on pickle, like some model file formats. For ML models, safer formats like safetensors exist.
+
+eval and exec. Running strings as code is dangerous with any user input. For parsing simple literals, ast.literal_eval is safe.
+
+YAML. yaml.load with the default or full loader can create arbitrary Python objects, so I always use yaml.safe_load.
+
+subprocess. Passing a command string with shell equals True and user input allows shell injection. I pass arguments as a list without the shell.
+
+SQL. Always parameterised queries, through SQLAlchemy or the driver's parameters. Never f-strings in SQL.
+
+Path traversal. Building file paths from user input means resolving the path and checking it stays inside the allowed directory.
+
+Insecure randomness. random is predictable, so for tokens and passwords I use the secrets module.
+
+Dependencies. Typosquatted packages on PyPI are real, so I pin dependencies with a lockfile, scan them with pip-audit, and review new packages.
+
+And tools help a lot. Bandit, or Ruff's security rules, flag many of these patterns automatically in the pipeline.
+
+@p17-395
+Actually the key is not loading the whole file into memory at once, unless it comfortably fits.
+
+For row-by-row processing, the built-in csv module with DictReader reads one row at a time from a file object, kind of a generator-like stream. Memory stays flat no matter how big the file is. I combine it with batching. Collect rows into batches of, say, 5,000, validate them, and write each batch to the database with a bulk insert, like executemany or PostgreSQL's COPY, which is way faster than inserting rows one by one.
+
+For analysis and transformation, pandas is convenient, but it loads data into memory, which can be several times the file size. read_csv with chunksize returns an iterator of DataFrames, so you can process a large file in chunks. Specifying dtypes and usecols, so you only read the needed columns with the right types, cuts memory and speeds up parsing a lot. The pyarrow engine is faster too.
+
+Polars is a newer DataFrame library written in Rust. Much faster than pandas, uses all CPU cores, and its lazy API with scan_csv builds a query plan and processes data in a streaming way, even for files bigger than memory. For heavy data work it's my preferred choice now. DuckDB is another great option, it can query CSV files with SQL directly.
+
+Whatever the tool, I collect invalid rows with their line numbers into an error report instead of failing the whole file.

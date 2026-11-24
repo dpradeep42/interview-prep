@@ -1,0 +1,141 @@
+@p17-456
+So Azure gives you three main ways to run SQL Server workloads.
+
+Azure SQL Database is a fully managed, platform-as-a-service database. Each database is independent, with built-in high availability, automatic backups with point-in-time restore, automatic patching, and features like serverless compute, Hyperscale for very large databases, and elastic pools that share resources between lots of databases with varying usage, which suits a database-per-tenant model. But it's missing some instance-level features. Cross-database queries are limited, there's no SQL Agent, CLR is restricted, and you can't touch the file system.
+
+Azure SQL Managed Instance is also fully managed, but gives near-complete compatibility with an on-premise SQL Server instance. SQL Agent jobs, cross-database queries, Database Mail, CLR, linked servers, Service Broker, and native backup and restore from on-premise. It's the easiest path for lifting and shifting existing apps that rely on instance features, and it's VNet-integrated by default.
+
+SQL Server on Azure VMs gives full control of the OS and SQL Server, any version and feature, including SSIS and SSRS on the same machine. But you manage patching, backups and high availability yourself, with some help from the SQL IaaS extension.
+
+My choice, SQL Database for new cloud-native apps. Managed Instance for migrating existing on-premise apps that use instance features, which is honestly how I'd look at our CIRT setup, with a database per study plus a master database [and some cross-database queries]. VMs only when OS access or unsupported features are really needed.
+
+@p17-457
+Okay, Azure SQL Database has two purchasing models.
+
+The DTU model bundles CPU, memory and I/O into a single measure, Database Transaction Units, in Basic, Standard and Premium tiers. It's simple and fine for small, predictable databases, but you can't scale compute and storage independently, and it's hard to compare with on-premise hardware.
+
+The vCore model lets you pick virtual cores, with memory proportional, and storage separately. It's more transparent, maps to on-premise sizing, and lets you use Azure Hybrid Benefit, bringing existing SQL Server licences for big savings, plus reserved capacity. It has service tiers. General Purpose, for most workloads, with remote storage. Business Critical, with local SSD storage, higher I/O, built-in readable replicas and faster failover. And Hyperscale, which scales storage up to 128 TB, with fast backups and restores, and quickly added read replicas. Hyperscale has become the recommended choice for a lot of new workloads, because its pricing got competitive.
+
+Serverless is a compute option in the vCore General Purpose and Hyperscale tiers. It scales automatically between a min and max number of vCores based on load, billed per second for compute used, and in General Purpose it can auto-pause after a period of inactivity, so you only pay for storage. The catch is a delay of up to a minute or so on the first connection after a pause, which surprises people the first time.
+
+So serverless suits dev, test and intermittent workloads, and provisioned vCore suits steady production.
+
+@p17-458
+See, Cosmos DB gives you five consistency levels, trading consistency against latency, availability and throughput, especially with multiple regions.
+
+Strong means reads always return the latest committed write, linearisability. Writes have to be acknowledged across regions, so latency is higher, and it's not available with multiple write regions.
+
+Bounded staleness means reads can lag behind writes, but by no more than a configured number of versions or a time interval. Within that bound, order is guaranteed. It suits globally distributed apps that need near-strong guarantees.
+
+Session is the default and the most popular. Within a client session, identified by a session token, you read your own writes, and reads are monotonic, they never go backwards. Other clients might see slightly older data. That fits most apps, since a user always sees their own changes immediately.
+
+Consistent prefix means reads never see out-of-order writes. You might see older data, but never a gap, like seeing update three without update two.
+
+Eventual has no ordering guarantee, replicas just converge eventually. Lowest latency, highest throughput, fine for things like like-counts or non-critical data.
+
+The level is set on the account, and requests can relax it, but not make it stronger than the account default. Weaker levels also cost fewer request units for reads.
+
+For a web app, session is usually right, as long as the session token is passed consistently, which the SDK does inside one client instance. Across instances behind a load balancer, I'd pass the token explicitly when read-your-writes matters. That's an easy one to miss.
+
+@p17-459
+Actually Cosmos DB measures cost and throughput in request units. Every operation costs RUs, based on CPU, memory and I/O. A point read of a 1 KB item by id and partition key costs one RU, writes cost more, and queries cost more depending on how much data they scan. Throughput is provisioned in RU per second, manual or autoscale, or you go serverless and pay per RU consumed. Going over throughput returns 429 errors, which the SDK retries.
+
+The partition key is the most important design decision, because it decides how data and throughput get distributed. Items with the same partition key value live in the same logical partition, limited to 20 GB, and logical partitions are spread across physical partitions, each limited to 10,000 RU per second.
+
+A good partition key has high cardinality, lots of distinct values. It spreads reads and writes evenly, so no hot keys. And it matches the most frequent queries, so they hit a single partition. A query filtering on the partition key is efficient. One that doesn't becomes a cross-partition query, fanning out to every partition, which costs more RUs and more latency.
+
+Let me take an example. In a multi-tenant app, tenantId feels natural, but a huge tenant can go past 20 GB or become hot. Hierarchical partition keys fix that, using tenantId then userId or shipmentId as sub-keys, so a big tenant spreads across partitions while queries by tenant stay targeted.
+
+And the partition key can't be changed easily later, so I design it from access patterns first.
+
+@p17-460
+Okay, so the change feed is a persistent, ordered record of changes to items in a Cosmos DB container. By default, in latest version mode, it shows inserts and updates. Each changed item shows up with its latest version, ordered within each partition key. The newer all versions and deletes mode shows every change, including intermediate versions and deletes, within the retention window.
+
+How you consume it. The change feed processor in the .NET SDK, which distributes partitions across multiple instances, with a lease container tracking progress for each, so it scales out and resumes after failures. An Azure Functions Cosmos DB trigger, which uses the processor internally. Or the pull model, if you want more control.
+
+Where it's useful. Event-driven processing, when an order is inserted, trigger downstream actions, like notifications or workflows, so Cosmos becomes a reliable source of events without a separate outbox. Materialised views, keeping a second container partitioned differently for another query pattern, like orders by customer and orders by status. Syncing to other stores, pushing changes to Azure AI Search, a cache, or a data warehouse for analytics. Auditing and data movement, like migrating data with zero downtime.
+
+A few things that bite people. Processing is at-least-once, so handlers have to be idempotent. In latest version mode, deletes aren't captured, so soft deletes with a TTL are the usual workaround. And order is only guaranteed within a partition key.
+
+@p17-461
+Honestly the options differ a lot in how safe they are.
+
+Storage account keys give full access to the whole account. Anyone with a key can do anything, and rotating them breaks every client using them. I avoid them, and ideally disable shared key authorisation on the account entirely.
+
+Shared access signatures, SAS, are URLs with a signed token granting limited access. Specific permissions, like read or write. Specific containers or blobs. A time window. And optionally IP ranges and HTTPS only. They're useful for giving clients direct, temporary access, like a browser uploading a file directly or downloading a report. You get account SAS and service SAS, signed with the account key, and user delegation SAS, signed with credentials from Entra ID. User delegation SAS is the one to use, because it's tied to an identity, can be revoked by revoking the delegation key, and doesn't depend on account keys. And keep SAS tokens short-lived, like 15 minutes.
+
+Entra ID with Azure RBAC is the best option for applications. Managed identities with roles like Storage Blob Data Reader or Contributor, scoped to a container. No secrets at all.
+
+On top of that, network and data protection. Disable public blob access, use private endpoints or firewall rules, turn on soft delete and versioning for recovery, use immutability policies for compliance data, and enable Defender for Storage to catch malware uploads and unusual access.
+
+@p17-462
+So Azure Storage always keeps multiple copies of data, and the redundancy option decides where those copies live.
+
+Locally redundant storage, LRS, keeps three copies within a single data centre in one region. Cheapest, protects against disk and server failures, but not a data centre or zone outage.
+
+Zone-redundant storage, ZRS, keeps three copies across three availability zones in the region. It survives a whole zone going down, with data still readable and writable, so it's the recommended option for high availability within a region.
+
+Geo-redundant storage, GRS, keeps three copies with LRS in the primary region and replicates asynchronously to a paired secondary region, which also keeps three copies with LRS. It protects against a regional disaster, but since replication is async, recent writes might be lost, and you measure that by the last sync time.
+
+Geo-zone-redundant storage, GZRS, combines ZRS in the primary region with geo-replication to the secondary, giving the best durability and availability.
+
+Read-access variants, RA-GRS and RA-GZRS, let apps read from the secondary region any time, even when the primary is healthy, which helps read availability during an outage.
+
+If the primary region fails, Microsoft may start a failover, or customers can trigger a customer-managed failover, which promotes the secondary.
+
+I'd go with ZRS for most production data, and GZRS or RA-GZRS for critical data that needs regional disaster recovery. That's usually the conversation I'd have with the team, cost versus how bad losing a region would be.
+
+@p17-463
+See, Azure has three main messaging services, each for a different job.
+
+Service Bus is an enterprise message broker for commands and business transactions, where every message matters. Queues and topics with subscriptions, at-least-once delivery with peek-lock, dead-letter queues, sessions for ordered processing per key, duplicate detection, scheduled messages, and transactions. It's for order processing, workflows between services, and anything that needs reliable, ordered, transactional messaging.
+
+Event Grid is an event routing service for reactive, discrete events, like "a blob was created" or "a resource was deleted", plus custom events from apps. It pushes events to subscribers, like Functions, webhooks, Service Bus or Event Hubs, with filtering, retries with backoff and dead-lettering to storage. It's lightweight, serverless, and lots of Azure services are built-in event sources. It also supports MQTT and pull delivery in namespaces.
+
+Event Hubs is a big-data streaming platform for high-volume event ingestion. Telemetry, logs, clickstreams and IoT data, millions of events per second. Events are kept in partitions for a period, and multiple consumer groups read independently and can replay. It speaks the Kafka protocol, so Kafka clients work unchanged, and Capture writes events to storage automatically.
+
+How I'd sum it up, Service Bus for high-value messages between services, Event Grid to react to things that happened, Event Hubs for streams of data to analyse. And they're often combined, like Event Grid forwarding blob events into Service Bus for reliable processing.
+
+@p17-464
+Okay, Service Bus sessions give you ordered, first-in first-out processing of related messages. Each message has a SessionId, like a shipment id or order id. Messages with the same SessionId are delivered in order, and a session can be locked by only one receiver at a time. So all messages for that shipment get processed sequentially by one consumer, while different sessions are processed in parallel by different consumers. Ordering per entity with horizontal scale, similar to Kafka partition keys or SQS FIFO message groups.
+
+Sessions also have session state, a small storage area per session that the receiver can read and update, handy for tracking workflow progress across messages. The queue or subscription has to be created with sessions on, and then every message must have a SessionId. Receivers use a session processor in the SDK, with a setting for max concurrent sessions.
+
+Duplicate detection protects against producers sending the same message twice. Like when a send times out and gets retried, but the first send actually succeeded. When it's on for a queue or topic, Service Bus remembers the MessageId of messages received within a time window, up to seven days, and silently drops any new message with the same MessageId. The producer has to set a meaningful, deterministic MessageId, like an event id, not a random one per send. I've seen people miss that and wonder why dedup isn't working.
+
+And duplicate detection doesn't help with duplicates on the consumer side, from lock expiry and redelivery, so consumers still need to be idempotent.
+
+@p17-465
+So a Service Bus topic is for publish-subscribe. Publishers send messages to the topic, and each subscription gets its own copy of every message that matches its filter. Each subscription behaves like a separate queue with its own consumers, so services process events independently.
+
+Filters decide which messages a subscription gets. A SQL filter uses a SQL-like expression on message properties, like eventType equals Delivered and region equals EU. A correlation filter matches on properties exactly, and it's more efficient. A subscription can also have actions that modify properties. With no filter, a subscription gets everything. Filtering at the broker means consumers don't receive and throw away irrelevant messages.
+
+Dead-lettering. Each queue and subscription has a dead-letter sub-queue. Messages land there when they go over the max delivery count, say after ten failed attempts. When they expire, if dead-lettering on expiration is on. When filter evaluation fails. Or when the consumer explicitly dead-letters a message it knows can't be processed, like invalid data, with a reason and description. Messages in the dead-letter queue stay until someone reads them, so I monitor the dead-letter count with alerts, investigate, fix the cause, and resubmit or discard messages, through Service Bus Explorer in the portal or a tool.
+
+Auto-forwarding chains a subscription or queue to another queue or topic, which helps build routing topologies.
+
+Our on-premise RabbitMQ setup uses the same ideas, exchanges, bound queues, retry and dead-letter exchanges.
+
+@p17-466
+Actually all three can run containers, just at different levels of control and complexity.
+
+App Service is a platform for web apps and APIs. It can run code directly, or a single container, or a few with sidecars. It has deployment slots, easy authentication, autoscale and VNet integration. It's the simplest choice for typical web apps and APIs, especially for teams that don't want to deal with container orchestration.
+
+Azure Container Apps is a serverless container platform built on Kubernetes, but it doesn't expose Kubernetes to you. You deploy containers, and it gives you ingress with HTTPS, revisions with traffic splitting for blue-green and canary releases, autoscaling with KEDA, including scale to zero, based on HTTP traffic, queue length, Kafka lag or other events. Dapr integration for service invocation, pub-sub and state. Jobs for scheduled and event-driven tasks. And service discovery between apps. It fits microservices and event-driven workers without the overhead of running a cluster.
+
+AKS is managed Kubernetes. Full Kubernetes control, any workload type, custom operators, service meshes, Helm, fine-grained networking and node pools, including GPUs. But the team has to operate the cluster. Upgrades, node pools, networking, security and policies. AKS Automatic cuts that down with opinionated defaults.
+
+So yeah, App Service for simple web apps, Container Apps for most microservices, and AKS when the organisation needs full Kubernetes, has platform engineers, or has to run lots of varied workloads with Kubernetes tooling and portability.
+
+@p17-467
+Okay, Azure has four load balancing services, and they differ by scope and layer.
+
+Azure Front Door is global and works at layer 7, HTTP and HTTPS. It's a CDN and global entry point. Requests enter Microsoft's edge network near the user, with TLS termination, caching, path-based routing to backends in multiple regions, health probes with fast failover between regions, and an integrated Web Application Firewall and DDoS protection. It's the front door for global web apps and APIs, and it can reach private backends through Private Link.
+
+Application Gateway is regional and works at layer 7. It's a reverse proxy inside a virtual network, with URL path and host-based routing, TLS termination and end-to-end TLS, WAF, cookie-based session affinity, and autoscaling. It fronts web apps in one region, often for VMs, App Service or AKS, where the Application Gateway for Containers option integrates with Kubernetes.
+
+Azure Load Balancer is regional or cross-regional and works at layer 4, TCP and UDP. Very fast, high-throughput, protocol-agnostic, for non-HTTP traffic or internal load balancing between VMs. No TLS termination, no URL awareness.
+
+Traffic Manager is global and DNS-based. It returns the address of the best endpoint by priority, weight, performance or geography, with health checks. Since it's DNS, failover depends on DNS TTLs and client caching, so it's slower to react.
+
+The setup I've seen most is Front Door globally, with WAF, routing to Application Gateway or straight to regional services.

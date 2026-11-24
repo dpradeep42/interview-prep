@@ -1,0 +1,143 @@
+@p17-420
+Okay, so S3 versioning keeps every version of an object in a bucket. When an object is overwritten, the old version is kept, and when it's deleted, S3 adds a delete marker instead of removing the data, so you can restore the previous version. It protects against accidental overwrites and deletions, app bugs, and some ransomware scenarios. Once it's on, you can only suspend it, not remove it. Old versions cost storage, so lifecycle rules expire noncurrent versions after a while. Versioning is also needed for replication.
+
+Object Lock adds write-once-read-many protection on top of versioning. Locked object versions can't be deleted or overwritten until their retention period ends. It comes in two modes. Governance mode stops deletion by most users, but users with special permission can bypass it, which is useful for testing or flexible policies. Compliance mode can't be bypassed by anyone, not even the root user, and the retention period can't be shortened. That one's designed for regulatory requirements, like financial records or clinical data, that have to stay unchanged for a defined period. Legal holds lock objects indefinitely until the hold is removed, independent of retention periods.
+
+For regulated audit data or validated documents, compliance mode Object Lock gives strong evidence that records weren't altered, which supports data integrity requirements. In our kind of domain that matters a lot.
+
+MFA Delete is another layer, requiring MFA to permanently delete versions or change versioning.
+
+@p17-421
+So CloudFront is AWS's CDN. Serving a React or Angular build from S3 through CloudFront gives you fast global delivery, HTTPS with a free ACM certificate, and caching at edge locations.
+
+Security first. The S3 bucket stays private, with Block Public Access on, and it's not set up as a public website. CloudFront uses Origin Access Control to sign its requests to S3, and the bucket policy only lets the CloudFront distribution read objects. So users can't go around CloudFront to hit the bucket directly.
+
+SPA routing. Deep links, like slash shipments slash 123, don't exist as files in S3, so S3 returns 403 or 404. You can configure CloudFront custom error responses to return index.html with a 200 for those errors, or use a CloudFront Function to rewrite paths without file extensions to index.html. I prefer the function, because then real API 404s aren't masked.
+
+Caching. Hashed asset files, like main dot abc123 dot js, get long cache times, Cache-Control max-age of a year and immutable, while index.html gets no-cache, so users pick up new releases immediately. After deployment, I invalidate index.html if needed.
+
+Extra protection, response headers policies add security headers like HSTS and a Content Security Policy. AWS WAF can be attached. And API calls can go through the same distribution under slash api to an ALB or API Gateway origin, so the app and API share one domain and you don't need CORS at all. Honestly that last trick saves a lot of headache.
+
+@p17-422
+See, Route 53 is AWS's DNS service, and its routing policies decide which answer to return for a DNS query.
+
+Simple routing returns one record, or several values in random order, with no health checks per value.
+
+Weighted routing splits traffic between records by weight, like 90 percent to the current version and 10 percent to a new one. Useful for gradual migrations, canary releases at the DNS level, or A/B testing.
+
+Latency-based routing sends users to the region with the lowest latency for them, for multi-region apps.
+
+Failover routing has a primary and a secondary record. Route 53 health checks watch the primary, and if it fails, DNS answers switch to the secondary, like a static maintenance site or a standby region. That's a basic building block of disaster recovery.
+
+Geolocation routing answers based on the user's country or continent, for data residency, localised content or legal restrictions. Geoproximity routing is based on distance, with a bias to shift traffic between regions.
+
+Multivalue answer routing returns several healthy records, a simple form of client-side load balancing with health checks.
+
+IP-based routing uses the client's IP ranges.
+
+Alias records are a Route 53 extension that point to AWS resources, like a load balancer, CloudFront or S3, at the zone apex, which a CNAME can't do, and they're free to query.
+
+One thing I've learned, DNS changes are cached by TTL, so for failover I keep TTLs short, like 60 seconds.
+
+@p17-423
+Actually VPC endpoints let resources in private subnets reach AWS services without going over the internet, and without a NAT gateway. Traffic stays on the AWS network, which is better for security and can cut NAT data processing costs a lot.
+
+They come in two flavours.
+
+Gateway endpoints are only for S3 and DynamoDB. They're added as a target in the subnet route tables, so traffic to those services goes through the endpoint. And they're free. Endpoint policies can restrict which buckets or tables can be reached through them, and bucket policies can require access to come through a specific endpoint, which prevents data exfiltration to other accounts' buckets.
+
+Interface endpoints, powered by PrivateLink, cover most other AWS services, like Secrets Manager, SQS, ECR, CloudWatch Logs, STS, KMS and SSM, plus third-party and your own services. They create elastic network interfaces with private IPs in your subnets. With private DNS turned on, the normal service hostname resolves to these private IPs, so apps don't change anything. They're charged per hour per availability zone and per GB processed, and protected by security groups.
+
+Let me take an example. ECS tasks in private subnets without internet access need interface endpoints for ECR, CloudWatch Logs and Secrets Manager, plus the S3 gateway endpoint for image layers, just to pull images and start. Miss one and the task just fails to start.
+
+So I always add the free gateway endpoints for S3 and DynamoDB, and interface endpoints where traffic is high or internet access isn't allowed.
+
+@p17-424
+Okay, these are different ways to connect VPCs and services, and they're not really interchangeable.
+
+VPC peering creates a direct, private connection between two VPCs, same or different accounts and regions. It's simple, no bandwidth bottleneck, no hourly charge, only data transfer. But it isn't transitive. If A peers with B and B with C, A can't reach C through B. With lots of VPCs, the number of peering connections grows fast and you end up with a mesh that's hard to manage. And CIDR ranges can't overlap.
+
+Transit Gateway is a regional hub that VPCs, VPN connections and Direct Connect gateways attach to. It routes between them, with route tables for segmentation, like keeping production and development apart while both reach shared services. It scales to thousands of VPCs, simplifies routing in a hub-and-spoke design, and can peer across regions. It costs per attachment per hour and per GB.
+
+PrivateLink is a different idea. Instead of connecting whole networks, it exposes one specific service. A provider puts the service behind a Network Load Balancer and creates an endpoint service, and consumers create interface endpoints in their VPCs. Traffic flows one way, to that service only, and overlapping CIDRs don't matter. It's ideal for exposing a shared internal API to many teams or accounts, or consuming SaaS privately, with minimal network exposure.
+
+In multi-account organisations, what I've seen work is Transit Gateway for general connectivity plus PrivateLink for specific shared services.
+
+@p17-425
+So using several AWS accounts, organised with AWS Organizations, is the recommended way to structure an AWS environment. An account is the strongest isolation boundary AWS has.
+
+Why bother? Security isolation, a leaked credential or misconfiguration in a dev account can't touch production. Blast radius, limits and quotas are per account, so one team's runaway process doesn't eat another's. Clear cost tracking per account, team or environment. Simpler permissions, instead of complex IAM conditions to separate environments in one account, each environment is its own account. And compliance, regulated workloads can live in tightly controlled accounts.
+
+A typical structure has organisational units, like Security, with log archive and audit accounts. Infrastructure, with shared networking. Workloads, with separate dev, test and prod accounts per application. And Sandbox for experiments. AWS Control Tower sets up this landing zone with guardrails, account vending and central logging, and IAM Identity Center gives people single sign-on into accounts with role-based permission sets, instead of IAM users.
+
+Service Control Policies are organisation-level guardrails. They define the maximum permissions available in an account or OU, and they apply even to administrators and the account's root user. They don't grant permissions, they only limit them. Typical SCPs, deny leaving the organisation, deny disabling CloudTrail or GuardDuty, restrict which regions can be used, and deny creating resources without required tags.
+
+Resource Control Policies, added in 2024, do something similar for permissions on resources.
+
+@p17-426
+Honestly the logic is simple to remember. By default everything is implicitly denied, an explicit allow grants access, and an explicit deny always wins over any allow. IAM evaluates every request against all the policies that apply.
+
+The policies involved inside an account, identity-based policies attached to the user or role. Resource-based policies, like an S3 bucket policy or KMS key policy. Permission boundaries, which set the maximum permissions an identity can have. Session policies, passed when assuming a role. And from the organisation, Service Control Policies and Resource Control Policies.
+
+The evaluation order, roughly. If any policy has an explicit deny matching the request, it's denied, done. Then the request has to be allowed by SCPs, by the permission boundary if one's set, and by the session policy if there is one, because those are limits. And then it has to be allowed by either the identity policy or the resource policy. For cross-account access, both sides must allow it, the caller's identity policy and the resource policy in the other account.
+
+When I debug an AccessDenied error, what I do is check the error message, which now often names the policy type that denied it. Then CloudTrail for the exact action, resource and principal. Then any explicit denies, including SCPs and bucket policies with conditions, like requiring encryption or a VPC endpoint. Then KMS key policies, which people forget all the time when accessing encrypted S3 objects or secrets. And the IAM policy simulator.
+
+@p17-427
+See, ECS tasks use two different IAM roles, and mixing them up is a really common source of errors.
+
+The task execution role is used by the ECS agent and Fargate infrastructure, not by my application code. It grants what's needed to start the task. Pulling the container image from ECR, sending container logs to CloudWatch Logs, and fetching secrets from Secrets Manager or Parameter Store that get injected as environment variables in the task definition. The managed policy AmazonECSTaskExecutionRolePolicy covers ECR and logs, and secrets need extra permissions, including KMS decrypt if a customer key encrypts them.
+
+The task role is used by my application inside the container. When the code uses the AWS SDK, the SDK automatically gets temporary credentials for this role from the container credentials endpoint. It grants whatever the app needs. Reading from an S3 bucket, sending messages to SQS, reading and writing a DynamoDB table. Each service should have its own task role with least-privilege permissions.
+
+How you can tell which one's wrong. If a task fails to start with errors pulling the image, or "unable to retrieve secret", the execution role is missing permissions. If the task runs but the app gets AccessDenied when calling S3 or SQS, the task role is missing permissions, or the task has no task role at all, so the SDK can't find credentials.
+
+So yeah, the execution role gets the task running, and the task role is what the running code uses.
+
+@p17-428
+So pods on EKS often need to call AWS services. The bad way is giving the worker node's instance role all the permissions, because then every pod on the node gets them, or storing access keys in Kubernetes secrets. The proper way gives each workload its own IAM role.
+
+IRSA, IAM Roles for Service Accounts, was the original way. The cluster has an OIDC provider registered in IAM. A Kubernetes service account is annotated with an IAM role ARN, and the role's trust policy allows that specific service account in that namespace to assume it, using a web identity token that EKS projects into the pod. The AWS SDK picks this up automatically.
+
+EKS Pod Identity is the newer, simpler option. An agent runs on the nodes, and you create a pod identity association, linking a namespace and service account to an IAM role, through the EKS API. The role's trust policy just trusts the EKS Pod Identity service, so the same role can be reused across clusters without updating trust policies for each cluster's OIDC provider. It also supports session tags for attribute-based access control. If I'm starting fresh, I'd go with this one.
+
+Either way, the pod gets temporary credentials scoped to its own role, which is least privilege. I also block pods from reaching the node's instance metadata service, or set the hop limit to one, so pods can't quietly fall back to the node's role.
+
+@p17-429
+Okay, AWS KMS manages encryption keys, and its keys never leave KMS unencrypted. But KMS can only encrypt up to 4 KB directly, and calling KMS for every piece of data would be slow and expensive. Envelope encryption solves that.
+
+How it works. The app asks KMS to generate a data key, under a KMS key, often called the master key. KMS returns two copies of the data key, one plaintext and one encrypted under the KMS key. The app encrypts the data locally with the plaintext data key, using a fast algorithm like AES-GCM, then throws away the plaintext key from memory, and stores the encrypted data key alongside the encrypted data. To decrypt, the app sends the encrypted data key to KMS, which decrypts it, if the caller has permission, and returns the plaintext data key, which then decrypts the data locally.
+
+What you get out of it. Large data gets encrypted efficiently. The KMS key itself never leaves KMS. Access to data is controlled by KMS key policies and IAM, and every decrypt is logged in CloudTrail. And rotating the KMS key doesn't mean re-encrypting all the data.
+
+AWS services like S3, EBS, RDS and Secrets Manager use envelope encryption under the hood when you pick a KMS key. For application-level encryption, the AWS Encryption SDK implements it properly, including data key caching, so I wouldn't hand-roll it.
+
+Customer managed keys give you control over key policies, rotation and deletion, and allow cross-account access.
+
+@p17-430
+Actually the easy way to remember is they answer different questions.
+
+CloudWatch answers "how are my systems performing?" It collects metrics, like CPU, request counts and latency, and logs from apps and services, with alarms, dashboards, Logs Insights queries, and features like Container Insights, Application Signals and synthetic canaries. It's for operational monitoring.
+
+CloudTrail answers "who did what, when, and from where?" It records API calls made in the account. The identity, the action, the time, the source IP and the request parameters, whether from the console, CLI, SDK or AWS services. Management events, like creating or deleting resources and changing IAM policies, are recorded by default. Data events, like S3 object reads or Lambda invocations, can be turned on. Trails deliver logs to S3, ideally in a central, locked-down logging account, for security investigations and audits. CloudTrail Lake lets you run SQL queries over events.
+
+AWS Config answers "what does my resource configuration look like, how has it changed, and is it compliant?" It records configuration snapshots of resources over time, with relationships between them, so you can see what a security group looked like last Tuesday. Config rules continuously check resources against policies, like "S3 buckets must block public access" or "EBS volumes must be encrypted", flag non-compliant ones, and can trigger automatic remediation. Conformance packs bundle rules for standards.
+
+In an investigation, I'd use CloudWatch to notice the problem, Config to see what changed, and CloudTrail to find who changed it.
+
+@p17-431
+So Logs Insights is a query language for searching and analysing log groups. With structured JSON logs, fields get discovered automatically, which makes queries way more powerful.
+
+Let me take a spike in errors as the example.
+
+I start by filtering errors and counting them over time to see when it started. Fields at-timestamp and at-message, then filter level equals "Error", then stats count star by bin of five minutes.
+
+Then I group by error type or endpoint to see what's actually failing. Stats count star by exceptionType and path, sorted by count descending.
+
+Then I follow one failing request. Filter traceId equals the id, sorted by timestamp, across several log groups at once, since Insights can query multiple log groups. That shows the request's path through the services.
+
+For latency, stats of average durationMs, the 95th percentile and the 99th percentile, grouped by path, to find slow endpoints. And for unstructured lines, the parse command pulls out fields using a pattern or regex.
+
+Practical tips I've picked up. Pick a narrow time range, since queries are billed per GB scanned. Save useful queries for the team. Add query results to dashboards. And use metric filters or embedded metric format for anything that needs alarms, because Insights is for investigation, not continuous alerting. There's also a natural-language query generator now, plus support for SQL and OpenSearch PPL.
+
+Honestly good queries depend on good logs. Consistent structured fields like correlation id, tenant, endpoint and duration.

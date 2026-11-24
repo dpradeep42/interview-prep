@@ -1,0 +1,127 @@
+@p17-408
+Okay, so by default Lambda runs in an AWS-managed network with internet access, but it can't reach stuff in your private VPC, like an RDS database or ElastiCache. To reach those, you attach the function to the VPC, picking private subnets and security groups. Lambda creates Hyperplane elastic network interfaces, shared across functions with the same subnet and security group combination, so the old problem of slow cold starts from network interface creation is gone now.
+
+Once it's in the VPC though, the function loses internet access by default. If it needs to call external APIs or AWS services, it needs a NAT gateway in a public subnet for internet traffic, or VPC endpoints for AWS services, like S3, DynamoDB, Secrets Manager and SQS, which keep traffic private and avoid NAT costs.
+
+Connecting to RDS has a classic problem. Lambda scales by creating lots of concurrent instances, each opening its own database connections. A burst of 500 concurrent invocations can exhaust the database's connection limit, and then everything using that database starts erroring. What I'd do, RDS Proxy, which pools and shares connections between function instances. Limit the function's reserved concurrency. Open the connection outside the handler, so warm invocations reuse it. And use IAM database authentication, which RDS Proxy supports, so you're not storing passwords.
+
+And the security groups have to allow traffic from the Lambda's security group to the database port. Easy to miss.
+
+@p17-409
+See, RDS Proxy is a fully managed database proxy for RDS and Aurora, supporting MySQL, PostgreSQL and SQL Server. Apps connect to the proxy's endpoint instead of the database directly, and the proxy keeps a pool of database connections that it shares among clients.
+
+What it actually solves. Connection storms, serverless functions and heavily scaled containers can open way more connections than the database can handle, especially during spikes. The proxy multiplexes many client connections over fewer database connections, which protects the database's memory and CPU. Failover, during a Multi-AZ failover, the proxy keeps client connections open and routes them to the new primary, which can cut failover time for apps a lot, and clients don't have to deal with DNS changes. Security, the proxy can enforce IAM authentication and pull database credentials from Secrets Manager, so apps don't store database passwords, and TLS can be required.
+
+It has some limits. Connection pinning, when a session uses features that depend on session state, like temp tables, session variables or certain prepared statements, the proxy pins the client to one database connection, which reduces the pooling benefit. It adds a little latency. And it costs extra, priced by the database's capacity.
+
+So I'd use it for Lambda functions hitting relational databases, for apps with spiky connection counts, and where faster failover matters. For a few long-running containers with their own connection pools, honestly it's often not needed.
+
+@p17-410
+So both are managed relational databases, but Aurora has a different, cloud-native architecture underneath.
+
+Standard RDS runs a database engine, like PostgreSQL, MySQL, SQL Server or Oracle, on an instance with EBS storage. High availability uses Multi-AZ with a synchronous standby, and read replicas use async replication with their own copies of the data.
+
+Aurora, compatible with MySQL and PostgreSQL only, separates compute from storage. The storage layer is spread across three availability zones, with six copies of the data, grows automatically up to 256 TB, and is self-healing. Replicas, up to 15, share the same storage volume, so replica lag is usually just milliseconds, and any replica can be promoted quickly in a failover, typically under 30 seconds. Backups are continuous with point-in-time recovery, and database cloning is fast.
+
+Extra features, Aurora Serverless v2, which scales capacity up and down in fine increments with load, good for variable workloads. Global Database, for cross-region replication with low lag and fast regional failover. And things like backtracking for MySQL. AWS also launched Aurora DSQL, a distributed, serverless option.
+
+What you pay for it, Aurora costs more per instance and charges for I/O in the standard configuration, though the I/O-Optimized option helps for heavy workloads. And no SQL Server support, so SQL Server workloads stay on standard RDS.
+
+I'd go with Aurora PostgreSQL for new, high-availability, read-heavy workloads, and standard RDS for smaller ones or engines Aurora doesn't support.
+
+@p17-411
+Honestly people mix these up a lot, but they solve different problems.
+
+Multi-AZ is for high availability and durability. RDS keeps a synchronous standby copy of the database in another availability zone, and every write is committed on both. The standby doesn't serve any traffic in the classic Multi-AZ instance deployment. If the primary fails, or its zone has a problem, or during some maintenance, RDS automatically fails over to the standby, usually in one to two minutes, and the DNS endpoint points to the new primary. Apps just reconnect to the same endpoint. No data lost, because replication is synchronous.
+
+Read replicas are for read scaling. They use async replication, so they can lag behind the primary. They have their own endpoints and serve read-only queries, like reports and search, which takes load off the primary. They can be in other regions, for local reads or disaster recovery, and can be promoted to standalone databases manually. But promotion isn't automatic failover, and recent writes might be missing.
+
+There's also a Multi-AZ DB cluster option for MySQL and PostgreSQL, with two readable standbys, which gives faster failover plus some read capacity.
+
+In production I'd always use Multi-AZ for important databases, and add read replicas only if read load or reporting needs them, with the app aware of replica lag. That lag part is where bugs come from.
+
+@p17-412
+Actually DynamoDB has two capacity modes, and they affect both cost and how it handles traffic.
+
+On-demand mode charges per read and write request. No capacity planning. The table automatically handles traffic, scaling up instantly to previously seen peaks and adapting to new peaks quickly. It's ideal for new tables with unknown traffic, spiky or unpredictable workloads, and dev environments. In late 2024 AWS cut on-demand prices by half, which made it the sensible default for a lot more workloads.
+
+Provisioned mode means you specify read capacity units and write capacity units per second. It's cheaper per request when traffic is steady and predictable and the capacity is well used, and reserved capacity cuts costs further. Auto scaling adjusts provisioned capacity based on utilisation targets, but it reacts over minutes, so sudden spikes above the provisioned level can get throttled, though burst capacity absorbs short spikes.
+
+My approach, start with on-demand, watch the traffic pattern in CloudWatch, and switch to provisioned with auto scaling if traffic is steady and the savings are real. You can switch modes, with some limits on how often.
+
+Either way, capacity is spread across partitions, so a hot partition key can get throttled even if total capacity looks fine. Good key design matters more than the capacity mode, honestly.
+
+On-demand tables can also have a maximum throughput set, to cap unexpected costs.
+
+@p17-413
+Okay, DynamoDB throttles requests when they go over the available capacity, returning ProvisionedThroughputExceededException or ThrottlingException. The SDKs retry automatically with backoff, so throttling first shows up as higher latency, and then as errors.
+
+The causes come at two levels. Table-level, total traffic goes over the provisioned capacity, or over on-demand's instant scaling for a sudden huge spike. Fixes there are raising capacity, adjusting auto scaling, or switching to on-demand.
+
+Partition-level is more common and more subtle. Each partition supports roughly 3,000 reads and 1,000 writes per second. If a big share of traffic targets one partition key, like a single popular item, a status value like "PENDING" used as a partition key, or today's date as the key for all writes, that partition gets overwhelmed while the rest of the table sits idle. That's a hot partition. Adaptive capacity helps by shifting capacity to busy partitions and isolating frequently accessed items, but it can't go past the per-partition limit.
+
+How I'd fix hot keys. Pick a partition key with high cardinality and evenly spread access, like a shipment id instead of a status. Write sharding, adding a random or calculated suffix to the key, like date plus a number from 1 to 10, and querying all shards in parallel when reading. Caching hot reads with DAX or ElastiCache. And batching or smoothing write bursts through a queue.
+
+CloudWatch Contributor Insights for DynamoDB shows the most accessed keys, which pinpoints the hot partition quickly.
+
+@p17-414
+So DynamoDB Streams captures every change to items in a table, inserts, updates and deletes, as an ordered sequence of records, kept for 24 hours. Each record can include the keys only, the new image, the old image, or both, depending on the stream view type.
+
+Records for the same item come in the order the changes happened, and Lambda can process the stream through an event source mapping, getting batches of changes.
+
+Where I'd use it. Event-driven reactions, when a new item is inserted, like a shipment, trigger a function that sends a notification or starts a workflow, without the writing service having to publish an event itself. It's like a built-in outbox. Maintaining derived data, updating aggregates like counts per site, or denormalised copies of items in another table. Replicating data to other stores, pushing changes to OpenSearch for full-text search, to S3 for analytics, or to another system. Auditing, recording old and new values of every change. Global tables also use streams under the hood for cross-region replication.
+
+There's also Kinesis Data Streams for DynamoDB, an alternative with longer retention and more consumers.
+
+A few things to watch. Processing is at-least-once, so consumers have to be idempotent. A failing batch blocks the shard, so I configure bisect on error, maximum retries and an on-failure destination. And items expired by TTL show up as deletes, with a flag marking them as system deletions.
+
+@p17-415
+See, conditional writes let a PutItem, UpdateItem or DeleteItem succeed only if a condition on the existing item is true, checked atomically by DynamoDB. If it's false, the write fails with ConditionalCheckFailedException and nothing changes.
+
+Where they help. Preventing overwrites, attribute_not_exists on the key makes a put create the item only if it doesn't exist yet, which gives you idempotent creation and unique constraints. Optimistic locking, items carry a version number, and an update includes the condition that the version equals the value I read, and increments it. If someone else updated it first, my write fails, and I reload and retry. Business rules, decrement stock only if quantity is above zero, so two concurrent requests can't both grab the last item.
+
+Transactions, with TransactWriteItems and TransactGetItems, group up to 100 actions across multiple items and tables into an all-or-nothing operation, with ACID guarantees. Like reserving a kit and creating the allocation record together, or keeping a uniqueness record in a separate item next to the main item. Each action can have its own condition, and if any condition fails, the whole transaction is cancelled, with reasons returned per item. A client token makes transactions idempotent for retries.
+
+The catch is transactions cost twice the capacity of normal writes, and conflicts with concurrent transactions on the same items cause cancellations that need retries. So I use conditions everywhere and transactions only where multiple items really must change together.
+
+@p17-416
+So Time to Live lets DynamoDB automatically delete items after a timestamp you specify. You enable TTL on the table and pick an attribute name, like expiresAt. Each item stores a Unix epoch time in seconds in that attribute. After that time, DynamoDB deletes the item in the background without consuming write capacity, so it's free.
+
+It's great for data that's only useful for a limited time. Sessions, temporary tokens, idempotency keys, cache entries, rate-limiting counters, and old events or logs you keep for, say, 90 days.
+
+Now the gotchas. Deletion isn't immediate. Expired items are usually removed within a few days of expiry, not at the exact second. Until then they still show up in reads, queries and scans. So the app has to filter out expired items itself, for example with a filter expression comparing expiresAt with the current time, if correctness depends on expiry.
+
+The value has to be a number in epoch seconds. Milliseconds, or a date string, get silently ignored, and the item never expires. I've seen that mistake more than once.
+
+TTL deletions show up in DynamoDB Streams as deletes, marked as done by the service, so stream consumers can tell them apart from user deletions. Useful if you want to archive expired items to S3 before they disappear.
+
+And for regulated data, automatic deletion has to match the retention policy, which might mean keeping data much longer than operational needs.
+
+@p17-417
+Okay, DAX, DynamoDB Accelerator, is a fully managed in-memory cache built specifically for DynamoDB. It's API-compatible. The app uses the DAX client, which has the same API as the DynamoDB client, and reads go through DAX. Cache hits come back in microseconds instead of single-digit milliseconds. It caches individual items from GetItem and BatchGetItem in the item cache, and results of queries and scans in the query cache. Writes go through DAX to DynamoDB, updating the item cache.
+
+It's useful for read-heavy workloads with repeated reads of the same items, like hot product or configuration items, and for absorbing read spikes that would otherwise throttle hot partitions, without changing app logic much.
+
+The limitations, it's eventually consistent, and strongly consistent reads bypass the cache. The query cache isn't invalidated by writes, it just expires by TTL, so query results can be stale. It only caches DynamoDB, it runs in a VPC as a cluster with its own cost, and SDK support varies by language.
+
+ElastiCache, with Redis or Valkey, is a general-purpose cache. More work, since the app implements the caching logic, like cache-aside with explicit keys and invalidation, but way more flexible. Caching computed results, API responses, data from any source, plus data structures like sorted sets, counters, rate limiting, sessions and pub-sub.
+
+So yeah, DAX for a quick, transparent speed-up of DynamoDB reads, and ElastiCache for broader caching needs.
+
+@p17-418
+Actually S3 has a bunch of storage classes with different costs and access characteristics.
+
+S3 Standard is for frequently accessed data, low latency, high availability. Intelligent-Tiering automatically moves objects between frequent and infrequent access tiers based on usage, for a small monitoring fee, which is great when you don't know the access pattern. Standard-Infrequent Access and One Zone-IA are cheaper for rarely accessed data, but have retrieval fees and a minimum storage duration. One Zone keeps data in a single availability zone, so it's for data you can re-create. Glacier Instant Retrieval is for archives that are rarely touched but must be available in milliseconds. Glacier Flexible Retrieval and Glacier Deep Archive are the cheapest, for long-term archives, with retrieval times from minutes to hours, which fits compliance archives kept for years.
+
+Lifecycle policies automate moving and deleting objects. A rule, which can be filtered by prefix or tags, defines transitions, like moving objects to Standard-IA after 30 days, to Glacier after 180 days, and expiring them after seven years. Rules can also delete old versions in versioned buckets, and abort incomplete multipart uploads after a few days. Those otherwise silently cost money, which people don't notice.
+
+I design lifecycle rules around how the data is actually used and the retention requirements. For regulated data, Object Lock can make objects immutable for the retention period, so they can't be deleted early, even by administrators.
+
+@p17-419
+So S3 can emit events when objects are created, deleted, restored or replicated. You configure notifications on the bucket, with prefix and suffix filters, like uploads slash and .csv, and send them to a Lambda function, an SQS queue, an SNS topic, or to EventBridge, which you can enable on the bucket to get all events and route them with rules.
+
+A typical file-processing flow I'd build. The client uploads a file directly to S3 using a pre-signed URL. The ObjectCreated event goes to an SQS queue. A worker, a Lambda function or an ECS service, reads the message, which has the bucket and key, downloads or streams the file, validates and processes it, writes results to the database, and records the status. Putting SQS in the middle, instead of triggering Lambda directly, gives you buffering, retries, a dead-letter queue and control over concurrency.
+
+Some details. Events are delivered at least once, and occasionally out of order, so processing has to be idempotent, for example keyed by the object key plus its version id or ETag. Keys in events are URL-encoded, so spaces and special characters need decoding. Watch out for recursive loops, where a function triggered by uploads writes its output to the same prefix and triggers itself. I write outputs to a different prefix or bucket. And large files should be streamed, not loaded into memory.
+
+EventBridge is better when several consumers need the events, or you need more advanced filtering.
