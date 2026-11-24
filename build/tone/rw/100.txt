@@ -1,0 +1,107 @@
+@p2-64
+You can't eliminate hallucinations completely, so I reduce them at every layer and design the feature so mistakes get caught.
+
+Grounding the model in facts comes before anything. Use RAG to supply relevant documents, and tool calls to fetch real data, like a release status, instead of letting the model guess. Tell it clearly to say "I don't know" when the context doesn't have the answer, and to cite sources. Then constrain the output. Use structured outputs or function calling with a schema, and validate the result in code, like checking that an environment name or id actually exists, before acting on it. Then evaluate properly. Keep a test set of realistic questions with expected answers, run it whenever the prompt or model changes, and review samples by hand. Log prompts and outputs, with sensitive data protected, to find failure patterns. And keep a human in the loop for high-impact actions, like production deployments, and show users the sources so they can verify.
+
+Lower temperature and smaller, focused tasks also help, honestly.
+
+In our CIRT MCP server, the model never invents a status. It always calls a tool for real data, and production steps still need human approval. I can explain how we test prompts.
+
+@p2-65
+Okay, so the situation was, after I built the CIRT MCP server in .NET 8, it could clearly save time, but teammates kept using the old manual, multi-person deployment process. It wasn't resistance to the idea. It was habit, and caution, because deployments to validated environments are serious in a GxP product.
+
+I wanted the team to adopt it because it genuinely helped, not because someone mandated it.
+
+What I did was start with their concerns. The server uses each person's own permissions, risky steps need confirmation, existing approval gates are unchanged, and every action is logged. Then I made it easy to try. I ran a [30-minute] live demo on a real UAT deployment, wrote a README with [10] example prompts, and paired with the first [4] engineers on their first real runs. We started in lower-risk environments, FV and TechOps, before UAT and production. I set up a chat thread for questions and added the tools people asked for. Like, the tool to fetch logs for a failed step came from a teammate's request. And I measured the results, comparing [8 deployments with it and 8 without], so the value was visible, not just my opinion.
+
+In the end, within [about two months], most release deployments used it. Deployment time went from 6 hours to 2, and people needed from 6 to 1. The first users became champions who helped others. I can explain what I'd do differently.
+
+@p2-66
+The main difference is how the application is built and deployed, as one unit, or as many independent services.
+
+A monolith is a single deployable application. All features share one codebase, one process and usually one database. It's simple to develop, test and debug, calls between parts are fast in-process calls, transactions are easy, and there's one thing to deploy and monitor. The downsides show up at scale. The codebase can get tangled, one team's change means redeploying everything, you can only scale the whole application, and one bug can take everything down. Microservices split the application into independent services, each owning one business capability and its own data. Teams can deploy and scale their services independently, failures can be isolated, and each service can use the best technology. But you pay for that with network calls and their failures, distributed data and eventual consistency, and a lot more DevOps and observability work.
+
+My view is that a well-structured modular monolith is often the right start, and microservices make sense when teams and parts of the system really need independence.
+
+Our IRT platform is microservices, because many teams, [about 5] per release, work on clearly separate areas like randomisation, supply and shipments. I can explain how we keep it manageable.
+
+@p2-67
+I'd design randomisation around one absolute rule. Every subject gets exactly one correct assignment, and two sites can never get the same slot, because errors here affect the trial's validity and patient safety.
+
+The API would be a POST to studies, subject id, randomise, callable only by authorised users at that subject's site, with an idempotency key, so a retry after a timeout returns the same result instead of randomising twice. A study here means one clinical trial set up in our IRT system, with its protocol rules, countries and sites, treatment arms, visit schedule, drug kits and user roles. The service checks eligibility, then loads the study's randomisation scheme, which might be a pre-generated blocked list, or stratified by factors like age group or country. It allocates the next available slot for that stratum inside a database transaction, with locking, so concurrent requests from different sites can't grab the same slot. In the same transaction, it records the assignment, writes a full audit record, and adds an outbox event. Then events trigger the rest asynchronously, kit assignment, supply checks and notifications.
+
+Blinding is critical. The treatment arm is never returned to blinded users, and access to unblinded data is strictly separated and audited. Strong consistency matters more than availability here, so I'd go with SQL Server and proper transactions.
+
+This is basically how IRT systems work, which is my domain. I can go deeper into stratification or emergency unblinding.
+
+@p2-68
+I'd split this into a handful of services around clear responsibilities, connected by events.
+
+An inventory service tracks stock at depots and sites, by kit type, lot and expiry date. A resupply service applies rules, like "when a site has fewer than five kits of a type, or kits are about to expire, create a shipment request", and it's triggered by events rather than polling. A shipment service owns the shipment lifecycle, requested, approved, dispatched, in transit, delivered, received, with every status change recorded. A vendor integration service exchanges data with depot vendors, which in practice is often SFTP files or partner APIs. The services talk through events over RabbitMQ or Kafka, like KitAssigned, StockLow, ShipmentCreated and ShipmentDelivered, using the outbox pattern, and consumers are idempotent.
+
+The things I'd watch are strong consistency when allocating scarce stock, cold-chain and temperature excursion handling, full audit trails for GxP, and reconciliation jobs that compare our data with vendor data. Dashboards show shipments stuck in a status too long.
+
+Honestly, this is close to what I work on. Our vendor exchange uses an ISftpClient abstraction over three libraries, and after our [mid-2024] RabbitMQ incident, publishing uses confirms, so status updates can't be lost silently. I can go deeper into the vendor integration.
+
+@p2-69
+So I'd design the CSV import as an asynchronous job, so large files don't block the API, and users get clear, complete feedback.
+
+The upload goes to S3 through a presigned URL, or directly to the API for small files, with a size limit, like [5 MB, about 10,000 rows]. The API creates an import job and immediately returns 202 Accepted with a job id. A background worker picks up the job, streams the file row by row, so memory stays flat, and validates in two passes, the structure, like headers, types and required fields, and then business rules, like "this site exists and is active in this study". A study here means one clinical trial set up in our IRT system, with its protocol rules, countries and sites, treatment arms, visit schedule, drug kits and user roles. It collects every error with its row number, instead of stopping at the first one. Then, depending on the requirement, it either rejects the whole file if anything fails, which is usually right for clinical data, or imports valid rows. Valid rows are written in batches inside transactions. The client polls a status endpoint, or gets a notification, and can download an error report.
+
+Safeguards too, a file hash to block importing the same file twice, a limit of [2] concurrent imports per user, and a full audit record.
+
+This is pretty much the CSV bulk import I designed and mostly built for IRT. I can explain the decisions we made.
+
+@p2-70
+The API gateway pattern puts a single entry point in front of a set of microservices, so clients don't need to know about each individual service.
+
+The gateway handles cross-cutting concerns in one place, routing requests to the right service, authentication and token validation, rate limiting and throttling, TLS termination, CORS, logging, and sometimes caching and request aggregation, where it combines several service calls into one response for the client. Backend-for-frontend, or BFF, takes that further. Instead of one general gateway, each type of client gets its own thin backend. Like, the web app's BFF returns exactly what the web screens need, and the mobile BFF returns smaller payloads tuned for mobile. The front-end team often owns its BFF, so they can change it without affecting other clients. A BFF is also a good place to keep tokens server-side, instead of in the browser.
+
+My rule is keep business logic out of the gateway. It should route and protect, not make business decisions, or it turns into a new monolith.
+
+On AWS, that's API Gateway or an ALB. In the newer IQVIA services on AWS, the ALB routes to our services by path, and API Gateway gives per-partner throttling for external APIs. I can explain when a BFF is worth it.
+
+@p2-71
+The CAP theorem says that in a distributed system, when there's a network partition, meaning parts of the system can't talk to each other, you have to choose between consistency and availability. You can't fully have both.
+
+Consistency means every read gets the most recent write, or an error. Availability means every request gets a response, even if it might be stale. Partition tolerance isn't really optional, because networks do fail. So the real choice is how the system behaves during a partition. A CP system refuses or delays some requests to stay correct. An AP system keeps answering, possibly with stale data, and reconciles later. When there's no partition, you can have both, and then it's latency versus consistency, which is the PACELC extension.
+
+The useful bit, I think, is that you choose per feature, not for the whole system. In clinical trials, allocating limited drug kits or a randomisation slot has to be consistent, so it's CP. Better to fail and retry than to promise the same kit to two sites. But dashboards, notifications and reports can be AP. Slightly stale data is fine there, and availability matters more.
+
+That's exactly how our IRT platform is designed, transactional SQL for allocation, eventually consistent events for everything around it. I can explain how we handle the stale data in the UI.
+
+@p2-72
+The saga pattern handles business transactions that span several microservices, where a single database transaction isn't possible.
+
+The long transaction gets split into a sequence of local transactions. Each service does its part in its own database, and then publishes an event or triggers the next step. If a step fails, the saga runs compensating actions to undo the earlier steps. Say, reserve kits, create a shipment, notify the vendor. If the vendor rejects the shipment, compensations cancel the shipment and release the reserved kits. Compensations are business actions, not database rollbacks, and they have to be idempotent too.
+
+You've got two styles. Choreography, where there's no central coordinator, each service listens for events and reacts, publishing its own events. It's simple for short flows, but the overall process gets hard to see and change. And orchestration, where a central orchestrator tells each service what to do next and tracks the state of the saga. It's easier to understand, monitor and change for complex flows, but the orchestrator is an extra component. AWS Step Functions or a durable workflow engine can play that role.
+
+Sagas need the outbox for reliable events, idempotent consumers, and clear statuses so users see "pending" rather than inconsistent data. That's where people get bitten. I can sketch the shipment saga.
+
+@p2-73
+In a GxP system, the audit trail is a regulatory requirement, under rules like FDA 21 CFR Part 11, so it has to be complete, trustworthy and easy to review.
+
+For every create, update and delete of regulated data, I'd record who did it, their user id and name, what changed, with the entity, old values and new values, when, with a synchronised UTC timestamp, where, like the source system or IP, and why, a reason for change where the process needs it. The audit store is append-only and tamper-evident. No user, not even admins through the application, can edit or delete audit records, and techniques like hash chaining or write-once storage can prove nothing was altered.
+
+To capture changes consistently, I'd use an EF Core SaveChanges interceptor that looks at the change tracker and writes audit entries in the same transaction, so a change can't be saved without its audit. Business events, like "subject randomised", are audited explicitly too. Bulk operations that bypass the change tracker need their own auditing, which people forget. The audit data is stored separately, with retention matching regulatory requirements, and there's a search UI for auditors.
+
+Our correlation id is also stored in audit records, which links an audit entry to the exact request and logs. I can explain the interceptor design.
+
+@p2-74
+I'd design rate limiting by deciding what to protect, who to limit, and where to enforce it.
+
+The algorithm comes before anything. Fixed window is the simplest, like 100 requests per minute, but it allows bursts at window edges. Sliding window smooths that out. Token bucket allows short bursts, while enforcing an average rate, which suits most APIs. And concurrency limits cap how many requests run at the same time, which is good for expensive operations. Then the key, per user, per API key or client, per IP address for anonymous traffic, or per tenant. Then where. At the edge, API Gateway throttling and WAF rate rules stop abuse before it reaches services. In the application, ASP.NET Core's rate limiting middleware applies finer, per-endpoint policies. With multiple instances, in-app limits are per instance, so for a true global limit, I'd use a shared store, like Redis, with atomic counters.
+
+And the response. Return 429 Too Many Requests with a Retry-After header, and well-behaved clients back off. Monitor rejections, so limits are tuned rather than guessed.
+
+In the newer IQVIA services on AWS, partners get per-key limits at API Gateway, and in CIRT, our CSV import has a concurrency limit of [2] imports per user. I can explain the token bucket in detail.
+
+@p2-75
+Right, I'd frame it as a system design for deployment automation driven by AI agents, which is the CIRT MCP server I built.
+
+The requirements were to cut our deployments from 6 hours and 6 people, keep all GxP approval gates, and work with our on-premise Azure DevOps Server. The clients are AI hosts, like Cursor, Claude or Copilot, which talk MCP to the server, running locally on each user's machine [over stdio]. The server has a tool layer of about 77 tools, an Azure DevOps client with timeouts and retries, a deployment plan model per environment, a status poller, and an audit logger. Azure DevOps stays the source of truth and does the actual work, the server just orchestrates it.
+
+The design choices were these. Long-running work never blocks. Starting a deployment returns an id, and a status tool polls it. Steps are idempotent, so a failed deployment can resume from the failed step. Failures produce a clear, human-readable report. For safety, each user's own credentials are used, production still needs human approval, and every action is logged. For scaling, each user runs their own instance, so there's no shared server to become a bottleneck.
+
+In the end, 6 hours went down to 2, and 6 people down to 1. I can draw the components.
