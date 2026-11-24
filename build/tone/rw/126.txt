@@ -1,0 +1,127 @@
+@p6-52
+To trace a request across microservices, I use two things together, a correlation id in every log, and distributed tracing.
+
+Distributed tracing, with OpenTelemetry, is the standard approach. When a request enters the system, it gets a trace id. Every operation along the way, like the API handling it, a database query, an HTTP call to another service, or publishing a message, is recorded as a span, with its duration and its parent. The trace context is passed between services in the W3C traceparent header for HTTP calls, and in message headers for RabbitMQ or Kafka. What you get is a timeline of the whole request, across every service, which shows exactly where time is spent and where it failed. ASP.NET Core and HttpClient support this with very little code.
+
+Logs are the other half. Every log line includes the trace id, or a correlation id, using structured logging with Serilog. So when I find an error, I search for that id and see all the related logs from every service, in order. The id is also returned in error responses, so a user or support person can give it to us.
+
+I actually implemented correlation id middleware in [2024] across [4] services. It reads the id from the incoming header or creates one, adds it to the logging scope, and passes it on to downstream calls. Triage time went from [about an hour] to [a few minutes].
+
+@p6-53
+Which logs I check first depends on the symptom, but I always start closest to where the problem is visible, and use a correlation id to follow it inward.
+
+I'd start with the application logs of the service that's failing, filtered by the time window and by errors and warnings. If the user or the error response gave me a correlation id or trace id, I search for that, which shows the whole path of that request across services. I look for the first error, not the loudest, because later errors are often just consequences.
+
+Then the edge, the load balancer or API gateway logs. They show whether requests reached our service at all, the status codes, and the response times. If the load balancer shows 502 or 503 errors, the service might be down or failing health checks.
+
+Then the platform, container or task events, like ECS stopped-task reasons or Kubernetes events, which show crashes, out-of-memory kills or failed health checks. Then deployment history, to see if something changed.
+
+And dependencies, database logs and slow query data, message broker logs, and logs of downstream services.
+
+Along with logs, I check the dashboards, like error rate, latency and resource usage, because they show the pattern and the start time quickly.
+
+With our correlation id middleware, this usually takes [a few minutes], honestly, instead of [about an hour] of searching through separate logs.
+
+@p6-54
+A symptom is what you see, the root cause is why it happened. Telling them apart means not stopping at the first explanation that makes the alarm go away.
+
+My main technique is to keep asking "why" until I reach something that, if fixed, would stop the problem from ever happening again. Like, the API is slow, that's the symptom. Why? The database CPU is high. Why? One query is doing a full scan. Why? It got a bad execution plan. Why? Parameter sniffing, where the plan was compiled for an unusual parameter value. That's the root cause. Restarting the server, or adding more CPU, would only treat the symptom.
+
+A few other habits help. I look for the first error in the timeline, not the most frequent one, because later errors are often side effects. I check what changed around the time it started, a deployment, configuration, data volume or traffic. And I confirm the cause with evidence, ideally by reproducing it, and by checking that the fix actually removes it.
+
+Say, a service leaking about [150 MB a day] was being restarted every [3 days]. The restarts were the mitigation. The root cause was a cache with no expiry, so I added a [30-minute] expiry.
+
+@p6-55
+I handle production incidents in two phases. Restore service, then understand and prevent it.
+
+During the incident, I'd assess the impact before anything. Who's affected, how badly, and is it getting worse? I raise the incident through our process, so the right people know, and one person coordinates, while others investigate. Then mitigate quickly. The fastest safe way to restore service often isn't the real fix. It might be rolling back a recent deployment, turning off a feature flag, scaling up, or failing over. Keep communicating with stakeholders, even if the update is "still investigating". And keep a timeline of what happened and what we did.
+
+After the incident, a blameless post-incident review. We look at what happened, the root cause, why we didn't detect it earlier, and what made recovery slower. The focus is on systems and processes, not on blaming people. Then concrete actions with owners and dates, like a fix, a test, an alert, a runbook, or a pipeline check, so the same class of problem can't happen again, or gets caught early.
+
+A real example, honestly a recent one. A release caused about [8 percent] 5xx errors in UAT. We rolled back within [15 minutes], which restored service. Then we found the cause, a missing configuration value, and added a startup check so the service fails fast and visibly when configuration is missing.
+
+@p6-56
+Okay, so the situation was this. In [2024], a security review of our web applications found a reverse-tabnabbing issue. Lots of external links in our UI opened in a new tab using target blank, without rel noopener. When a link opens that way, the new page gets a reference back to our original tab, through window.opener. A malicious or compromised external site could use that to quietly redirect our tab to a fake login page, and users might type their credentials there.
+
+I was asked to fix it across our applications and make sure it couldn't come back.
+
+What I did was search the React and Angular codebases for every link and window.open call that opened a new tab, and I found [about 40] of them. I added rel noopener noreferrer to each link. Noopener removes the reference back to our page, and noreferrer also stops sending our URL to the external site. For window.open calls, I passed the noopener option as well. Then, to stop it coming back, I turned on an ESLint rule that fails the build if anyone adds a target blank link without noopener. And I created a small shared external-link component, so developers don't need to remember the attributes.
+
+In the end, the issue passed the security retest, with no regressions, and since then, the lint rule has caught a couple of new cases before they were merged. It was a small fix, but I liked that we fixed the whole class of problem, not just the individual links.
+
+@p6-57
+Mocking means replacing a real dependency, like a database, an email service or an external API, with a controlled stand-in during a unit test. That way, I test only my own code, the test is fast and reliable, and I can easily simulate things like errors or timeouts.
+
+The general term for any stand-in is a test double, and you basically get a few kinds.
+
+A stub gives fixed answers to calls. Like, a repository stub that always returns a specific customer. It's used to set up the situation for the test, and I don't check how it was called.
+
+A mock is set up with expectations about how it should be used, and the test verifies those interactions. Say, verifying that the email service's Send method was called exactly once with the right address. It's used when the interaction itself is the behaviour I care about.
+
+A fake is a working, lightweight implementation, but not suitable for production. Like an in-memory repository that stores items in a list, or an in-memory message bus. It behaves realistically, which is useful for more complex scenarios.
+
+In .NET, I use Moq or NSubstitute, and in practice the same object often acts as a stub and a mock.
+
+One thing I'm careful about is not over-mocking. If a test checks every internal call, it breaks whenever the code is refactored. I prefer checking results and state, and only verify interactions that really matter, like sending an email or publishing a message.
+
+@p6-58
+To test a service that has dependencies, I make sure the dependencies can be replaced, then I test at two levels.
+
+It starts with the design. The service gets its dependencies through constructor injection, using interfaces, like a repository, a message publisher, or an HTTP client for another API. Time is also a dependency, so I inject TimeProvider instead of using DateTime.Now directly. That makes everything controllable in tests.
+
+Then unit tests. I create the service with test doubles, using Moq or NSubstitute, stubs that return the data I need for the scenario, and mocks where I need to verify an important interaction, like a message being published. Then I test the business logic, including the important edge cases and error paths, like the repository returning nothing, or the other service timing out. These tests are fast and don't need any infrastructure.
+
+Then integration tests, because honestly mocks can hide real problems, like a wrong SQL query or a serialisation issue. For these, I use real dependencies in containers with Testcontainers, like a real SQL Server or RabbitMQ, and WebApplicationFactory to run the API in memory. External third-party APIs are replaced with a fake HTTP server, like WireMock.
+
+Like for our shipment service, unit tests cover the status rules, and integration tests check the real database queries and message publishing end to end.
+
+@p6-59
+I test ASP.NET Core controllers in two ways, and honestly I prefer the second for most cases.
+
+The simple way is a unit test of the controller class. I create the controller directly, passing mocked dependencies, like the service it calls, then call the action method and check the result. Say if the service returns null, the action should return NotFound, and if it returns an order, the result should be Ok with that order. This is quick, but it doesn't test the important parts of the framework around the controller, routing, model binding, validation, filters, authentication, serialisation and status codes. And controllers should be thin anyway, with the logic in services, which have their own unit tests.
+
+The one I prefer is an integration test with WebApplicationFactory. It starts the whole API in memory, and I send real HTTP requests with its HttpClient. So I test the endpoint exactly as a client uses it, the URL, the JSON, the status code, the validation errors, and authorisation. I can replace dependencies, like the database with a Testcontainers SQL Server, or fake external services, by overriding service registrations. For authentication, I add a test authentication handler that creates a user with specific roles, so I can test both allowed and forbidden cases.
+
+Like, I'd check that posting an invalid shipment returns 400 with a problem details response, and a user without the right role gets 403.
+
+@p6-60
+For EF Core code, I pick the test approach based on what I'm actually testing.
+
+If I'm testing business logic that just happens to use data, I keep it in a service that depends on a repository interface, or I keep queries simple, and unit test the logic with test doubles. That's fast and focused.
+
+If I'm testing the data access itself, meaning the queries, mappings, relationships and constraints, I use a real database. The best option is Testcontainers, which starts a real SQL Server in a Docker container for the tests. I apply the migrations, seed test data, run the code, and check the results. This catches the things that matter, whether the LINQ query translates correctly to SQL, unique constraints, cascade deletes, transactions and concurrency tokens. To keep tests independent, I reset the data between tests, say with Respawn, or run each test in a transaction that's rolled back.
+
+What I avoid for this is the EF Core in-memory provider. It's not a relational database. It doesn't enforce constraints, it doesn't support transactions properly, and some queries that work in memory fail on SQL Server. Microsoft itself discourages it for testing. SQLite in-memory is closer, but still differs from SQL Server.
+
+In our services, repository and query tests run against SQL Server in Testcontainers in the pipeline, which gives real confidence that the queries work in production.
+
+@p6-61
+Playwright and Cucumber solve different problems, so honestly they're often used together rather than as alternatives.
+
+Playwright is a browser automation and end-to-end testing tool from Microsoft. It drives real browsers, Chromium, Firefox and WebKit, to click, type, navigate and check what's on the page, just like a user. It's reliable and fast. It automatically waits for elements to be ready, which cuts flaky tests, it can run tests in parallel, it can intercept network calls, and it records traces with screenshots and videos for debugging failures. It works with TypeScript, .NET, Java and Python.
+
+Cucumber is a behaviour-driven development framework. Tests are written as scenarios in plain language using Gherkin, with Given, When and Then steps. Like, Given a study with two sites, When I create a shipment, Then the shipment status is Pending. Each step is linked to code that performs it. The nice part is that business analysts, testers and developers can all read and agree on the scenarios, and they act as living documentation of the requirements.
+
+So Cucumber describes what should happen in business language, and Playwright does the actual work in the browser. In .NET, Reqnroll, the successor to SpecFlow, plays the Cucumber role.
+
+I'd use Playwright alone for technical UI tests, and add Cucumber when business stakeholders need to read and own the scenarios.
+
+@p6-62
+A flaky test is basically a test that sometimes passes and sometimes fails, without any change to the code. It's harmful because it destroys trust in the test suite. When tests fail randomly, people start rerunning builds and ignoring failures, and then they miss real bugs.
+
+The usual causes are timing issues in asynchronous code, like fixed sleeps, or not waiting for something to finish, shared state between tests, where the order they run in matters, dependence on the real time, time zones or random values, reliance on external services or the network, and in UI tests, not waiting for elements properly.
+
+To handle them, I identify them before anything. CI test history shows which tests fail intermittently. Then I don't ignore them. If I can't fix one straight away, I quarantine it, so it doesn't block the build, but I create a ticket to fix it quickly, so it doesn't stay hidden forever. Then I fix the root cause. Replace sleeps with proper waiting, like awaiting the task or polling for a condition with a timeout, make each test create and clean up its own data, inject TimeProvider instead of using the real clock, use fixed seeds for random values, and replace external calls with fakes or containers. Automatic retries can hide flakiness, so I use them very carefully.
+
+I once fixed a test that failed only around midnight, because it used the real clock. That was part of our time-zone bug in [2023].
+
+@p6-63
+Test coverage measures how much of the code is executed when the tests run, usually as the percentage of lines or branches. Branch coverage is more useful, because it shows whether both sides of each if statement were tested.
+
+Coverage is useful for one thing in particular, finding code that has no tests at all. If an important class has zero coverage, that's a clear risk. Teams often set a minimum for new code, like [80 percent] in a SonarQube quality gate, so coverage doesn't drop over time.
+
+But high coverage doesn't mean good tests. A test can execute every line and check nothing, with no meaningful assertions, and still count as 100 percent. Coverage shows what code ran, not whether the behaviour was verified.
+
+So is 100 percent desirable? Usually not as a goal, I'd say. Getting from about 80 to 100 percent often means testing trivial code, like simple properties, generated code or framework configuration, which costs time and produces fragile tests that break on every refactoring. That effort is better spent on testing important business logic and edge cases well, and on integration tests. For critical logic, like calculations or security rules, I do aim for very thorough coverage.
+
+When our quality gate failed at [68 percent] against [80 percent], we didn't just add tests to hit the number. We added meaningful tests for the real missing paths, and fixed it in [half a day].
