@@ -1,0 +1,187 @@
+@p17-804 | How do you show a global loading indicator for HTTP calls and route changes in Angular?
+So users need some feedback when the app's waiting, but a spinner in every component gets messy fast. What I do is two global mechanisms, plus local indicators where they make more sense.
+
+For HTTP, an interceptor bumps a counter in a LoadingService when a request starts, and decrements it in finalize when the request completes, errors or gets cancelled. The service exposes an isLoading signal or observable that's true when the counter's above zero, and a progress bar at the top of the shell binds to it. Using a counter instead of a boolean is the bit that matters, because it handles parallel requests properly.
+
+Some requests shouldn't show the global indicator, like background polling or typeahead searches. For those I use an HttpContextToken, something like skip loading, which callers set on specific requests, and the interceptor checks it.
+
+For route changes, subscribe to router events. Show loading on NavigationStart, hide it on NavigationEnd, NavigationCancel or NavigationError. That covers lazy-loaded chunks and resolvers, which can take a noticeable while.
+
+To avoid flicker, only show the indicator if loading takes longer than about 200 milliseconds, and once it's shown, keep it up for a minimum time. Otherwise it just blinks and looks broken.
+
+For parts of a page, like a grid reloading, a skeleton or a small spinner in that component is better than blocking the whole screen. With signals and the resource API, components get loading states pretty easily.
+
+And accessibility, announce loading and completion for screen readers with aria-busy on the region or a live announcer, and don't block keyboard focus when you don't need to.
+
+@p17-805 | How do you migrate an Angular app from NgModules to standalone components?
+Standalone components have been stable since Angular 15 and they're the default since 19. Moving an NgModule app over cuts boilerplate and makes lazy loading and dependencies a lot clearer.
+
+Angular gives you a schematic for it, ng generate at angular slash core colon standalone. It runs in three steps, and I'd run them one at a time, committing and testing after each.
+
+Step one converts all components, directives and pipes to standalone, adding the imports each one actually needs based on its template.
+
+Step two removes the NgModules that aren't needed anymore, the ones that only declared and exported things.
+
+Step three switches bootstrapping from bootstrapModule with AppModule to bootstrapApplication with AppComponent and an app config, moving providers into an app config file with provider functions like provideRouter, provideHttpClient with interceptors, and provideAnimations.
+
+Then there's manual cleanup. Routing changes lazy loading from loadChildren with modules to loadComponent for single components, or loadChildren returning a routes array.
+
+Providers that came from modules, like the store's forRoot or third-party modules, move to their provide functions, or importProvidersFrom as a bridge for libraries that don't have those yet.
+
+Shared modules that exported a pile of common components get replaced with direct imports, or a constant array of common imports.
+
+And tests, TestBed setups need updating to import standalone components instead of declaring them.
+
+I'd do it incrementally, feature by feature, since standalone and NgModules work together fine, and keep the app releasable the whole time. In a big app it's worth running the control-flow and inject migrations around the same time too.
+
+@p17-806 | How do you test HTTP calls in Angular with HttpTestingController?
+Okay, for services that call APIs with HttpClient, Angular gives you a testing backend that intercepts requests, so tests never hit a real server.
+
+Setup is simple. In TestBed you provide provideHttpClient and provideHttpClientTesting, along with the service under test, and then inject HttpTestingController.
+
+The flow goes like this. Call the service method and subscribe, or turn it into a promise, and capture the result. Then call expectOne with the URL or a matcher function. That asserts exactly one matching request was made and gives you a TestRequest. Check the method, headers and body on it. Then flush a fake response, like a list of mock shipments, or simulate an error by flushing an error body with a status of 500 and a status text, or call error for a network failure. Then assert the subscriber got the right data or handled the error. And in afterEach, call verify on the controller so the test fails if there were any unexpected requests.
+
+What I test this way is basically URL building and query parameters, request bodies and headers, mapping responses to the right model, error handling like retries or fallbacks, and interceptor behaviour, like adding tokens or refreshing them after a 401.
+
+For interceptors, register them with withInterceptors inside provideHttpClient in the test and check the outgoing headers.
+
+For component tests, I'd usually mock the service instead of HTTP, to keep the test focused. For bigger integration tests, Mock Service Worker mocks the network at a lower level, and it works for both Angular and React code.
+
+@p17-807 | What are component test harnesses in Angular?
+Basically harnesses are classes that let a test interact with a component through a stable API, instead of poking at its internal DOM. They come from the CDK testing package, and Angular Material ships harnesses for all its components.
+
+The problem they solve is tests that query DOM details, like a querySelector on some mat-mdc select trigger class, break whenever the component's internal structure changes, and that happened a lot with Material upgrades. Those tests are hard to read as well.
+
+With harnesses, you get a HarnessLoader for the fixture from the TestBed harness environment, then load a harness, say a MatSelectHarness filtered to the element with the status id. Then you just call its methods. Open it, click the option with the text "Shipped", read the value text. All async, all awaited. There are similar harnesses for buttons, inputs, tables, dialogs and more.
+
+What you get, tests read like user actions, they survive internal markup changes because the harness gets updated along with the component, they wait for change detection and async tasks automatically, and the same harness works in unit tests and, with a different environment, in end-to-end style tests.
+
+For our own shared components, like a date picker or a site selector, we can write custom harnesses by extending ComponentHarness, with methods like select site by name. If you publish them with the component library, consuming teams write much cleaner tests.
+
+So I use harnesses for anything built on Angular Material and for shared design system components. It keeps tests maintainable across upgrades, which honestly is where most test pain comes from.
+
+@p17-808 | Karma is deprecated: which test runner should an Angular project use?
+Right, so for years Angular projects used Karma with Jasmine for unit tests. Karma runs tests in a real browser, which is accurate but slow to start and awkward in CI. It's deprecated now, and Angular's been moving to newer options.
+
+Jest is popular. It runs tests in Node with jsdom, it's fast, good watch mode, snapshot testing, mocking. Angular had experimental built-in Jest support, and community presets like jest-preset-angular have been widely used. The catch is jsdom isn't a real browser, so some browser behaviour is different.
+
+Vitest is fast, modern and compatible with Jest's API, built on Vite and esbuild. Angular has added Vitest support in newer CLI versions and it's becoming the recommended direction. It can run in jsdom or in a real browser mode.
+
+Web Test Runner runs tests in real browsers, it's another option Angular explored.
+
+How I'd migrate, start new tests in the new runner if both can run side by side, or go project by project. Jasmine syntax, describe, it, expect, is mostly compatible with Jest and Vitest. Spies need changes, like jasmine createSpy becomes jest fn or vi fn. Then update CI to run the new command and publish results and coverage.
+
+But whatever the runner, the test practices matter more. Test components through behaviour with harnesses or Testing Library, keep tests fast and isolated, and use Playwright end-to-end tests for the critical flows.
+
+For our React shell, Vitest is a natural fit with Vite, so I'd go with Vitest for Angular too and have one testing approach across both front ends.
+
+@p17-809 | What is the new esbuild-based application builder in Angular?
+Since Angular 17, new projects use the application builder, which uses esbuild for bundling and Vite for the dev server, replacing the old webpack builder.
+
+Why it's nice. Builds are much faster. esbuild's written in Go and highly parallel, so production builds are often several times quicker, and dev server start and rebuilds are way less painful, which really helps in large apps.
+
+It's one builder for client builds, server-side rendering and prerendering, with simpler config. And the output's modern, ES modules, better code splitting, and smaller bundles in a lot of cases.
+
+To migrate an existing project, ng update can move angular dot json to the new builder, or you switch the builder to the angular build application builder yourself and adjust options, like main becoming browser, and the output moving into a browser subfolder under dist.
+
+What can break. Custom webpack configs, any custom plugins or loaders, like through the custom-webpack builders, just don't work. You need an esbuild plugin or another approach.
+
+CommonJS dependencies give warnings and might not tree-shake well, so prefer ES module packages.
+
+Some deployment scripts expect the old output folder structure. That one's easy to miss until the deploy fails.
+
+And third-party libraries that rely on webpack-specific features, like certain require patterns.
+
+For our Angular 8 and 12 sub-apps, moving to the new builder would come after upgrading through the versions, and for the Angular 17 study builder it's available now. The speed alone makes developers happier and CI faster.
+
+@p17-810 | What are Angular schematics, and how does Nx help with large Angular workspaces?
+Schematics are the code generators and transformers the Angular CLI uses. ng generate component uses them to create files following the conventions, ng add uses them to install and configure libraries, and ng update runs migration schematics that fix your code for breaking changes between versions. That's honestly why Angular upgrades are mostly smooth.
+
+Teams can write custom schematics for their own conventions, like generating a feature with a standard folder structure, a store, a routes file and tests, so every team builds features the same way.
+
+Nx is a build system and monorepo tool that works with Angular, React, Node and more. For big workspaces it brings a few things.
+
+A project graph, so Nx understands the dependencies between apps and libraries.
+
+Affected commands. You run nx affected for test and build, and it only runs for projects touched by a change, which keeps CI fast as the repo grows.
+
+Caching, local and remote, so builds and tests that already ran with the same inputs are reused, even across developers and CI agents.
+
+Module boundaries, lint rules about which libraries can depend on which, like feature libraries can't import other features directly, only shared libraries.
+
+And generators, which are Nx's version of schematics.
+
+When I'd use Nx, a monorepo with several Angular or React apps and shared libraries, lots of teams, and CI time turning into a problem. For a single app the Angular CLI alone is enough. In a mixed Angular and React product, Nx can manage both in one workspace with shared libraries for types and utilities.
+
+@p17-811 | How do you implement OpenID Connect login in an Angular app?
+Let me walk through it. For an Angular SPA, logging in with an identity provider like Keycloak or Entra ID uses OpenID Connect with the authorisation code flow and PKCE. The implicit flow isn't recommended anymore.
+
+The flow is, when the user isn't logged in, the app redirects to the provider's login page with a code challenge. After login, the provider redirects back with an authorisation code, and the app exchanges that, along with the code verifier, for tokens. An ID token describing the user, an access token for APIs, and usually a refresh token.
+
+Libraries. angular-auth-oidc-client is certified and widely used, works with any OpenID Connect provider. keycloak-angular wraps Keycloak's JavaScript adapter, and MSAL Angular is for Entra ID. They handle redirects, token storage, silent renewal, logout and session checks.
+
+Where it plugs in. An app initializer checks authentication at startup, a functional route guard protects routes and triggers login, and an HTTP interceptor attaches the access token, but only for configured API URLs, so tokens never go to third-party domains.
+
+Security-wise, keep tokens in memory where you can instead of localStorage, to reduce XSS impact, keep access tokens short-lived, and be careful with refresh. Even better is the BFF pattern, which keeps tokens on a server and uses secure cookies. A lot of security teams recommend that for SPAs now.
+
+Roles, read them from the token to show or hide UI, but always enforce authorisation on the API.
+
+And with Keycloak as the single sign-on provider across legacy and new apps, users log in once and move between the Angular sub-apps and the React shell without logging in again.
+
+@p17-812 | How do you use web workers in an Angular application?
+See, JavaScript in the browser runs on one main thread, and that thread also handles rendering and user input. So heavy work, parsing a big file, processing thousands of rows, generating a report, complex calculations, blocks the UI and the page freezes.
+
+Web workers run JavaScript on a separate background thread. Angular supports them directly. ng generate web-worker creates a worker file and configures the build. In your component or service you create a new Worker, pointing at a URL built from the worker file and import meta url, send data with postMessage, and get results back in onmessage. Inside the worker you listen for messages, do the work and post the result back.
+
+Limitations. Workers can't touch the DOM, window, or Angular services. Data passed between threads is copied with structured cloning, which costs something for big data, though transferable objects like ArrayBuffers can be moved without copying. And debugging's a bit different.
+
+To make it nicer, libraries like Comlink wrap workers so you call functions like async methods instead of juggling messages. And wrapping the worker in an Angular service that returns Observables or Promises keeps components clean.
+
+When I'd use one, client-side Excel or CSV parsing before upload, big data transformations for charts, validating large config files, or searching large in-memory datasets.
+
+But before reaching for workers, I'd check whether the work can just happen on the server, or be broken into smaller chunks. Moving logic to the backend is often simpler.
+
+@p17-813 | How do you turn an Angular app into a PWA with a service worker?
+Yeah, so a Progressive Web App can be installed like an app, loads fast and works partly offline. Angular supports it through its service worker package. ng add for the angular pwa package adds a web app manifest with icons and a name, registers the Angular service worker, and creates the ngsw config file.
+
+The service worker caches the app's files, so after the first visit the app loads from cache, even offline or on a bad network. The config file defines asset groups, like the app shell files prefetched straight away and images loaded lazily, and data groups for API responses with strategies. Freshness tries the network first and falls back to cache, performance uses the cache first.
+
+Updates, the service worker checks for a new version in the background, and the SwUpdate service lets the app detect it and prompt the user to reload. Otherwise users can sit on an old version forever.
+
+One thing I'd be careful about is caching API data, because sensitive data cached on shared devices is a risk, and stale data confuses people. For business systems I cache only safe, non-sensitive data, or nothing at all.
+
+Deployment, the service worker keeps serving the old version until it updates, so make sure version checks work, and the ngsw json file must not be cached by the server or CDN.
+
+Debugging, "users see the old version" problems get really confusing with service workers, so the team needs to know how to clear them.
+
+For internal apps on desktops, a PWA matters less, but for field users on tablets with poor connectivity, offline support can be really valuable.
+
+@p17-814 | How do animations work in Angular?
+Angular's had an animations package for a long time, built on the Web Animations API. You define triggers in the component metadata. A trigger has states, like open and closed, with styles, and transitions between them with timings, like going from open to closed over 200 milliseconds with ease-in. In the template you bind the trigger to an element with an at-sign property binding, set to open or closed based on a component field.
+
+Enter and leave animations animate elements being added or removed, like items in an at-for list or content in an at-if block. Query and stagger animate child elements in sequence, so list items appear one after another.
+
+Route animations animate between routed components with a trigger on the router outlet.
+
+For setup you add provideAnimations, or provideAnimationsAsync, to the app config. The async one lazy-loads the animation code so the initial bundle's smaller.
+
+The newer direction, I think, is native CSS. Recent Angular versions add animate enter and animate leave features that apply CSS classes when elements come in or go out, and the old package is being deprecated over time. Plain CSS transitions and keyframes are often enough and perform well, since the browser can run them on the compositor.
+
+Good practice, keep animations short and purposeful, like showing where something came from or confirming an action. Respect prefers-reduced-motion for people sensitive to motion. And animate transform and opacity rather than layout properties like height and width, it's smoother.
+
+In business apps I use animation sparingly, expanding panels, toasts and dialog transitions, that's about it.
+
+@p17-815 | How do you create components dynamically in Angular?
+Honestly this comes up whenever screens are configuration-driven. Sometimes you don't know which component to show until runtime, like a dashboard with widgets configured per user, a form built from config with different field types, or a plugin-style screen.
+
+In modern Angular you've got options. ngComponentOutlet in the template. You put it on an ng-container, bind it to a widget component field and pass a widget inputs object. Set that field to a component class and Angular renders it, and newer versions let you pass inputs directly. Simple and declarative.
+
+ViewContainerRef createComponent in code. Get a ViewContainerRef, for example with a viewChild query on a host element reading it as a ViewContainerRef, then call createComponent with, say, a chart widget component. You get back a ComponentRef, where you set inputs with setInput, subscribe to outputs, and destroy it when you're done. Since Ivy you don't need ComponentFactoryResolver or entryComponents anymore.
+
+Lazy loading. Combine it with a dynamic import of the widget file, so the widget code only downloads when it's used. Defer blocks also cover a lot of lazy cases declaratively.
+
+A registry, which is a map from config type names, like chart or table, to component classes or loader functions. Then config from the server decides what to render, and you avoid a giant switch statement.
+
+And the standalone createComponent function, for rendering outside the normal tree, like attaching to document body, using the app's environment injector.
+
+Things to remember, destroy dynamically created components to avoid leaks, pass an injector if the component needs specific providers, and type the inputs with a common interface so the registry stays safe. Our web study builder uses configuration-driven screens, which is exactly where this pattern helps.
