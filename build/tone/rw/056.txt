@@ -1,0 +1,157 @@
+@p17-660 | Emails from the application aren't reaching users. How do you troubleshoot?
+So email problems basically split into two, "we never sent it" and "we sent it but it didn't arrive".
+
+Did we send it? I check the app logs for the send attempt and the response from the SMTP server or the email API. Errors like authentication failure, relay denied, connection timeouts or rate limits mean it never left. Then any queue or outbox between the app and the sender, and whether a background worker is actually processing it.
+
+Did the provider accept and deliver it? SES, SendGrid or the corporate mail relay all keep delivery logs, delivered, bounced, deferred, dropped. Bounces explain themselves, invalid address, mailbox full. Suppression lists are sneaky though, they silently drop mail to addresses that bounced or complained before.
+
+Did it land in spam or quarantine? Corporate recipients often have strict filters. So check our domain's authentication. SPF has to authorise the sending servers, DKIM has to sign the messages, and DMARC has to align them. Adding a new sending service without updating SPF and DKIM is a classic cause. Content can trigger filters too, like links to unusual domains. The recipient's IT team can check their quarantine.
+
+For important emails I also design for failure. Track send status per message, retry transient failures, show the important information in the app and not only by email, and monitor bounce and complaint rates.
+
+In clinical systems, sites may depend on these emails for important notifications. So a delivery problem gets treated as a functional failure, not a cosmetic one.
+
+@p17-661 | An integration is sending the same file to a partner twice. How do you fix it?
+Okay, duplicate files can make a partner process orders or shipments twice, so I take it seriously and coordinate with them.
+
+To contain it, if more duplicates are coming, I pause the job or flow, and tell the partner which file is the duplicate so they skip it, or reverse it if they already processed it.
+
+Then why it was sent twice. Usually one of three things. Retries after an uncertain failure, the upload worked but the connection dropped before confirmation, so the job retried and uploaded again. The job ran twice, on two servers without clustering, overlapping runs, or someone reran it manually. Or the selection logic picked the same data again, because the "already sent" marker never got saved, maybe the job crashed after sending but before updating the status.
+
+The fix is making sending idempotent. Use deterministic file names, with a batch id and date in them, so a resend overwrites or gets detected instead of creating a second file, and agree with the partner that they dedupe by file name or batch id. Record each transfer in a table with a unique constraint on the batch and states like prepared, sent and confirmed, and before sending, check if that batch already went. When the outcome is uncertain, check the remote side, like listing the target folder, before retrying. And make sure the job runs once, with clustering or a lock.
+
+I'd also add a dashboard of files per partner per day with alerts on unexpected counts. That catches duplicates or missing files quickly.
+
+@p17-662 | Token validation fails randomly on some servers due to clock skew. How do you fix it?
+See, JWTs have time-based claims, issued at, not before, and expiry. If a server's clock is ahead or behind the identity provider's, it might think a fresh token is expired or not valid yet. When it only happens on some servers, clock drift on those machines is my first suspect.
+
+To confirm, the errors say lifetime validation failed, with the token's times and the server's current time. I compare the clock on the affected servers against a reliable time source. A few minutes off is enough to break it.
+
+The fix is proper time sync. Windows servers should sync with the domain time hierarchy or an NTP source through w32time, Linux uses chrony or systemd-timesyncd. VMs sometimes drift after being suspended or migrated, or when the host's time sync and the guest's NTP fight each other. Containers use the host clock, so the fix is on the node.
+
+The JWT handler in .NET has a ClockSkew setting, five minutes by default, which tolerates small differences. Some teams set it to zero to be strict, and then any drift shows up. I'd say something like 30 seconds to two minutes is a reasonable balance. Cranking it up a lot to hide a broken clock is the wrong fix.
+
+And time affects way more than tokens. TOTP codes, certificate validity, correlating logs across servers, scheduled jobs, audit trail timestamps, which in a regulated system have to be accurate. So I add monitoring of clock offset on every server, with alerts.
+
+@p17-663 | An IIS app pool keeps recycling during the day. How do you investigate?
+Actually users feel this one directly. Every recycle drops in-memory state, sessions and caches, and the first requests after it are slow.
+
+So first I find out why each recycle happened. If recycle event logging is turned on in the app pool's advanced settings, the System log in Event Viewer records the reason from the WAS events.
+
+The usual reasons. Memory limits, the private or virtual memory limit on the app pool got exceeded, so IIS recycled it. That points to high memory or a leak in the app, which needs memory dumps.
+
+Config changes. Any change to web.config or files in the bin folder triggers a recycle. So something writing there, like the app writing logs or temp files into its own folder, or antivirus touching files, can cause it.
+
+Periodic recycling. The default regular interval is 1,740 minutes, which means it recycles at a different time every day, sometimes right in peak hours. Better to set a specific off-peak time.
+
+Crashes. An unhandled exception on a background thread, a stack overflow or an access violation kills the worker process, and after several crashes rapid-fail protection can stop the app pool completely. The Application event log shows the .NET runtime errors and Windows Error Reporting entries.
+
+Idle timeout is a bit different, the pool shuts down after inactivity, and the symptom is a slow first request.
+
+For crashes, what I do is set up ProcDump or DebugDiag to capture a crash dump, analyse it for the exception and stack, fix the bug, and check the recycle events stop.
+
+@p17-664 | The app crashes with no logs at all. How do you find out why?
+Honestly, when a process dies without logging anything, it's usually something the app just couldn't catch. A stack overflow, an out-of-memory kill from outside, a native crash, or an unhandled exception on a background thread before the logs got flushed.
+
+So I look for evidence outside the app first. On Windows, the Application event log usually has a .NET Runtime error with the exception type and stack, or an Application Error entry with the faulting module. On Linux or containers, the exit code tells you a lot. 137 means killed by SIGKILL, often out of memory, 139 is a segfault, 134 is an abort. The orchestrator shows the reason, like OOMKilled, and the kernel log has the OOM killer messages.
+
+Then capture a crash dump for next time. On Windows, ProcDump with the e flag, or Windows Error Reporting local dumps. For .NET on Linux, the DOTNET DbgEnableMiniDump environment variables write a dump on crash. Then analyse it with dotnet-dump analyze, WinDbg or Visual Studio, looking at the exception and the thread stacks.
+
+What I usually find is a stack overflow from infinite recursion, often a property calling itself, or a deep recursive algorithm on unexpected data. That can't be caught in .NET, it kills the process instantly. Or unhandled exceptions in async void methods or background threads. Or a native library crashing through interop.
+
+Sometimes the logs were just lost because they were buffered. So configure sinks to flush on shutdown, log to stdout in containers, and add an AppDomain UnhandledException handler that logs synchronously as a last resort.
+
+@p17-665 | An old ASP.NET app hangs under load with low CPU. What is happening?
+So high latency with low CPU means threads are waiting, not working. In older ASP.NET apps on .NET Framework, I've seen two causes again and again.
+
+The first is sync over async. Code calls dot Result or dot Wait on a Task, say to call an async HttpClient method from a synchronous controller. Classic ASP.NET has a synchronisation context that allows one thread at a time per request. The async method tries to continue on that context, but the request thread is blocked waiting for it, so it deadlocks and the request hangs forever. And under load, even without full deadlocks, blocking threads drains the thread pool and new requests queue up.
+
+The other is plain thread pool starvation. Lots of requests block threads on slow I/O, synchronous database calls or HTTP calls, and the thread pool only grows slowly, adding threads gradually, so requests sit waiting in queues.
+
+To confirm, I take a memory dump during the hang and look at thread stacks with DebugDiag or WinDbg. Loads of threads waiting in Task Wait, Result, Monitor Enter, or in synchronous network calls, that's the pattern. Performance counters show requests queued going up while CPU stays low.
+
+The fix is making the call chain async all the way, from the controller down, instead of blocking. If that's not possible right now, ConfigureAwait false in library code avoids the context deadlock, but it still blocks threads. Add timeouts to every outbound call. Raising the minimum threads is only temporary relief.
+
+@p17-666 | HttpClient calls start failing with socket exhaustion errors. How do you fix it?
+Yeah, errors like "Only one usage of each socket address is normally permitted", or connection failures under load with thousands of connections in TIME_WAIT, almost always mean the app creates a new HttpClient for every request.
+
+Why it happens. Each HttpClient has its own connection pool. Disposing it closes the connections, but the OS keeps each closed socket in TIME_WAIT for a while, up to minutes. Under load you open new sockets faster than old ones get released, and you run out of ephemeral ports. The funny part is the using statement around HttpClient looks like good practice, but that's exactly the cause here.
+
+To confirm, netstat shows tons of connections in TIME_WAIT to the same destination, and the code creates an HttpClient per call.
+
+The fix is reusing connections. In ASP.NET Core, use IHttpClientFactory with typed or named clients, which pools and recycles the underlying handlers properly. Or one long-lived HttpClient, static or singleton, with SocketsHttpHandler and PooledConnectionLifetime set, say two minutes, so connections recycle periodically and DNS changes get picked up. A plain static client would miss those.
+
+On .NET Framework, a shared static HttpClient plus ServicePointManager settings like ConnectionLeaseTimeout gives you similar behaviour.
+
+I'd also check the connection limits per server, and that responses are disposed or fully read. Unread response bodies can keep connections busy, and that one can catch people out.
+
+@p17-667 | Real-time updates over SignalR or WebSockets keep disconnecting. How do you debug it?
+Let me start with the pattern, because that tells you most of it. Disconnects usually come from something between client and server closing idle or long-lived connections, or from scaling.
+
+So, do they happen after a fixed idle time, like 60 seconds? That's a proxy or load balancer idle timeout. Do they happen when servers are deployed or scaled? Only for users behind certain corporate networks?
+
+Proxy and load balancer timeouts are the most common. Idle timeouts on the load balancer, IIS, nginx or a corporate proxy. SignalR's keep-alive pings, every 15 seconds by default, should keep things alive, as long as that interval is shorter than every timeout along the path. Some proxies don't handle WebSockets properly, so SignalR falls back to Server-Sent Events or long polling, which behave differently.
+
+WebSockets not enabled. On IIS the WebSocket Protocol feature has to be installed, and load balancers have to allow the upgrade.
+
+Multiple servers without sticky sessions. SignalR's negotiate and connect requests have to hit the same server, unless you use Azure SignalR Service, or WebSockets only with skip negotiation. Without that, connections fail randomly as soon as there are two instances. You also need a backplane like Redis so messages reach users connected to other servers.
+
+Deployments and restarts drop connections, so clients need withAutomaticReconnect, and the app should resync state after reconnecting. And on the client side, browsers throttle background tabs and mobile networks switch.
+
+Logging on both sides, with the transport and close reasons, shows you which case it is pretty fast.
+
+@p17-668 | Your rate limiter is blocking legitimate users from a corporate network. What do you do?
+Right, so rate limiting by IP assumes one IP is one user. Big organisations, like a hospital or a sponsor's office, often route everyone through a few NAT or proxy IPs, so hundreds of real users look like one really busy client and they all get 429s.
+
+For immediate relief, I find the affected IP ranges from the logs and raise their limits or temporarily allowlist them. But I look at the rest of that traffic first so we're not opening a hole for attackers.
+
+The better fix is rate limiting by a more meaningful key. For authenticated endpoints, partition by user id or client id from the token, so each user gets their own budget. ASP.NET Core's rate limiting middleware supports partitioned limiters with a custom key. For API clients, partition by API key or client application. Keep IP-based limits only for unauthenticated endpoints like login, set them higher, and combine them with per-account limits, that's where brute-force protection really matters.
+
+Also check the app actually sees the real client IP. Behind a load balancer, without forwarded headers configured, every request looks like it came from the load balancer's IP, so literally everyone shares one bucket. ForwardedHeaders middleware with known proxies fixes that. I've seen that one be the whole problem.
+
+Then tune with real data. Look at the distribution of request rates per user, set limits well above legitimate peaks, send Retry-After headers, and monitor 429 counts per client so false positives show up quickly.
+
+@p17-669 | A partner says your API is slow, but your metrics look fine. How do you investigate?
+Okay, if the client says slow and our server says fast, the time's going somewhere our server metrics don't measure. So I get specifics first, which endpoints, what times, request ids or timestamps, and what latency they're seeing.
+
+Then I compare what we measure with what they experience. Our server metrics usually measure from when the request reaches the app to when the response leaves. They miss everything before that, TLS handshakes, load balancers, WAF inspection, API gateway processing, and queueing in the web server before the app even sees the request, like IIS queues or Kestrel connection limits. Load balancer and gateway logs record total time, so they help here.
+
+Network. The partner might be far away, behind a slow proxy, or have packet loss. Big response bodies make it worse, so compression and smaller payloads help.
+
+Connection handling. If their client opens a new connection for every request, each call pays for DNS, TCP and TLS setup, which can add hundreds of milliseconds across continents. Keep-alive and connection reuse on their side fixes that.
+
+Their own processing. Their number might include their own retries, serialisation or queueing.
+
+And averages hide tails. Our average could be fine while p99 is bad, and they might be hitting exactly those slow cases. So I check percentiles for their specific client id.
+
+A joint test with timestamps on both sides, or a synthetic check from their region, usually settles where the time actually goes.
+
+@p17-670 | All health checks are green, but users report errors. What's wrong with your monitoring?
+So when dashboards say healthy and users say broken, the monitoring is checking the wrong things. I help the users first, then fix the blind spot.
+
+I go after the user problem directly. Get specific examples, the screen, the action, the time, the user, and trace those requests in the logs. Often it's one specific flow, one browser or one tenant.
+
+The typical blind spots. Health checks that only test the process responds, not that it can do real work. The app returns 200 on slash health while the database, a queue or some external dependency is failing for real requests.
+
+Errors that aren't errors to the server. The API returns 200 with an error message in the body, or business failures like "no kits available" get logged as information. And front-end failures, JavaScript errors, failed chunk loads, CORS problems, never reach server metrics at all.
+
+Averages hiding things. Overall error rate is 0.5 percent and looks fine, but it's 100 percent for one feature or one site.
+
+Async failures. The API accepted the request, but the background processing failed later.
+
+The fixes, synthetic monitoring of real user journeys, real-user monitoring and front-end error tracking, SLIs per important flow and not just overall, business metrics like successful randomisations per hour, using correct HTTP status codes consistently, and alerts on dead-letter queues and async processing failures. My rule is every incident like this should add the signal that was missing.
+
+@p17-671 | The alerting system fires dozens of alerts at 2 AM. How do you triage?
+Honestly, when lots of alerts fire together, they usually share one root cause. The job is finding it fast, not chasing each alert.
+
+First I check user impact. Are key user journeys failing? I look at the top-level SLO or service overview dashboard and the synthetic checks. That sets the urgency, and whether to declare an incident and pull in others.
+
+Then I look for the common factor. Group the alerts by time, which fired first? The earliest one is often closest to the cause, and the rest are downstream effects. Group by dependency, if every service is alerting on database latency or timeouts to the same component, that component's the suspect. And check recent changes, deployments, config changes, infra maintenance, certificate expiry, or a scheduled job that kicked off at 2 AM.
+
+Shared infrastructure too, database, message broker, identity provider, DNS, network, storage, and the cloud provider's status page.
+
+Then act on the likely cause, roll back the change, fail over, restart the stuck component, and watch whether the alerts clear.
+
+Communicate early and keep updating, even if it's just "we're investigating", to stakeholders and support.
+
+Afterwards, fix the alerting itself. Dependency-aware alerting, so a database outage gives one alert and not fifty, grouping in the alert manager, and runbooks linking symptoms to likely causes. An alert storm basically tells you your alerts describe symptoms everywhere instead of the problem once.

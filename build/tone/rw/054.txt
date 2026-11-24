@@ -1,0 +1,161 @@
+@p17-636 | Log volume suddenly increased tenfold. What do you do?
+So a sudden jump in log volume is both a symptom and a problem. It might be telling you something's broken, and on its own it can fill disks, slow the app down and create a massive bill.
+
+First I find the source. In the logging tool I group counts by service, logger category, level and message template. Usually one or two messages make up most of the increase.
+
+Then why. Most often it's an error loop. Something failing over and over, like a consumer retrying a poison message, a client in a retry loop, or a background job failing every second. The logs are just the symptom, so you fix the thing that's failing.
+
+Or a config change, someone turned on debug or trace in production and forgot, or a library's log level got lowered. Or a code change, a new log line inside a hot loop, or logging full request bodies. Or just more real traffic, logs grew with it, and you might need sampling.
+
+To mitigate quickly, I raise the log level for the noisy category through runtime config if that's supported, or filter it in the collector, no redeploy needed. If disks are at risk, I make sure rotation is actually working.
+
+For prevention, alerts on log volume per service, rate-limited or deduplicated logging for repeating errors, like one summary per minute instead of every single occurrence, some attention in code review to logging inside loops, and budgets per team so they see the cost.
+
+And one more thing, I check sensitive data didn't start showing up in the new logs, because that needs its own clean-up.
+
+@p17-637 | Errors are coming from only one instance out of several. What do you do?
+See, if one instance fails and the others are fine, the code's probably fine. Something about that one instance is different.
+
+I contain it first. Take it out of the load balancer, or let health checks remove it, so users stop hitting it, but keep it running if I can so I can investigate. In Kubernetes you can change a label to pull the pod out of the service, it stays alive but out of rotation.
+
+Then compare it with a healthy one. Version, did a deployment only partly succeed so it's running an old or mixed version? Configuration, some different setting, env variable or config file, maybe someone edited it by hand. Local state, a corrupted local cache, a full disk, a stuck background thread, exhausted connections or memory, or a leak that's built up because that instance started earlier. Uptime is a good clue actually, if the failing one has been up the longest, I'd bet on a leak.
+
+Host problems too, the server or node underneath has hardware, network or noisy neighbour issues, or a different patch level. And the network path, maybe that instance can't reach a dependency because of a firewall rule, DNS or routing that only affects its subnet or availability zone.
+
+I capture evidence, logs, metrics, a memory dump if it's relevant, and then replace or restart it to get capacity back.
+
+To prevent it, health checks that test real dependencies so bad instances get removed automatically, immutable deployments instead of manual changes, and dashboards per instance so outliers stand out.
+
+@p17-638 | Users get intermittent 502 or 504 errors from the load balancer. How do you troubleshoot?
+Okay so these come from the load balancer or proxy, not the app directly, which is why the app logs might show nothing at all. A 502 means the proxy got a bad response or the connection failed. A 504 means it waited too long.
+
+For 504s, some requests are taking longer than the proxy's timeout. I find which endpoints from the load balancer access logs, they record the target response time. Then fix the slow operations, or make long ones asynchronous. I only raise the timeout if the long duration is genuinely legitimate.
+
+502s have a few usual causes. The one that catches people most is a keep-alive mismatch. The app server closes idle connections before the load balancer does, the load balancer reuses a connection the server just closed, and the request fails. So the rule is the app's keep-alive timeout must be longer than the load balancer's idle timeout. In Kestrel that's KeepAliveTimeout, in Node it's server keepAliveTimeout, in IIS the connection timeout settings.
+
+Deployments, instances shutting down while still getting requests, with no connection draining or graceful shutdown. If the 502s cluster around deployment times, that's it.
+
+App crashes or restarts, the process dies mid-request, out-of-memory kills or unhandled exceptions. Response problems, invalid or oversized headers, or the app resetting connections. And capacity, all targets briefly unhealthy, or the app hitting connection or thread limits so new connections get refused.
+
+So it's mostly correlation. Load balancer logs with timestamps and target, against app logs, restarts and deployments. Whether it's random or clustered narrows it down really fast.
+
+@p17-639 | New instances fail health checks after deployment because they start slowly. What do you do?
+Yeah, so if the app takes longer to get ready than the health check allows, the orchestrator kills or replaces it before it's ready. The deployment fails or loops, and old instances might get removed too early.
+
+First I find out why startup is slow. I measure the phases with logs or a trace. Usually it's loading config from remote stores, running database migrations at startup, warming caches by loading big reference data, connecting to lots of dependencies, JIT compiling a big app, or waiting on a slow dependency that's timing out.
+
+Then I fix both sides. Make startup faster. Move migrations out of startup into a pipeline step. Load caches lazily or in the background, and serve from the database while the cache warms. Run independent initialisation in parallel. Use ReadyToRun compilation to cut JIT time in .NET. And put timeouts on dependencies so a missing one doesn't hang startup forever.
+
+And make the health checks understand startup. In Kubernetes, a startup probe with enough time, separate from liveness, so a slow start isn't treated like a deadlock. In ECS, set the health check grace period. On IIS, Application Initialization warms the app before it takes traffic. Readiness should only go true once the app can really serve requests.
+
+The rollout should also wait for new instances to be ready before removing old ones, so a slow start doesn't cut capacity.
+
+I'd also keep a startup duration metric. That way, when some change quietly adds ten seconds to startup, you actually notice it.
+
+@p17-640 | SQL Server's transaction log is full and writes are failing. What do you do?
+Honestly this one's urgent. Error 9002 means the transaction log is full, SQL Server can't write new transactions, so every write to that database fails.
+
+First I find out why the log can't be reused. I query sys dot databases for log reuse wait desc on that database, and the value tells me the cause.
+
+If it's LOG_BACKUP, the database is in full recovery but log backups haven't been running, maybe the backup job failed. So I take a log backup right away, which lets the space be reused, then fix the job and alert on its failures.
+
+If it's ACTIVE_TRANSACTION, some long-running or forgotten open transaction is holding the log. DBCC OPENTRAN or the active transactions DMV finds it, and I decide with the owner whether to wait or kill it. Remember killing it triggers a rollback, and that takes time too.
+
+If it's REPLICATION or AVAILABILITY_REPLICA, a replica or replication isn't keeping up, so the log has to be kept for it. Or it's one huge operation, like an index rebuild or deleting millions of rows in a single transaction.
+
+To get running quickly, if the disk has space, I can grow the log file or add another log file on a different drive. What I don't do is panic, switch to simple recovery and shrink everything. That breaks the backup chain and point-in-time recovery, which matters a lot with regulated data.
+
+Prevention is working, monitored log backups, alerts on log usage percentage, and batching big data operations into smaller transactions.
+
+@p17-641 | tempdb is filling up on SQL Server. How do you find the cause?
+So tempdb is shared by everything on the server, which means when it fills up, queries in every database start failing. I figure out which kind of usage is growing.
+
+The file space usage DMV for tempdb splits the space into user objects, internal objects and the version store.
+
+User objects are temp tables and table variables created by queries or procedures. The session and task space usage DMVs show which sessions use the most, and that leads me to the query or job. Typical ones are a procedure loading millions of rows into a temp table, or temp tables never dropped on long-lived connections.
+
+Internal objects are work tables and spills from sorts, hashes and spools, when a query's memory grant is too small, or it sorts or hashes a huge result. Execution plans with spill warnings show it. The fix is better indexes to avoid big sorts, fixing bad cardinality estimates, or rewriting the query.
+
+Version store. With read committed snapshot or snapshot isolation on, row versions live in tempdb as long as the oldest open transaction needs them. One long-running transaction, even an idle open one, blocks cleanup, and the version store just keeps growing. So find the oldest active snapshot transaction and deal with it. I've seen this one catch people out more than the others.
+
+For immediate relief, kill the offending session if that's okay after checking the impact, or add space. Restarting SQL Server resets tempdb, but that's a last resort, it's full downtime.
+
+And prevent it, size tempdb properly with multiple equal data files, monitor usage, and alert on long-running transactions.
+
+@p17-642 | Users can't log in because the identity provider is slow or down. What do you do?
+Actually, when the identity provider is down, nobody can start a new session. So even if every app is healthy, it's a full outage for new logins.
+
+I confirm the scope first. Is it failing for everyone, or only some apps or realms? Are people with existing sessions still okay? Access tokens that are already issued keep working until they expire, so existing sessions often survive for a bit, and refresh failures kick in later.
+
+Then the identity provider itself. For Keycloak, the server health and logs, its database, which is a common bottleneck, memory and GC, and the cluster cache state if there are multiple nodes. Then what's in front of it, load balancer, certificates, DNS. And unusual load, like a credential-stuffing attack or a broken client hammering the token endpoint in a loop. That can take an identity provider down on its own.
+
+To mitigate, scale or restart nodes, block abusive traffic at the WAF or gateway, fix the database problem. And communicate clearly, because support is going to get flooded.
+
+On the app side, they shouldn't call the identity provider on every request. Local JWT validation with cached signing keys means APIs keep working with existing tokens. Front ends should show a clear message instead of looping on redirects.
+
+Afterwards, run the identity provider highly available with health monitoring and synthetic login checks, rate-limit the token and login endpoints, and include it in capacity planning. I'd say it's the one dependency everything else has.
+
+@p17-643 | Large file uploads fail in production but work locally. Why?
+Let me guess before even looking, it's a size limit or a timeout somewhere in the chain. Production just has more layers than local, and each one has its own limit.
+
+The status code tells you a lot. A 413 Request Entity Too Large is some component rejecting the size. A 404.13 on IIS is request filtering's max allowed content length. A 502 or 504 points to a timeout at a proxy. A connection reset means something closed the connection.
+
+Then I go layer by layer. The CDN, WAF or API gateway, a lot of them have body limits, WAF inspection limits, or API Gateway's 10 MB payload limit. The load balancer or reverse proxy, nginx's client max body size defaults to 1 MB, which surprises people all the time with Kubernetes ingress. IIS, request limits max allowed content length is about 30 MB by default, plus max request length for classic ASP.NET. Kestrel and ASP.NET Core, MaxRequestBodySize is also around 30 MB by default, and the form options for multipart, which you can change per endpoint. And timeouts, slow uploads over corporate networks can go past proxy and server timeouts.
+
+But the better design for big files is not sending them through the API at all. The client asks the API for a pre-signed upload URL, uploads straight to S3 or Blob Storage, maybe in chunks with multipart upload so it can resume, and the API processes the file asynchronously after an upload event. You avoid all those limits, the API stays light, and it copes with bad networks.
+
+@p17-644 | A large export times out for big customers or studies. How do you fix it?
+So a synchronous export that builds the whole file inside one HTTP request works for small data and falls over for big data. It hits request timeouts, memory limits, or holds the database for ages.
+
+If it's only slightly over the limits, there are quick wins. Stream the output straight to the response instead of building the file in memory, write rows as you read them with a forward-only reader, use AsNoTracking and select only the columns you need, and fix slow queries. Streaming a CSV handles really large data with very little memory.
+
+But for truly big exports, I change the design to asynchronous. The user requests an export, the API validates it, creates an export job and returns 202 Accepted with a job id. A background worker picks it up, queries the data in pages, writes the file to blob storage, records progress and marks it complete. The user sees progress in the UI and gets a notification, or the page polls, and then downloads through a short-lived signed URL. Files expire after a while.
+
+What you get is no HTTP timeouts, retries if the worker fails, controlled concurrency so ten big exports at once don't kill the database, and you can run the heavy queries on a read replica.
+
+I'd also ask if an export is really what they need. Sometimes users export everything just to filter it in Excel, and better filters or a report in the app serve them better.
+
+And in a regulated context, exports of sensitive data are logged, who exported what.
+
+@p17-645 | Reports are slowing down the transactional system. What do you do?
+Okay, this is a classic one, heavy reporting and transactional work on the same database. Reports scan loads of data, eat CPU, memory and I/O, and can hold locks that block users' writes.
+
+For short-term relief, I find the heaviest reports from Query Store or query stats and tune the worst queries with indexes or rewrites. Schedule the heavy ones outside peak hours. Limit how many run at once with a queue. And if read committed snapshot is on, readers don't block writers, which takes away a lot of the lock contention. What I avoid is sprinkling NOLOCK everywhere, because it gives you wrong results.
+
+The structural fix is separating the workloads. Read replicas, so Always On readable secondaries in SQL Server, or read replicas in managed databases. Reports run there with slightly delayed data, which is fine for most reports.
+
+Or a reporting database or data warehouse. Data gets copied through change tracking, change data capture or ETL into a schema built for reporting, denormalised tables and columnstore indexes, which make aggregations over millions of rows dramatically faster. Power BI or SSRS read from there.
+
+And pre-aggregation, for dashboards showing the same summary again and again, compute it on a schedule or incrementally and serve it from a summary table or cache.
+
+In our case, with a database per study, a central reporting store that aggregates across studies is also what makes cross-study reporting possible, instead of querying hundreds of databases live.
+
+@p17-646 | Someone accidentally deleted data in production. How do you recover?
+Right, stay calm, stop the damage, then recover precisely. In that order.
+
+To stop the damage, I find out what was deleted, when, and by what, a person, a script, a bug, a job, and make sure it can't keep going. Disable the job or the feature if needed.
+
+Then assess. Which tables, which rows, how many, and what's happened since? New writes after the deletion make it harder, because I can't just roll the whole database back without losing them.
+
+For recovery I pick the least disruptive option. If the system uses soft delete, you just flip the flag back. Audit or history tables, like temporal tables or audit logs, can give you the old values. Otherwise, point-in-time restore. Restore a copy of the database, never over production, to a moment just before the deletion, using full and log backups or the cloud's point-in-time restore. Then copy only the missing rows back into production with a careful, reviewed script that handles keys, foreign key order and identity values.
+
+Then verify with the business that the data's right, and check dependent systems that may have reacted to the deletion, notifications already sent, partners already synced.
+
+Document everything. In a regulated system the incident, the correction script, the approvals and the verification are all part of the record.
+
+For prevention, restricted production access, reviewed scripts with the WHERE clause checked and run in a transaction with a row count check, soft deletes for important entities, tested backups, and least privilege so apps can't delete what they shouldn't.
+
+@p17-647 | A secret was committed to a Git repository. What do you do?
+So the key point is, once a secret's pushed, assume it's compromised. Removing it from the code isn't enough. It's in the history, in everyone's clones, maybe in CI logs, and if the repo's public, bots scan for secrets within minutes.
+
+The first thing I do is revoke or rotate it. Create a new credential, update the apps using it through the proper secrets store, disable the old one. That's the most important step and it happens before any history cleanup.
+
+Then check for misuse. Look at the access logs of whatever the secret protected, cloud audit logs, database logins, API usage, for activity from strange locations or times since the commit.
+
+Remove it from the code and load it from a secrets manager or the environment instead.
+
+Clean the history if needed, with git filter-repo or BFG, and force-push. That needs coordination because everyone has to re-clone. On hosted platforms you might need support to purge cached views. Honestly it matters less once the secret's rotated, but it reduces exposure and noise.
+
+Report it through the security incident process. Depending on what was exposed, that might mean telling the security team or others.
+
+And prevent it. Pre-commit hooks with a scanner like gitleaks, push protection on the platform, secret scanning in CI, a gitignore for local settings files, and making the right way easy, user secrets for local development and a secrets manager everywhere else.

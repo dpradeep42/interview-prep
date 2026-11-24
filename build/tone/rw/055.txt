@@ -1,0 +1,183 @@
+@p17-648 | You see a sudden flood of failed logins from many IPs. What do you do?
+Okay, a spike of failed logins from lots of IPs is usually credential stuffing. Attackers are trying username and password pairs leaked from other sites, hoping people reused them. That's a security incident, so I pull the security team in early.
+
+For immediate defence, I rate limit and block at the edge. WAF rules limiting login attempts per IP and per account, bot detection, and blocking clearly malicious sources or regions if the business is okay with that.
+
+Then protect accounts. Temporary lockout or progressive delays after repeated failures per account, but carefully, you don't want attackers locking out every real user. And step up verification, MFA or a CAPTCHA, when the risk signals are high.
+
+Then the important bit, check for successful logins from the same sources, because those accounts may already be compromised. Force password resets, revoke their sessions, and notify those users.
+
+To investigate, I go through identity provider and WAF logs, look at patterns in the targeted accounts, and check whether they're enumerating usernames. The login page shouldn't give that away with different error messages.
+
+Longer term, MFA for everyone, especially privileged users, that kills most credential stuffing. Checking passwords against known breached lists at registration and password change. Same error message whatever went wrong. Alerts on failed login rates. And identity provider features like brute force detection, which Keycloak has built in.
+
+Afterwards there's a review of what was accessed, and any notifications the company policy requires.
+
+@p17-649 | A feature works in Chrome but fails in Safari. How do you debug it?
+So browser-specific bugs come from something that behaves differently between engines. Chrome and Edge are Blink, Safari is WebKit, Firefox is Gecko.
+
+I reproduce it in the real browser. Safari on a Mac, or an actual iPhone, because every iOS browser is WebKit underneath. Cloud device services help if I don't have the device. Then Safari's Web Inspector, connected to the phone if needed, and check the console for errors and the network tab for failed requests.
+
+The culprits I see most. Date parsing is a big one. new Date with a non-standard string, like a date and time separated by a space, works in Chrome and gives Invalid Date in Safari. Use ISO formats or a date library.
+
+Newer JavaScript or CSS that the user's Safari version doesn't support, some regex features, newer array methods, CSS properties. Build settings or polyfills should cover that, and checking browserslist and caniuse helps.
+
+Third-party cookies and storage. Safari's tracking prevention blocks third-party cookies and limits storage, which breaks silent token renewal through hidden iframes, or embedded apps. The fix is same-site deployments, or the authorisation code flow with refresh token rotation.
+
+Then smaller stuff, autoplay, file input and date input differences, iOS viewport and keyboard behaviour, and caching differences like a more aggressive back-forward cache.
+
+After the fix, I add that browser to the test matrix, like running the Playwright tests in WebKit in CI, so it doesn't come back.
+
+@p17-650 | An Angular SPA gets slower the longer a user keeps it open. Why?
+See, if an app gets slower over hours, something's piling up. Usually memory, listeners or DOM nodes, so every interaction does a bit more work than before.
+
+I confirm it with the browser tools. Chrome DevTools' Performance monitor shows JS heap size, DOM node count and event listeners over time. I do a repeated action, like opening and closing a dialog or going between two screens 20 times, and watch if the numbers keep climbing. Then heap snapshots before and after, and compare which objects are growing. Detached DOM trees are a strong clue.
+
+In Angular the most common cause by far is subscriptions that never get unsubscribed. A component subscribes to a long-lived observable, a store selector, a router event, an interval, and never unsubscribes, so destroyed components stay in memory and keep reacting. The fix is the async pipe, takeUntilDestroyed, or toSignal.
+
+Other ones, event listeners added manually to window or document and never removed in ngOnDestroy. Third-party libraries like charts or grids not being destroyed properly. Service caches that grow forever, like storing every record ever loaded. Timers and intervals still running after navigation. And growing change detection work, big lists without trackBy, or lots of components on default change detection.
+
+The fix depends on what the heap comparison shows. Then I add a check to our testing, a scripted navigation loop that verifies memory goes back to a baseline. That catches regressions in shared components, which is where it hurts most in our component-based setup.
+
+@p17-651 | The AWS bill spiked unexpectedly. How do you find the cause?
+Honestly I treat a cost spike like an incident. Find what changed, stop the bleeding, stop it happening again.
+
+To find the driver, I go to Cost Explorer, group by service, then usage type, region, account and tags, and compare daily costs before and after. It usually points at one or two line items. Cost Anomaly Detection might have flagged it already.
+
+The usual causes. Data transfer, especially NAT gateway processing charges, when services in private subnets pull huge amounts through NAT instead of VPC endpoints, like container images from ECR or data from S3. Or cross-AZ and cross-region traffic.
+
+Runaway compute. Autoscaling that went up and never came down, a Lambda in a loop, like an S3-triggered function writing back into the same bucket, or a retry storm.
+
+Logging and monitoring, a debug level left on and CloudWatch Logs ingestion multiplied, or high-cardinality custom metrics.
+
+Forgotten stuff, test environments, big instances, unattached EBS volumes, old snapshots, idle load balancers. Storage with a missing lifecycle rule, so logs or backups pile up in expensive tiers. Or the database, DynamoDB on-demand soaking up a huge traffic spike, or provisioned IOPS that got bumped.
+
+Then stop it, fix the loop, scale down, delete what's unused, add the endpoints.
+
+And prevent it with budgets and anomaly alerts per account and team, required cost tags, regular cost reviews, and guardrails like Lambda concurrency limits and max autoscaling sizes.
+
+@p17-652 | ECS tasks pass health checks normally but fail under load. What do you look at?
+Actually this is a nasty pattern. When tasks only go unhealthy under load, the health endpoint is usually suffering from the same resource exhaustion as the rest of the app. And killing tasks under load makes it worse, because the remaining ones get even more traffic. It turns into a death spiral.
+
+The first thing I check is whether the health endpoint is cheap. If it checks the database and every dependency deeply, under load those checks time out and every task looks unhealthy at the same time, even though the real problem is one shared dependency. A liveness-style check should only confirm the process can respond. Dependency checks belong in readiness logic or monitoring, not in a check that triggers replacement.
+
+Then, is it getting starved? With thread pool starvation or a saturated request queue, the health request waits behind user requests and times out, and ALB health check timeouts are short by default. Thread pool metrics, request queue length and CPU show that.
+
+Is the container CPU or memory limit too tight, causing throttling or out-of-memory kills? ECS stopped task reasons and Container Insights tell you.
+
+And are the thresholds too aggressive? A couple of slow responses shouldn't remove a task, so raise the unhealthy threshold and timeout sensibly.
+
+Then fix the actual bottleneck, scale out earlier with autoscaling on request count rather than CPU, and load test with health checks switched on, so we see this before production does.
+
+@p17-653 | Kafka consumer lag keeps growing. What do you do?
+So growing lag means consumers are slower than producers. I find which side changed and where the time is going.
+
+I look at lag per partition, not just the total. If it's high on all partitions, consumers are generally too slow or producers sped up. If it's on one or two partitions, it's a hot partition, where a popular key sends most messages to one place, or one consumer instance is stuck.
+
+Then consumer health. Are all consumers in the group active, or did some crash so there are fewer consumers than partitions? Are there frequent rebalances in the logs? Each one pauses consumption. Rebalance storms happen when processing takes longer than max poll interval, so the broker thinks the consumer died.
+
+Then processing time. What does each message wait on? Usually a database write or an external API call, and traces and per-message timing show it.
+
+The fixes. Scale out consumers, but only up to the number of partitions. Beyond that the extra ones just sit idle, so you might need more partitions for future growth. Speed up processing, batch database writes, process concurrently within a partition where per-key ordering allows, cache lookups. Fix hot keys with a better partition key. Tune polling, smaller batches or a longer max poll interval when processing is slow, so rebalances stop, and cooperative rebalancing to reduce the pauses.
+
+And then alert on lag and how fast it's growing. I'd say lag is basically how stale your downstream data is, so people care about it.
+
+@p17-654 | DynamoDB throttles during a big batch import. How do you handle it?
+Yeah, a batch import writes way faster than normal traffic, so it hits the table's capacity or a hot partition, and then normal user traffic gets throttled too.
+
+The immediate fix is slowing the import down. Throttle the writer to a rate the table can handle, with retries and exponential backoff with jitter. And one thing people miss, BatchWriteItem returns UnprocessedItems when it's throttled. Your code has to retry those, otherwise data is silently lost. That's a classic bug.
+
+Then key distribution. If the import file is sorted by partition key, like all items for one customer together, the writes hit one partition at a time. Just shuffling the order spreads the load.
+
+Capacity. For a one-off import into a provisioned table, temporarily raise write capacity, or switch to on-demand for the import and switch back. On-demand still has a ramp-up behaviour for brand new peaks though.
+
+For really big loads there are better approaches. DynamoDB's import from S3 loads CSV, JSON or Ion files into a new table without using write capacity at all, perfect for initial loads. For ongoing large imports, put the data on a queue and let consumers write at a controlled rate, which also protects user traffic.
+
+Also check the secondary indexes. Every write to the table also writes to its GSIs, and if a GSI is under-provisioned, it throttles the base table writes too.
+
+Afterwards I'd monitor throttled requests and consumed capacity per table and per index.
+
+@p17-655 | An application suddenly gets AccessDenied from S3 after a change. How do you debug it?
+Let me start with the fact that S3 access is decided by several policies at once, so I go layer by layer, guided by whatever changed.
+
+First, get the details, the exact action, like s3 GetObject or PutObject, the resource ARN, and the identity making the call. CloudTrail shows the failing call, and the newer error messages often tell you which kind of policy denied it.
+
+Then the layers. Identity policy, does the role the app uses, like the ECS task role, allow that action on that bucket and prefix? A common mistake is allowing the bucket ARN but not bucket slash star, or the other way round. ListBucket needs the bucket ARN, GetObject needs the object path.
+
+Bucket policy. An explicit deny beats everything. Policies that require encryption headers, specific VPC endpoints, TLS, or a specific organisation will deny calls that don't meet the conditions. After a network change, requests might not come through the expected VPC endpoint anymore.
+
+KMS. If objects use a customer managed key, the role also needs kms Decrypt or GenerateDataKey, and the key policy has to allow it. In my experience this is one of the most common causes.
+
+Object ownership, objects uploaded by another account might not be accessible unless bucket owner enforced is set. Organisation guardrails, a new SCP or Resource Control Policy can deny it. And Block Public Access, if the app expected public reads.
+
+The IAM policy simulator and Access Analyzer help confirm the fix, and I make the fix through infrastructure as code, not by clicking around.
+
+@p17-656 | Terraform plan wants to destroy and recreate a production database. What do you do?
+Right, first thing, stop and don't apply. Destroying and recreating a production database means data loss and an outage, so I find out why Terraform thinks it needs replacing.
+
+The plan marks the attribute causing it with "forces replacement". The common reasons are these.
+
+A changed immutable attribute. Some properties can't be updated in place, like the database identifier, engine type, availability zone, encryption settings or some subnet group changes. Someone may have changed one on purpose without realising what it does.
+
+A renamed or moved resource. The resource address changed, from a rename or moving it into a module, so Terraform sees an old resource to delete and a new one to create. A moved block fixes that, it updates state without touching the resource.
+
+Provider or module upgrades that changed defaults or how an attribute is represented.
+
+Drift, someone changed the resource outside Terraform and the config doesn't match reality anymore.
+
+So the fix depends. Add a moved block, revert the attribute change, align the config with reality, use lifecycle ignore_changes for attributes managed somewhere else. Or if the change is really needed, plan a proper migration, snapshot, create new, migrate, switch over, instead of letting Terraform just do it.
+
+For prevention, my rule is lifecycle prevent_destroy on critical resources, deletion protection on the database itself, plan review in pull requests with automated checks that fail on destroys of protected resource types, and applies only from the pipeline.
+
+@p17-657 | Production smoke tests fail right after a release that passed UAT. What do you do?
+Okay so this is exactly why we run smoke tests, it got caught early. Now the decision has to be quick, fix forward or roll back.
+
+I assess impact first. Are real users affected or only the tested path? How bad is it? If a critical flow is broken and the cause isn't obvious within minutes, I'd rather roll back, if that's safe with the database changes, and investigate calmly. In a release window there's usually a defined time limit for that call anyway.
+
+Then I look for what's different between UAT and production, because the code is the same build.
+
+Configuration is the most common. A missing or different setting, connection string, feature flag or secret in production.
+
+Infrastructure. Firewall rules, certificates, DNS, permissions of the production service account, or a dependency endpoint that exists in UAT but not in prod.
+
+Data. Production has cases UAT doesn't, old records, bigger volumes, study configurations UAT never had.
+
+Integrations, real partner endpoints behave differently from test ones.
+
+Deployment issues, a step failed silently on one server, a migration didn't run, a cache didn't get cleared.
+
+The logs and the exact smoke test failure usually point to one of these pretty quickly.
+
+After it's resolved, a short review, and we add the missing check to the pre-production checklist or the pipeline. Like validating configuration at startup, or a connectivity check against production dependencies before switching traffic over.
+
+@p17-658 | Users see stale data after an update. How do you fix the caching?
+So "I saved it but the screen still shows the old value" usually means a cache wasn't invalidated, or you're reading from somewhere that hasn't caught up yet.
+
+I find which layer is stale. Check the database first, is the new value there? If yes, I move outward. The API's in-memory or Redis cache, an HTTP or CDN cache, the front end's client cache like RTK Query or TanStack Query, or a read replica with replication lag.
+
+The common causes. Cache-aside without invalidation, the update writes to the database but doesn't remove the cached entry, so readers see the old value until the TTL runs out. The fix is invalidating or updating the cache entry in the same code path as the write, after the commit.
+
+Multiple instances with local in-memory caches. One instance clears its own cache, the others still have the old value. Use a distributed cache, or broadcast invalidation messages to all instances with something like Redis pub-sub, or short TTLs on local caches. HybridCache in .NET 9 helps with tags and a shared second level.
+
+HTTP caching, responses with Cache-Control headers that allow caching data that changes. API responses for user data should usually be no-store or use ETags.
+
+Front-end caches, after a mutation the client has to invalidate the related queries, with RTK Query tags or TanStack Query's invalidateQueries.
+
+And read replicas, reading right after writing from a lagging replica. The fix is read-your-writes, reading from the primary for that user for a short time after a write.
+
+@p17-659 | A user reports seeing another user's data. What do you do?
+Honestly this is one of the most serious ones, a security and privacy incident. It goes to top priority and I bring in security and management straight away, following the incident process.
+
+Contain first. If it's reproducible or still happening, disable the feature or take the endpoint offline. Preserve logs and evidence.
+
+Then find the cause. The usual suspects in a web app. Shared state in a singleton, a service registered as singleton holding per-request data, like the current user or tenant in a field, so concurrent requests overwrite each other. Static fields for request data do the same thing.
+
+Caching with wrong keys, a cached response or object keyed without the user or tenant, so the first user's data gets served to everyone. That includes a CDN or proxy caching personalised responses because Cache-Control private or no-store was missing.
+
+Authorisation gaps, an endpoint that takes an id and never checks the record belongs to that user. Insecure direct object reference.
+
+Async context mistakes, like AsyncLocal or thread-static values leaking between requests. And front-end issues, state kept in local storage and not cleared on logout, so the next person on the same device sees it.
+
+Then assess impact. Which users and data were exposed and for how long, from access logs. You need that for notifications, which might be legally required for personal or clinical data.
+
+Fix it, test with concurrent users, add isolation tests, and then do a thorough review. In my experience these bugs often have siblings.

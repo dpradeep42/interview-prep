@@ -1,0 +1,173 @@
+@p17-624 | Refreshing a deep link in the SPA gives 404 on IIS. How do you fix it?
+So in a single-page app with HTML5 routing, a URL like slash shipments slash 123 is handled by the router inside the browser. Moving around inside the app works fine because nothing goes to the server. But when you refresh, or open a bookmarked link, the browser actually asks IIS for slash shipments slash 123. IIS looks for that file, doesn't find it, and gives you a 404.
+
+The fix is a fallback rule. Any request that isn't a real file, a real folder or an API route should return index.html, and then the router shows the right screen.
+
+On IIS I install the URL Rewrite module and add a rule in web.config. Match all URLs, with conditions that it's not a file, not a directory, and doesn't start with slash api, and then rewrite, not redirect, to slash index.html or the app's base path. If the app lives under a virtual directory, say slash study-admin, the base href in index.html and the rewrite target both need that path, otherwise the assets don't load.
+
+Other hosts have the same idea. try_files in nginx, custom error responses or a function in CloudFront, navigationFallback in Azure Static Web Apps, and MapFallbackToFile in ASP.NET Core when it's serving the SPA.
+
+One thing people miss, API calls to a route that doesn't exist should still get a real 404, not index.html. That's why the API exclusion matters. Otherwise the client gets HTML when it expects JSON and fails with a really confusing parse error.
+
+@p17-625 | CORS errors appear right after a deployment. How do you troubleshoot?
+Okay, so CORS errors mean the browser's preflight or response check failed. I go to the network tab to find out why, not just the console message.
+
+I look at the actual request. Was it the OPTIONS preflight that failed or the real request? What status did it get? A CORS error often hides a different problem. If the API returned 500, 404 or 401 without CORS headers, the browser just calls it a CORS error. So a broken API, a wrong route after deployment, or an auth failure can all look like CORS.
+
+Then what changed in the deployment. Allowed origins, maybe the new environment's front-end URL isn't in the list, or there's a trailing slash, http versus https, or a port difference. Origins have to match exactly.
+
+Middleware order in ASP.NET Core. UseCors has to come after UseRouting and before UseAuthorization, and before anything that short-circuits, otherwise auth rejects the preflight.
+
+Infrastructure. A new proxy, gateway or IIS setting stripping headers, or IIS handling OPTIONS itself through WebDAV or the OPTIONS verb handler before the app even sees it.
+
+Credentials. If the front end sends cookies, you can't combine AllowAnyOrigin with AllowCredentials, the origin has to be listed explicitly.
+
+Custom headers. If the front end started sending a new header, like a correlation id, it has to be in the allowed headers.
+
+Longer term, I keep origin lists per environment in configuration, and add an automated smoke test that makes a cross-origin call after every deployment.
+
+@p17-626 | Every API call suddenly returns 401 after an identity provider change. What do you check?
+See, when everything returns 401 at once, it's usually token validation failing for everybody, not someone's credentials. The JWT bearer handler logs the exact reason at information or debug level, and the WWW-Authenticate header often has it too, so that's where I start.
+
+Most common is signing key rotation. The identity provider, like Keycloak, rotated its keys, and the API is still validating with the old ones, maybe because keys were configured statically instead of read from the JWKS endpoint, or there's a long cache. The error says the signature key wasn't found, with a kid. The fix is to always use the metadata and JWKS endpoints, which the handler refreshes automatically, and make sure the API can actually reach them through the firewall and proxy.
+
+Issuer mismatch. The realm name, hostname or scheme changed, so the iss claim doesn't match the configured authority anymore. Behind proxies, the internal and external URLs can give different issuers.
+
+Audience mismatch. The client config changed and tokens don't include the API's audience anymore.
+
+Clock skew. A server clock drifted, so tokens look expired or not valid yet. Check NTP.
+
+Network. The API can't download the metadata at all, so every validation fails.
+
+And the front-end side. The client id or scopes changed, so it's getting tokens for something else, or the interceptor stopped attaching tokens.
+
+What I usually do is decode a failing token in a safe local tool and compare its iss, aud, kid and expiry against the API's config. That shows the mismatch in about a minute.
+
+@p17-627 | A user's role was changed but they still get 403 or still have access. Why?
+Actually it's usually because the role is baked into a token or session that hasn't been refreshed yet.
+
+Access tokens are self-contained. When the identity provider issues a JWT, the roles in it are fixed until it expires. So if an admin adds a role, the user's current token doesn't have it, and they keep getting 403 until they get a new token. And the worse case, when a role is removed, the user keeps access until the token expires. Cookie sessions that store claims behave the same way until the session refreshes.
+
+There are other places it gets stuck too. The app caches permissions in memory or Redis. The front end caches the user's profile and shows or hides menus based on old data. Or the role was changed in the identity provider, but the app maps roles from its own database, which nobody updated.
+
+How I handle it. Keep access tokens short-lived, five to fifteen minutes, so changes come through on the normal refresh. For removing access, which is the security-sensitive one, don't wait. Revoke the user's sessions and refresh tokens in the identity provider, and for really sensitive apps, check permissions server-side per request, or use a revocation list or a security stamp checked on each call. Clear permission caches on role changes through events. On the front end, refresh the profile after changes, and never rely on the front end to enforce anything.
+
+And tell the support teams about the expected delay, so they don't raise bugs for what's normal behaviour.
+
+@p17-628 | A third-party API starts returning 429 Too Many Requests. What do you do?
+Honestly, the worst thing is hammering them with retries. A 429 means we're over the partner's rate limit, and retrying harder makes it worse and can get us blocked. So I handle it on our side.
+
+Right away, respect Retry-After. If they say wait 30 seconds, we wait. Then check our retry policy isn't amplifying it, like three retries from each of ten instances turning one failure into thirty calls. And slow down, reduce concurrency for that client, pause non-urgent stuff like background syncs, and prioritise calls that matter to users.
+
+Then understand why. Did our traffic grow? Did a new feature or a bug cause a burst, like an N plus one pattern calling the API once per item? Or did the partner lower the limit? I check our calls-per-minute metric for that API, and the partner's docs or dashboard for our quota.
+
+Longer term, client-side rate limiting. A shared limiter across all instances, like a token bucket in Redis, or send all calls through one queue-based worker that goes at a controlled pace. Cache responses that don't change much. Use batch endpoints if they have them, instead of one call per item. Spread scheduled jobs out instead of everything at the top of the hour. And if our usage is legitimate, just ask the partner for a higher limit.
+
+And monitor it, track the 429 rate and the remaining-quota headers if they send them, with an alert before we actually hit the limit.
+
+@p17-629 | A partner changed their API response without notice and your integration broke. What do you do?
+So my order is stop the damage, fix it, then protect against next time.
+
+To contain it, I find the failing integration from the errors, usually deserialisation failures or missing fields. If messages or files are failing, I make sure they're kept, in a dead-letter queue or an error folder, not lost, so we can reprocess them. If the integration is writing bad data instead of failing, which is actually worse, I pause it.
+
+Then understand the change. Capture the real responses, compare with what we expect, and contact the partner, to confirm and to ask if it's intended or a mistake on their side. Sometimes they just roll it back.
+
+The fix is updating our mapping for the new format, ideally accepting both old and new for a while. Then reprocess the stored failures and check the data.
+
+For the future, a few things. A tolerant reader, so our deserialisation ignores unknown fields and doesn't break when optional fields are missing, it only fails on what we truly need. Validation at the boundary, so bad incoming data fails loudly with a clear error instead of writing nulls into the database. Contract tests or scheduled checks against the partner's sandbox, so we notice a change before production traffic does. An anti-corruption layer, so their format is translated in one place and not spread all over our code. Monitoring on integration health, success rates and records processed, with alerts.
+
+And I'd agree with the partner on a change notification process and versioning in the contract, so it doesn't come as a surprise again.
+
+@p17-630 | One endpoint is slow only for some users or one site. How do you investigate?
+Let me think about what differs. If only some users are slow, the cause is something different about them, usually data size, permissions, config or location.
+
+So I narrow it down. From traces or logs I group latency by user, site, tenant, region, browser. Is it one site, everyone with one role, one region? If I can, I reproduce it by calling the same endpoint with the same parameters, safely.
+
+Data volume is the most common one. The slow site just has way more data, 50,000 kits versus 500. A query that scans or returns everything for a site is fine for small sites and awful for big ones. Paging, filters and indexes that suit the large case fix it.
+
+Parameter sniffing. SQL Server built a plan that's good for small sites and slow for big ones, or the other way round. Query Store shows it.
+
+Permission logic. An admin or multi-site user has access to loads of sites, so the permission filter builds a huge IN list or does a check per site, and it's only slow for them.
+
+Configuration. Some feature or setting only that tenant has switched on, causing extra work.
+
+Network. Users far away or behind a corporate proxy get high latency, or one CDN node is misbehaving. Real-user monitoring by geography shows that.
+
+And client side, older devices or browsers struggling with a big page.
+
+The fix depends on the cause. But I always add that dimension, like site, to the latency metrics afterwards, so next time this kind of thing shows up straight away.
+
+@p17-631 | A page is fast in test but slow in production. Why?
+Yeah, test and production differ in a lot of ways, but nine times out of ten it's the data.
+
+Test databases have thousands of rows, production has millions, with skew, like one huge customer. A query without the right index, or one that loads everything into memory, looks fast in test. Checking the actual execution plan in production, or in a perf environment with production-sized anonymised data, usually shows a scan or a bad join.
+
+Concurrency. Test has one or two users, production has hundreds at once. Lock contention, connection pool limits, thread pool starvation, cache stampedes, those only show up under real load.
+
+Config differences. Debug logging on, different cache settings, some feature flag on, smaller instances, or database settings like compatibility level or read committed snapshot being different.
+
+Network and integrations. Production calls real external services with real latency, through proxies, firewalls and gateways, while test might use stubs sitting in the same network.
+
+Background workload. In production, scheduled jobs, reports and integrations are running at the same time and competing for the database.
+
+And the front end, users have more data on the page, older devices, slower networks, browser extensions.
+
+My approach is measure in production first, with traces showing where the time actually goes, instead of guessing from test. Then reproduce that specific condition in a perf environment, fix it, and make that environment closer to production in data size so it catches the next one.
+
+@p17-632 | Traffic suddenly jumps tenfold. How do you keep the system up?
+Okay, the first question is whether it's legit. A study going live at loads of sites, a batch import, a partner resending data, that's legitimate. A bot, a client stuck in a retry loop, an attack, that's not. The response is different.
+
+If it's abusive or accidental, I find the source from logs, IP, API key, client id, user agent, and block or rate-limit it at the gateway or WAF. A client stuck in a retry loop can be throttled while we contact whoever owns it.
+
+If it's real traffic, I go in order of what's fastest. Scale out the stateless tiers, bump instance counts or autoscaling limits. That only helps if the bottleneck isn't something shared though.
+
+Then protect the shared bottleneck, which is usually the database. Serve more from cache, defer non-essential work like reports and exports, and switch off expensive optional features with flags.
+
+Shed load gracefully. Rate limits per client, returning 429 with Retry-After, so most users still get served well instead of everyone failing. Queue-based workloads soak up bursts naturally, as long as the consumers don't swamp the database.
+
+And communicate, tell stakeholders what's happening and what users might see.
+
+Afterwards, load test for that level, add autoscaling on the right signals, and plan with the business for known events, like scaling up before a big study launch. The cheapest spike is the one you saw coming.
+
+@p17-633 | A nightly batch job is now running into business hours. What do you do?
+So once a job overruns its window, it starts fighting users for the database, locks, slowness, all that. It needs attention before it turns into an outage.
+
+Short term, if it's hurting users right now, I decide whether it's safe to pause or stop it. That depends on whether it's restartable and what happens if it doesn't finish. And I tell people about the impact.
+
+Then figure out why it got slower. Data growth is the usual one. The job processes everything every night and the data has grown. Jobs that scale with total data instead of changed data break eventually. The fix is incremental processing, only records changed since the last run, using a watermark like a last-modified timestamp or change tracking.
+
+Inefficient processing. Row-by-row work with a query per row, which can often become set-based SQL or batched operations. Or missing indexes for the job's queries.
+
+Contention. Something new runs at the same time, a backup, index maintenance, another job, and they block each other. Job schedules and wait stats show that.
+
+Or an external dependency, a slow partner API or file transfer.
+
+Improvements I'd make, break it into chunks with a commit per batch, so it doesn't hold long locks and can resume after a failure. Parallelise independent parts, carefully. Run heavy reads on a readable replica if there is one. Spread the jobs across the night.
+
+And record duration and records processed per run, with an alert when the duration trends up. Trust me, you want to see it long before it hits business hours.
+
+@p17-634 | A scheduled job ran twice and processed data twice. How do you prevent it?
+Right, jobs run twice for a few different reasons, and each one has its own fix.
+
+The most common is multiple instances. The app got scaled from one server to two, or deployed to several nodes, and every instance has the same scheduler, so each one runs the job. Fixes are a clustered scheduler, like Quartz with a shared database job store and clustering on, so only one node fires each trigger. Or a distributed lock at the start of the job, like a Redis lock or a SQL app lock with sp_getapplock. Or move scheduling to one external trigger, a Kubernetes CronJob, EventBridge Scheduler or an Azure Functions timer, which behaves like a singleton.
+
+Overlapping runs, where the previous run hadn't finished when the next started. Quartz has the DisallowConcurrentExecution attribute, or use a lock, and Kubernetes CronJobs have concurrencyPolicy Forbid.
+
+Misfire handling. After downtime, the scheduler fires the missed runs on startup. Configure the misfire instructions on purpose.
+
+And manual reruns or retries after a partial failure.
+
+But because some duplication is always possible, my rule is the job itself has to be idempotent. Track what's been processed with a run id or a per-record processed flag, put unique constraints on outputs like invoices or notifications, and design the steps so rerunning them doesn't double the effect.
+
+Then clean up the data from the double run carefully, using the job's own records to work out what got duplicated.
+
+@p17-635 | A poison message keeps crashing the consumer. What do you do?
+Actually let me explain what it is first. A poison message is one that can never succeed, malformed data, an unexpected null, a reference to something that doesn't exist. If the consumer crashes or rejects it with requeue, the broker delivers it again, it fails again, and the consumer's stuck in a loop blocking everything behind it.
+
+The immediate fix is getting it out of the way without losing it. With a proper setup it goes to the dead-letter queue by itself after a few attempts. If not, I move it manually with the broker tooling to a parking queue so everything else starts flowing again. Never just purge the queue, especially with business events.
+
+Then investigate. Look at the message, its headers and the consumer's error logs. Is it actually invalid, sent by a buggy producer, or is our consumer failing on a valid edge case?
+
+Fix the cause, either the producer or the consumer, then replay the parked message, or correct it if it really is invalid.
+
+For prevention, every consumer gets retry limits with backoff and a dead-letter queue, with retry counts tracked in headers. I separate error types, so transient ones like timeouts get retried, and permanent ones like validation failures go straight to the DLQ with no retries. Exceptions are caught per message, so one bad message never takes down the whole consumer process. Messages get validated at the start of processing. And we alert when anything lands in the DLQ, with tooling to inspect and replay.

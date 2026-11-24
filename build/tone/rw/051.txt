@@ -1,0 +1,163 @@
+@p17-600 | What is Prometheus, and how do you write basic PromQL queries?
+Okay, so Prometheus is an open-source monitoring system and time-series database. It pulls metrics, it scrapes an HTTP endpoint, usually slash metrics, on each target every so often, like every 15 seconds. In Kubernetes it finds targets on its own through service discovery and annotations or ServiceMonitor resources. A .NET app exposes metrics with the OpenTelemetry Prometheus exporter, or pushes over OTLP to the newer Prometheus versions that accept it.
+
+The data is time series identified by a metric name plus labels, like the HTTP server request duration metric with method, route and status code.
+
+The queries I write most. Request rate, that's sum by route of the rate of the request duration count over five minutes. Rate gives you the per-second increase of a counter over that window. Error percentage is the rate of requests with a 5xx status divided by the rate of all requests, times 100. For latency percentiles you use histogram quantile with 0.95, over the sum by le and route of the rate of the bucket series over five minutes. The le label is basically the bucket boundary. And saturation, like memory used versus the limit per pod, is just dividing one metric by another, matched on labels.
+
+Alert rules use the same expressions with a "for" duration. Prometheus evaluates them and Alertmanager groups, silences and routes the notifications.
+
+For long-term storage or many clusters, people usually add Thanos or Mimir, or use a managed one, like Amazon Managed Service for Prometheus or Azure Monitor managed Prometheus, with Grafana on top.
+
+@p17-601 | How do you control the cost of logging and observability?
+See, observability bills can quietly get bigger than the compute they're monitoring, mostly from log volume and high-cardinality metrics. So I manage it on purpose.
+
+Logs first. Log less but better, information level for events that matter, not every step, debug off in production, and no full request and response bodies by default. Noise gets dropped at the source or in the collector, health check requests, chatty library logs. High-volume, low-value stuff like successful request logs can be sampled, while warnings and errors are always kept. Retention is tiered, hot searchable storage for 7 to 30 days, then archived to cheap object storage for compliance, and only rehydrated when you need it. And if people keep running the same log query, turn it into a metric, way cheaper to store and query.
+
+For metrics, watch cardinality and remove labels like user or request ids. Drop unused metrics too, a lot of exporters spit out hundreds of series nobody looks at. For traces, tail-based sampling, keep errors and slow ones, sample the rest.
+
+Then visibility. Show each team the cost of its own telemetry by service tags, so whoever's generating it sees it. Put quotas or alerts on daily ingestion, that catches a bad deployment logging in a loop.
+
+But I never cut audit logs or anything compliance needs, in a regulated domain those have their own retention rules. And keep enough detail to investigate incidents. Saving money and then being blind during an outage is a false economy.
+
+@p17-602 | How do you monitor message queues and consumers?
+Actually this one bit us early on. With async systems, a healthy API doesn't mean a healthy system. Messages can pile up silently and nothing shows as an error. So I treat queues as proper first-class components.
+
+The main thing is queue depth or consumer lag, how many messages are waiting. For RabbitMQ that's ready and unacknowledged messages per queue, for Kafka it's consumer group lag per partition, for SQS the approximate number of visible messages.
+
+Then the age of the oldest message, which is often more meaningful than depth. 10,000 messages that are draining fast might be fine, but 20 messages stuck for an hour means something's wrong. SQS gives you that directly. For others, the consumer can record the time between publish and processing as a histogram.
+
+Throughput, publish rate versus consume rate. If consuming is always lower, the backlog just keeps growing.
+
+The dead-letter queue. Anything landing there needs attention, so I alert on DLQ depth above zero, with which message types.
+
+And consumer health, number of connected consumers, processing errors, redelivery counts, processing time.
+
+The alerts depend on what the business expects though. Shipment events older than five minutes during business hours is a problem. A nightly batch queue with 50,000 messages at 2 AM might be totally normal.
+
+In our platform the RabbitMQ queues and their retry and dead-letter exchanges are monitored like this, and the Grafana dashboards show depth and age per queue right next to the consumers' error rates.
+
+@p17-603 | How do you investigate an issue with Splunk searches?
+So Splunk is where our older platform's logs go, through Serilog, so it's usually my first tool in an investigation. The query language, SPL, is a pipeline, kind of like KQL.
+
+I start by narrowing the scope. Index, sourcetype or application, environment, and a tight time range around when the problem started. If you search everything over all time, it's slow and expensive.
+
+Then find the errors and the trend. Filter on level Error and the service name, then timechart count by exception type with a five-minute span. That tells me when it started and whether it's one error type or a bunch of them.
+
+Next I group to find patterns. Stats count by endpoint, study or site and error message, sorted descending. If all the failures come from one site or one integration, that's your lead.
+
+Then I follow one request. I take the correlation id from an error and search it across all services, sorted by time, so I can see the whole path. Our correlation id middleware puts the same id on every log line for a request, including the calls into other services.
+
+And compare with normal, same query for yesterday or last week, to see if the volume is actually unusual.
+
+Commands I use a lot are rex to pull a field out of unstructured text, eval to compute values, transaction or stats by correlation id to group a request's events, and dedup to cut the noise.
+
+Good searches become alerts or dashboard panels. And honestly structured logging makes a huge difference, with JSON fields your searches are precise instead of fragile text matching.
+
+@p17-604 | How do you use Datadog APM to find a performance problem?
+In our setup the newest services send OpenTelemetry data to Datadog, so APM is where I start for anything performance related.
+
+The service page gives you RED metrics per endpoint, requests, errors and latency percentiles, with deployment markers. So I check which endpoints got slower and when, and whether that lines up with a deployment, a traffic increase or a change in some dependency.
+
+The service map shows the dependencies with latency and errors on each edge. That quickly tells you whether the time is going in our service or in a downstream call, the database, another API, the broker.
+
+Then I open traces for the slow endpoint, filtered to the slow ones, say above p95. The flame graph shows every span, the controller, the EF Core or SQL span with the query text, HTTP calls to other services, cache calls. What I usually find is one of a few things. A single slow query. Lots of repeated queries, the N plus one pattern. Sequential calls that could have run in parallel. A gap before the first span, which points to thread pool or connection pool starvation. Or retries hiding inside an HTTP span.
+
+From the trace, the logs with the same trace id are one click away, and Database Monitoring shows the execution plan and wait events for that query.
+
+If the continuous profiler is on, it shows which methods burn CPU and allocate memory, which helps when it's CPU-bound and traces can't explain it.
+
+Then I fix it, deploy, and compare the same views before and after to make sure it actually helped.
+
+@p17-605 | How do you detect a scheduled job that silently didn't run?
+Yeah, this is a sneaky one. Normal alerting catches things that fail loudly, an error, an exception. A job that never starts produces no errors at all. Maybe the scheduler got stopped, a server was patched and not restarted, a trigger is misconfigured, or the job just hangs forever. Nothing alerts, and the business finds out days later that no reports or reconciliations happened.
+
+So the fix is to alert on the absence of a signal. People call it a heartbeat or a dead man's switch.
+
+How it works is each job, when it completes successfully, sends a heartbeat. That can be a ping to a monitoring service, a metric like last success timestamp, or a row in a job history table. Then a separate monitor knows the expected schedule, like every hour, or daily at 2 AM plus some grace period, and alerts if no heartbeat turns up in time. Healthchecks.io, Cronitor, Datadog, or CloudWatch alarms with "treat missing data as breaching" all support this.
+
+I'd also watch the duration, a job that normally takes five minutes and now takes three hours is a warning. Output sanity too, like records processed being zero when it's normally thousands. And overlap, a run starting before the last one finished.
+
+This is a big part of what our AlertWatchDog does on the platform side. Quartz jobs that check the expected events actually happened, and raise an alert when they didn't. And the watchdog itself is monitored, because if it stops, nothing else is going to notice.
+
+@p17-606 | How do you write runbooks and organise on-call?
+For me on-call works when whoever gets paged can act fast without needing the one expert who wrote the code. Good runbooks and a sensible rotation are what make that possible.
+
+Every alert links to a runbook, and the runbook answers a few things. What the alert means and what the user impact is. How to confirm it's real, with direct links to the dashboard and log queries. Likely causes from past incidents. Step-by-step mitigations, like restarting a consumer, failing over, scaling out, replaying the dead-letter queue, switching off a feature flag. What not to do, like never purge a queue that has unprocessed clinical events. And when and how to escalate. Keep it short and specific, next to the code or in a wiki the team actually updates after incidents.
+
+Over time the steps people repeat become automation, a button or script that does the safe mitigation and logs it. So humans decide and tools execute.
+
+For the rotation, usually weekly, with a primary and a secondary, clear escalation to subject matter experts and managers, and a handover at the end of each shift covering open issues. And there's a limit on load. If someone's getting paged every night, the system needs fixing, not a tougher engineer. Severity routing makes sure only urgent, user-impacting stuff pages.
+
+After incidents we do a blameless review, and the action items often improve the alerts and runbooks. And in a regulated environment, anything you do on production during on-call is a controlled change too, recorded with who did what and why.
+
+@p17-607 | How do you run a blameless post-incident review?
+Honestly, the whole point is to turn an outage into improvements. Blameless means we assume everyone acted reasonably with what they knew at the time, and we look at how the system, process and tools let it happen, not who messed up. If people are scared of blame, they hide details and you learn nothing.
+
+How I run one. Facts first. I build a timeline from alerts, logs, chat messages and deployment records. When it started, when it was detected and by whom, what actions were taken, when it got resolved. Plus the impact, which users, how long, and whether any data was affected.
+
+Then the contributing factors, not one single root cause. It's usually a few things together, a code change with an edge case, a missing test, an alert that didn't fire, an outdated runbook, a manual step done under pressure. Five whys helps, applied to each factor. And I ask what went well too, like a fast rollback.
+
+I also look at detection and response, not just the trigger. Why did it take 40 minutes to notice? Why was diagnosis slow?
+
+Then action items, each with an owner and a date, ordered by impact. A test, an alert, an automated safety check, maybe a design change. A few good actions that actually get done beat a long wish list.
+
+The write-up gets shared widely, other teams learn from it, and we track the actions until they're closed. In our regulated context it also feeds the formal deviation or CAPA process when validated functionality was affected.
+
+@p17-608 | How do you instrument a new feature before releasing it?
+So I treat observability as part of the feature's definition of done. Not something you bolt on after the first incident.
+
+Before I write code I ask two questions. How will we know this works in production, and how will we know when it doesn't? That gives me a short list of signals.
+
+Logs, information level for the key business events in the feature, with structured fields like study, site and outcome, and clear error logs with context when it fails. No personal data, obviously.
+
+Metrics, a counter for the main operations by outcome, a histogram for duration, and a business metric if there is one, like the number of returns processed in the new DARM flow.
+
+Traces, custom spans around the important internal steps, like calculating an allocation or calling an external system, with useful attributes, so a slow request shows you where the time went.
+
+Then a panel or small dashboard for the feature, and alerts if the failure rate crosses a threshold or the expected events just stop.
+
+For the release, if it's behind a flag, I compare the signals with flag on and flag off, and check them right after rollout to each environment and each batch of users. If the numbers look wrong, the flag goes off.
+
+And I test the telemetry itself. In integration tests, or with FakeLogger and metric collectors, I check the important logs and metrics actually get emitted. I learned that the hard way, missing telemetry always gets discovered at the worst possible moment.
+
+@p17-609 | What is continuous profiling, and when does it help?
+Let me explain where it fits. Traces tell you which request and which span was slow, but not which line of code inside the service burned the CPU or allocated all that memory. Continuous profiling covers that.
+
+A profiler runs inside the app in production, all the time, with low overhead, usually a few percent, by sampling stack traces many times a second. It records where CPU time goes, which methods allocate, where threads wait on locks, which exceptions get thrown. It's aggregated over time and shown as flame graphs you can filter by service, version, endpoint and host.
+
+Tools would be Datadog Continuous Profiler, which supports .NET, Grafana Pyroscope, the Application Insights Profiler on Azure, Amazon CodeGuru Profiler for some runtimes, and the OpenTelemetry profiling signal, which is still maturing.
+
+Where it helps most is when CPU is high but no endpoint looks especially slow. The profile shows the hot method, like JSON serialising a huge object, a regex getting compiled on every call, or a LINQ query re-evaluated inside a loop. Memory and GC pressure, the allocation profile tells you what's allocating, large strings or lists built per request. Comparing versions, you diff profiles before and after a deployment and see exactly what got more expensive. And cost, fixing the top hot spots can reduce instance counts.
+
+Compared with a one-off dotnet-trace, the big thing is the data's already there from when the problem happened, which matters a lot for intermittent issues you can't reproduce. Profiles can have method names and types, but never actual data values.
+
+@p17-610 | An IIS-hosted .NET Framework app is stuck at 100% CPU. What do you do?
+Okay, so two things in order. Protect the users, and grab the evidence before it disappears.
+
+Quick checks first. Is it one server or all of them? Did it start after a deployment, a traffic spike, a scheduled job? If it's one server behind the load balancer, I pull it out of rotation so users go to the healthy ones. But I don't recycle the app pool yet, because a recycle wipes out the evidence.
+
+Then I capture. Two or three memory dumps of the w3wp process, about 10 to 20 seconds apart, using ProcDump with a CPU threshold trigger, or DebugDiag, or just Task Manager's create dump file. I also note which requests are executing, from the worker processes view in IIS Manager or the request monitoring logs, and check Performance Monitor counters like requests queued and percent time in GC.
+
+Then I recycle to get the service back.
+
+For analysis I open the dumps in DebugDiag's analysis or WinDbg with the SOS extension and look at what the busy threads are doing across the dumps. If the same threads are in the same code every time, that's your hot spot. What I've seen usually is an infinite or really long loop on some unexpected data, a regex with catastrophic backtracking, heavy GC from massive allocations, which shows up as high time in GC, or lock contention with threads spinning.
+
+After that, fix the code, add a test with the data that triggered it, and add an alert on sustained CPU so next time we see it earlier.
+
+@p17-611 | Latency spikes every few minutes in a regular pattern. How do you find the cause?
+Actually a regular pattern is kind of good news. Regular means something scheduled or cyclic is causing it, so I go looking for things with the same period.
+
+I measure the period exactly from the latency graph. Every 5 minutes, every 15, on the hour? Then I line it up against the usual suspects.
+
+Cache expiry is a common one. Lots of entries with the same absolute expiration, say five minutes, all expire together and a burst of requests hits the database at once. The fix is jittered expiration, refresh-ahead, or stampede protection like HybridCache.
+
+Scheduled jobs. A Quartz job, cron, SQL Agent job, backup or index maintenance running on that schedule and fighting for the database or CPU. So I check job schedules and database activity at those exact times.
+
+Garbage collection. Big gen 2 collections when memory builds up to a threshold, you see it in the GC metrics with pause times matching the spikes. Usually it's allocation-heavy code or large object heap usage.
+
+Token or connection refresh. Credentials, certificates or config refreshed periodically and blocking requests while it happens, or connection pools recycling connections at a fixed lifetime.
+
+And infrastructure, health check or autoscaling cycles, log shipping bursts, or noisy neighbours on shared hosts with their own schedules.
+
+Once I've got a candidate, I correlate its metric with the spikes, change one thing, and watch if the pattern goes away. Traces of slow requests during a spike usually point you straight at whatever is waiting.

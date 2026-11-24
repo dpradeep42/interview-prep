@@ -1,0 +1,145 @@
+@p17-588 | How do you add custom business metrics to a .NET service?
+So technical metrics like CPU and latency tell you the system is up. Business metrics tell you if it's actually doing its job, like orders placed, patients randomised, shipments delivered, allocations failed because there's no stock. And quite often the business metric drops before any technical alarm fires. Say an integration is quietly sending nothing, CPU looks perfectly fine.
+
+In .NET I use System.Diagnostics.Metrics. I get a Meter from IMeterFactory through dependency injection, which keeps it testable, and create the instruments once. A Counter for randomisations, a Histogram for end-to-end shipment processing time, an ObservableGauge for kits available per depot, calculated from a cached query. Then I record values right where the business event happens, with tags like outcome success or failure, or region.
+
+On the OpenTelemetry side you just call AddMeter with the meter name and they get exported with the built-in metrics.
+
+A few rules I follow. Tags have to be low cardinality, so outcome, region, study phase, maybe study id if the number of studies is bounded. Never patient ids, kit numbers or user ids, that creates millions of time series and a huge bill. Names are consistent, with units, following the OpenTelemetry conventions. And I record after the transaction commits, otherwise a failed transaction gets counted as a success.
+
+Then the dashboard shows business flow at a glance, and you can alert on something like no randomisations in the last hour during business hours at an active study. That's exactly the kind of silent failure our AlertWatchDog jobs were built to catch.
+
+@p17-589 | What are SLIs, SLOs and error budgets?
+Okay, these come from site reliability engineering, and they basically give you a precise way to talk about reliability instead of just saying "it should be up".
+
+An SLI, service level indicator, is a measurement of what users experience, usually good events divided by total events. Like the percentage of API calls that succeed, or the percentage served within 300 milliseconds, or the percentage of shipment events processed within five minutes.
+
+An SLO is the target for that SLI over a window. So 99.9 percent of requests succeed over 28 days, or 95 percent finish within 300 milliseconds.
+
+An SLA is the contract with the customer, with consequences like credits if you miss it. Your SLOs should be stricter than the SLA, so you get a warning before you breach the contract.
+
+The error budget is what the SLO allows to fail. With 99.9 percent that's 0.1 percent, roughly 43 minutes of full downtime in 30 days. What I like is it turns reliability into a shared thing you can measure. If there's plenty of budget left, the team can ship faster and take more risk. If it's burning fast, you slow down releases and do reliability work.
+
+For alerting you use burn rates. You alert when the budget's being used much faster than it should, say 14 times the normal rate over an hour. That catches real user-facing problems and ignores small blips.
+
+And pick SLOs based on what users actually need. Not 100 percent, that's impossible and makes every change scary.
+
+@p17-590 | What are the RED and USE methods for monitoring?
+See, they're two simple checklists for what to monitor, just from different angles.
+
+RED is for services, from the user's point of view. For every service or endpoint you track Rate, requests per second, Errors, the count or percentage of failed requests, and Duration, the response times as percentiles. If you have those for every service, you can see very quickly which one is unhappy and how. It maps nicely to dashboards too, one row per service with three panels.
+
+USE is for resources, from the infrastructure side. For every resource, CPU, memory, disk, network, connection pools, thread pools, queues, you track Utilisation, how busy it is, Saturation, how much work is waiting, like the run queue or the thread pool queue, and Errors, like disk errors or dropped packets. Saturation is the one people forget, and honestly it's often the most telling. 70 percent CPU might be totally fine, but a growing thread pool queue is a real problem.
+
+Google's four golden signals are pretty similar, latency, traffic, errors and saturation.
+
+How I use them together is RED tells me there's a problem, like the allocation API's p95 latency has tripled. Then USE on the resources behind it tells me why, like the database connection pool is saturated and requests are sitting there waiting for a connection. So one finds the symptom and the other one finds the cause.
+
+@p17-591 | What is high cardinality, and why does it blow up metrics cost?
+Actually it's simple once you know that every unique combination of metric name and label values is its own time series. A request counter with method, route and status code labels might give you a few hundred series, that's fine. Add a user id label and suddenly it's hundreds of thousands. That's high cardinality.
+
+Why it hurts: the backend stores and indexes each series separately, so memory, storage and query time all grow with the series count. Prometheus can just run out of memory. Commercial tools like Datadog charge per custom metric series, so one careless label can create a huge bill overnight. And dashboards get slow.
+
+The usual culprits are user ids, emails, request ids, raw URLs with ids in the path instead of the route template, timestamps, exception messages, kit or order numbers, and pod names in very dynamic setups.
+
+What I do is keep labels to bounded values. Route templates like shipments slash id in braces, status code classes, region, outcome. The high-cardinality detail goes into traces and logs, which are built for per-request data and you can search them by id. New metrics get reviewed, and the pipeline or collector can drop or rewrite labels. I also watch the number of series per metric so growth gets caught early.
+
+And if someone really needs per-entity analysis, like latency per customer, that's usually better answered from logs or traces, or an analytics store that's designed for high cardinality.
+
+@p17-592 | How do you choose log levels, and what belongs at each level?
+Honestly, if levels aren't consistent, logs become noise and cost a lot. So here's roughly how I use them.
+
+Critical or Fatal is when the app or a key component can't continue. Like it fails to start because config is invalid, or the database is completely gone. Someone should get woken up.
+
+Error is an operation failed and needs attention. An unhandled exception in a request, a message going to the dead-letter queue, an integration call that failed after all the retries. My rule is every error log should be actionable. If nobody needs to do anything, it's not an error.
+
+Warning is something unexpected but handled. A retry worked after a transient failure, a fallback kicked in, a slow query crossed a threshold, a deprecated API got called. Warnings help you spot trends before they turn into errors.
+
+Information is the important business and lifecycle events. Service started, shipment created, randomisation completed, a job processed 230 records. They tell the story of what happened without every little step.
+
+Debug and Trace are detailed diagnostics for developers, intermediate values, which branch it took. Off in production by default, but you can switch them on per category at runtime, so we turn it on for one component during an investigation.
+
+And a few other things. Log an exception once, where it's handled, not at every layer. Use structured properties, not string concatenation. Never log secrets or personal data. And set minimum levels per namespace to quiet the noisy libraries.
+
+@p17-593 | Head-based vs tail-based sampling: how do you sample traces?
+So at high traffic, recording every single trace costs a lot in network, storage and money, and most successful traces look exactly the same anyway. Sampling keeps a representative subset.
+
+Head-based sampling decides at the start of the trace, in the first service, usually as a percentage, like keep 10 percent. That decision travels in the trace context, so every downstream service keeps or drops the same trace and traces stay complete. It's simple and cheap and done in the SDK, with the ParentBased and TraceIdRatioBased samplers in OpenTelemetry. The problem is it decides before you know whether the request will fail or be slow, so you also throw away 90 percent of your interesting error traces.
+
+Tail-based sampling decides after the trace is complete, usually in an OpenTelemetry Collector or in the backend, which buffers all the spans for a short time. Then rules decide. Keep every trace with an error, keep everything slower than a second, keep traces for important endpoints, and a small percentage of the rest. You get all the interesting ones and only a few boring ones. What you pay for it is the collector has to receive every span and hold them in memory, and all spans of one trace must land on the same collector instance, so you need load balancing by trace id.
+
+What I'd go with usually is little or no head sampling in the SDK and tail sampling in a collector gateway. One thing, compute metrics before sampling, so your rates and error percentages stay accurate.
+
+@p17-594 | How does trace context propagate across HTTP calls and message queues?
+Right, so distributed tracing only works if every hop passes the trace context along, that's how each service's spans join the same trace.
+
+The standard is W3C Trace Context. The traceparent header carries the trace id, the parent span id and the sampling flag, and tracestate carries vendor-specific stuff. Then there's baggage, a separate header for app key-value pairs like tenant id that should travel with the request. You use that carefully because it goes everywhere.
+
+For HTTP, .NET just does it for you. HttpClient instrumentation adds traceparent on outgoing calls and ASP.NET Core reads it on incoming ones and creates a child Activity. Most other languages' OpenTelemetry instrumentation does the same, which is why a mixed .NET and Java system can still be traced end to end.
+
+Messaging is where it's more manual and, in my experience, more often broken. The producer has to inject the context into the message headers or properties, and the consumer has to extract it and start its processing span as a child or with a link. Some libraries handle it, like for Kafka, Azure Service Bus, MassTransit and NServiceBus. For the raw RabbitMQ client, I add small helpers using OpenTelemetry's propagator API to inject and extract. For batch consumers, span links connect one processing span to many producer spans.
+
+And where context just gets lost, like a legacy system in the middle or a file transfer, I carry a correlation id in the payload and log it, so you can still join the pieces.
+
+@p17-595 | How do you design a useful Grafana dashboard?
+Let me start with what usually goes wrong. Most bad dashboards have way too many panels and no story. A good one answers specific questions fast, especially at 3 AM during an incident.
+
+So I start from the questions. Is the service healthy for users? What changed? Which dependency is the problem? Each panel should help answer one of those.
+
+Then a hierarchy. The top-level overview shows every service's health in one place with RED metrics, request rate, error percentage, latency percentiles, plus SLO status. You click through to a service dashboard with the detail, endpoints, dependencies, resource usage with USE metrics, queue depths. And deeper than that, component dashboards for things like the database or the message broker.
+
+On a page, the top is the user-facing signals and SLOs, and below that the causes, dependencies, saturation, infrastructure.
+
+I add deployments and incidents as annotations, so "latency went up right after release 3.4.2" is obvious just by looking. Same time ranges and units, percentiles instead of averages, same colours for the same meaning.
+
+Template variables for environment, region and service, so one dashboard serves all of them instead of copies that drift apart.
+
+Links out, from a latency spike to the traces for that time range through exemplars, and then to logs.
+
+Dashboards live as code, JSON or Terraform or Grafana provisioning, reviewed in pull requests, so they don't rot. And I'd say delete the ones nobody uses. A few dashboards people trust beat a hundred abandoned ones.
+
+@p17-596 | How do you reduce alert fatigue?
+Yeah, alert fatigue is when people get so many alerts, mostly unimportant or false, that they start ignoring them, and then they miss the real one. So it's a reliability risk and honestly a morale problem as well.
+
+My first rule is every page has to be actionable and urgent. If the response is "let's wait and see" or "nothing to do", it shouldn't wake anyone up. That becomes a ticket, a dashboard item or a daily digest.
+
+Alert on symptoms, not causes. Users care about errors, latency and business processes failing, so alerts are based on SLOs and burn rates. High CPU on one instance is a cause, and if users aren't affected, it's not a page.
+
+Tune thresholds and durations. A one-minute spike shouldn't page anybody. The condition has to hold for a sensible period, you add hysteresis so it doesn't flap, and use dynamic thresholds where traffic changes a lot by time of day.
+
+Deduplicate and group. One incident should be one notification, not fifty from every instance and every dependent service. A "database down" alert can suppress the downstream ones.
+
+Route it to the owning team, and let severity decide paging versus just a message. Put context in the alert, a clear title, which service, the impact, a dashboard link and the runbook.
+
+And review it. After every on-call week, look at what fired, what was useful, and fix or delete the noisy ones. We track alerts per week as a metric, which keeps the pressure on.
+
+@p17-597 | What is synthetic monitoring, and when do you need it?
+Okay so synthetic monitoring is basically scripted checks that run against the system on a schedule, from outside, like a fake user. Every few minutes it calls the health endpoint, logs in, opens the dashboard, searches for a shipment, and checks the results look right.
+
+Why do you need it when you already have real-user monitoring and server metrics? Mainly because it finds problems when there's no traffic. At night, at weekends, or on a rarely used feature, real users won't show you the outage until Monday morning, the synthetic check will. It also tests from the user side, so it catches stuff server metrics can't see, DNS issues, expired certificates, CDN or load balancer misconfig, a broken login with the identity provider, a front-end bundle error. It gives a steady baseline for availability and latency from different regions, which helps for SLA reporting. And you can run it right after a deployment as an automated smoke test.
+
+There are simple uptime checks on URLs with status code, content and certificate expiry, API checks with multi-step calls, and browser checks scripted with Playwright or Selenium that walk full journeys. Tools like CloudWatch Synthetics canaries, Application Insights availability tests, Datadog Synthetics, Grafana, or just a scheduled Playwright job.
+
+The thing to be careful about is test data. Use dedicated test accounts so synthetic transactions never pollute production data or reports. In a clinical system that's critical, you never create real patient or shipment records. And keep the scripts maintained, or they turn into noisy false alarms.
+
+@p17-598 | What is real user monitoring, and which front-end metrics matter?
+So real user monitoring collects performance and error data from actual users' browsers. A small script or SDK in the app reports page loads, route changes, API call timings, JavaScript errors and sessions. Synthetic tests run from a fast data centre, but this shows what people on real devices, networks and locations actually go through.
+
+The main metrics are Google's Core Web Vitals. LCP, Largest Contentful Paint, is how fast the main content shows up, good is under 2.5 seconds. INP, Interaction to Next Paint, which replaced First Input Delay, is how quickly the page responds to clicks and key presses, good is under 200 milliseconds. CLS, Cumulative Layout Shift, is how much stuff jumps around while loading, good is under 0.1. Time to First Byte is useful too for server and network speed, and for single-page apps I look at route change duration and the key API calls.
+
+Look at percentiles, the 75th is what Core Web Vitals use, and break it down by page, browser, country and device. Averages hide the people having a bad time.
+
+RUM tools also capture JavaScript errors with stack traces mapped through source maps, and they can link the front-end session to the back-end trace with trace context headers, so a slow screen can be followed right into the API and the database.
+
+Tools wise, Datadog RUM, Application Insights for JavaScript, CloudWatch RUM, Sentry, or the open-source web-vitals library reporting to your own backend. And privacy, you mask inputs and never capture personal or clinical data in session replays.
+
+@p17-599 | What are exemplars, and how do they connect metrics to traces?
+Honestly this is one of my favourite features. Metrics are aggregated, so they're cheap and great for spotting problems, but you lose the detail. The latency histogram says p99 jumped to three seconds, but not which requests were slow or why. Traces have that detail, but finding the right trace in millions is painful. Exemplars connect the two.
+
+An exemplar is a sample data point attached to a metric value, and it carries the trace id of a real request that contributed to it. When the service records a request duration in a histogram, the OpenTelemetry SDK can attach the current trace id as an exemplar for that bucket. Backends like Prometheus or Grafana Mimir keep a few exemplars next to the metric.
+
+In Grafana they show up as dots on the latency graph. So during an incident I see the spike, hover over a dot in the slow area, and click straight into the trace in Tempo or whatever tracing backend you have. The trace shows exactly where the time went, maybe a database call that took 2.8 seconds. From there I jump to logs filtered by the same trace id.
+
+So the investigation becomes metric to trace to logs in a few clicks, instead of guessing time ranges and searching around.
+
+To make it work, exemplars have to be enabled in the SDK, OpenTelemetry .NET supports that with an exemplar filter. The trace has to actually be sampled, otherwise the link goes nowhere. And the backend has to support storing them. Commercial APM tools give you similar navigation built in.

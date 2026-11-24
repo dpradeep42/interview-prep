@@ -1,0 +1,155 @@
+@p17-612 | Database CPU jumps to 100% right after a release. What do you do?
+So the timing basically makes the release suspect number one. I work from what changed, and try to keep the system usable while I do it.
+
+I find the expensive queries right away. In SQL Server that's sys dot dm exec requests and the query stats DMV ordered by CPU, or Query Store's top resource-consuming queries for the last hour compared with the previous period. Usually it's one or two queries eating everything.
+
+Then the question is, is it a new query from the release, or an old query that changed plan? New queries could be an EF Core change that now loads related data with a huge join, a missing filter, an N plus one pattern firing thousands of small queries, a LINQ expression that translates badly, or a new feature without the index it needs. A changed plan would be a schema or statistics change in the release giving a worse plan, or a new parameter pattern.
+
+For mitigation I go quickest first. If a feature flag controls the new code, switch it off. If it's a plan regression, Query Store can force the old good plan. If an index is clearly missing, adding it online is often quick and low risk. If none of that works and the impact is serious, roll back the app release, as long as the database changes are backward compatible.
+
+Then the real fix, rewrite or index the query and test it with production-sized data. And I'd add a check to the release process, like comparing query performance in a perf environment, because slow queries usually slip through when tests run on tiny data.
+
+@p17-613 | A query was fast yesterday and is slow today, with no code change. What happened?
+Honestly, if the code didn't change, then the data changed or the plan changed. That's where I look.
+
+Plan change is my first guess. SQL Server compiles a plan using the parameter values from the first execution and caches it. If it got recompiled, after a restart, a stats update, memory pressure, with some unusual value, like a site with very few rows, you might get a nested loop plan that's terrible for the typical values with lots of rows. That's parameter sniffing. Query Store shows the query's plans over time, so I can see the plan change and the duration jump. Quick fix is to force the good plan in Query Store. Longer term, OPTION RECOMPILE for queries with wildly varying parameters, OPTIMIZE FOR, or restructuring the query. SQL Server 2022 also has parameter sensitive plan optimisation.
+
+Statistics. After big data loads they can be stale, so the optimiser underestimates row counts. Updating stats fixes it more often than you'd think.
+
+Data growth or skew. A table crossed some size where the plan or memory grant doesn't fit anymore, or one customer's data grew massively.
+
+Blocking. The query's fine but it's waiting on locks from another process, like a new batch job. Wait stats and the requests DMV tell you if it's running or waiting.
+
+And resource pressure, other workloads on the same server, tempdb contention, I/O problems.
+
+I compare the actual execution plans from before and after and look at the waits. That usually tells you which of these it is pretty quickly.
+
+@p17-614 | The cache expired and the database got overloaded. How do you prevent a cache stampede?
+See, a stampede is when a popular cached item expires, or a restart empties the cache, and lots of concurrent requests all miss at the same time and run the same expensive query together. The database suddenly gets hundreds of identical queries, slows down, and that makes even more requests pile up. It's a classic outage right after a cache restart or a deployment.
+
+How I prevent it. Request coalescing, so only one request recomputes a given key and the others wait for that result. In .NET 9, HybridCache does this automatically for concurrent callers in the same process. Otherwise a per-key SemaphoreSlim or a Lazy task does it, and across servers a short distributed lock in Redis.
+
+Jittered expiration. Add a random bit to each item's TTL so they don't all expire at the same moment.
+
+Refresh ahead. Popular items get refreshed in the background before they expire, so users never see a miss. Stale-while-revalidate is similar, you serve the slightly old value while one request refreshes it.
+
+Warm up the known hot keys after deployments or cache restarts, before taking full traffic.
+
+And protect the database anyway. Limit concurrency on expensive queries with a bulkhead and put a circuit breaker in, so even if the cache fails badly, the database survives and recovers.
+
+I'd also monitor the cache hit ratio, so a sudden drop alerts us before the database falls over. That's usually the earliest sign something's off.
+
+@p17-615 | Redis goes down in production. What happens, and what do you do?
+It depends on how we use Redis and how the app handles it failing. That's why I'd rather design for it before it happens.
+
+If Redis is purely a cache, you want graceful degradation. Cache calls fail fast with a short timeout, get caught, logged and counted, and the app goes to the database. Users see slower responses but everything works. The risks are, every request might wait for a long Redis timeout before falling back, so timeouts must be short and a circuit breaker should skip Redis completely while it's down. And the database suddenly gets the full load, so it needs headroom, or we limit concurrency on expensive queries.
+
+If Redis holds state, like sessions, distributed locks, rate-limit counters or data protection keys, it's a bigger deal. Users get logged out, locks aren't available, rate limiting fails open or closed. Each one needs a deliberate choice, like fail open for rate limits but fail safe for locks.
+
+During the incident, I confirm with Redis metrics and connection errors. Check if a replica failed over, in Sentinel, cluster or a managed service, because clients might need to reconnect. Check memory, evictions and maxclients, since Redis going down is very often memory exhaustion. And tell people about the impact.
+
+Afterwards, replicas with automatic failover, alerts on memory and connections, and stampede protection for when the cache comes back empty.
+
+In our platform, Redis caches configuration and reference data, so the fallback is just the database, with short timeouts.
+
+@p17-616 | A RabbitMQ queue backlog keeps growing. What do you do?
+Okay, a growing queue means messages are coming in faster than they're processed. So I figure out which side changed.
+
+Consumers first. In the management UI or metrics, how many consumers are connected and what's the consume rate? If it dropped to zero, they crashed, lost the connection, or a deployment stopped them. If they're connected but slow, I look at unacknowledged messages. High unacked with a low prefetch can mean consumers are stuck on slow work, like a slow database call or a dependency timing out. Consumer logs and traces show what each message is waiting on.
+
+Then poison messages. A message that keeps failing and gets requeued goes back to the head and blocks progress. With a proper retry and dead-letter setup it moves aside after a few attempts. Without that it just loops forever.
+
+Then the producer. Did the publish rate spike, like a batch import, a retry storm upstream, or a bug publishing duplicates?
+
+Then act. Scale out consumers if the work can run in parallel and the downstream dependency, usually the database, can take more load. Fix the slow dependency. Move poison messages to the DLQ. Throttle the producer if you can. And with big backlogs, check the broker has enough memory and disk, because RabbitMQ blocks publishers when memory or disk alarms trigger, and then the problem spreads upstream.
+
+Afterwards I'd add alerts on queue depth and age of the oldest message, and autoscale consumers on queue length so it handles itself next time.
+
+@p17-617 | A production server's disk is full. What do you do?
+Yeah, a full disk breaks things in weird ways. Logging fails, databases stop writing, uploads fail, services won't start, sometimes the OS itself gets unstable. So I move quickly, but carefully.
+
+First find what's using the space. On Windows, TreeSize or a PowerShell query for the biggest folders. On Linux, df to see which volume is full, then du or ncdu to find the big directories. The usual suspects are app logs with no rotation, IIS logs nobody ever cleans, crash dumps, temp files from uploads or exports, old deployment folders kept after every release, database transaction logs or backups, and Docker images and container logs.
+
+Then free space safely. Delete or compress the clearly disposable stuff, old rotated logs, old dumps after copying anything needed, temp files, deployment folders beyond the last few. I never delete files I don't understand, and never touch database files or active transaction logs. Those need proper database actions, like a log backup.
+
+One thing that catches people out, on Linux a deleted file that's still held open doesn't free space until the process closes it. So you might need to restart the logging process.
+
+Then restore service and check everything actually recovered, because some components need a restart after write failures.
+
+And prevent it. Log rotation and retention, cleanup jobs for temp files and old releases, logs shipped to central logging instead of sitting locally, and disk alerts at 80 and 90 percent with a time-to-full forecast.
+
+@p17-618 | A TLS certificate expired in production. How do you recover and prevent it?
+So an expired cert fails everything immediately. Browsers show warnings, API clients refuse to connect, service-to-service calls fail with trust errors. Recovery is all about speed.
+
+First I identify exactly which certificate expired and where it's used. Sometimes it's not the website cert at all, it's an internal one, like a client certificate for a partner integration, a token signing cert, or one on an internal API. That makes it less obvious. The error logs will mention certificate validation or the remote certificate being invalid.
+
+Then get it renewed from the CA or the internal PKI and install it everywhere it's used, load balancers, IIS bindings on every server, API gateways, Kubernetes secrets, and restart or rebind where needed. Then test from outside, the full chain, with openssl s_client or an SSL checker. A missing intermediate certificate is a really common second failure.
+
+Prevention matters more, because an expired cert is almost always a process failure. Keep an inventory of every certificate with an owner and expiry date. Automate renewal where you can, ACME with Let's Encrypt or cert-manager in Kubernetes, AWS Certificate Manager, Key Vault auto-renewal. Monitor expiry from outside with synthetic checks alerting at 30, 14 and 7 days, including internal and client certs. And make sure the renewal reaches every location automatically, not just the first one somebody remembers. I've seen that happen, one server renewed and the other two forgotten.
+
+@p17-619 | Outbound calls start failing with DNS resolution errors. How do you troubleshoot?
+Right, errors like "No such host is known" or "Name or service not known" mean the app couldn't turn a hostname into an IP. The first thing I ask is, is it one host or all hosts, one server or all servers, constant or intermittent?
+
+Then I test from the same place the app runs. nslookup or dig on the affected server or inside the container, and compare with a machine that works. Check which DNS server it's using, resolv.conf in Linux containers, adapter settings on Windows.
+
+The usual causes. The record changed or got removed, a partner moved their API, someone deleted a record, a private endpoint changed. So check the authoritative DNS directly.
+
+Private DNS. A service moved behind a private endpoint but the private DNS zone isn't linked to this network, so the name resolves to a public IP or nothing.
+
+Resolver overload or limits. In Kubernetes, CoreDNS under heavy load, or the ndots setting making every lookup try several search domains first. On AWS there's a per-network-interface DNS query limit. Fixes are caching, NodeLocal DNSCache, and fully qualified names with a trailing dot.
+
+Network, like firewall or security group changes blocking port 53, UDP and TCP, to the DNS servers.
+
+And caching, stale entries after a change, in the OS, the runtime, or HttpClient's long-lived connections. Setting PooledConnectionLifetime helps there so it picks up DNS changes.
+
+In my experience, intermittent failures usually mean overload or one bad DNS server in the list.
+
+@p17-620 | Users in another country see dates off by one day. How do you fix it?
+Actually "off by one day" is almost always a time zone conversion happening where it shouldn't, or not happening where it should.
+
+The most common one I've seen is a date-only value stored as a date-time at midnight. A visit date of 10 March gets stored as 10 March midnight local, converted to UTC, so for India it becomes 9 March 18:30 UTC, and then somewhere it's displayed as 9 March. Or the browser parses the string 2025-03-10 as UTC midnight with new Date, and users west of UTC see 9 March. The fix is to treat date-only values as dates. DateOnly in .NET, and plain date strings or a date library on the front end, with no time zone conversion at all.
+
+Mixed DateTime kinds. A DateTime with Kind Unspecified gets treated as local on one server and UTC on another, especially when servers in different regions have different time zones. So store and send instants as UTC or DateTimeOffset, and convert to local only for display.
+
+Wrong time zone for business rules. Something like "visit window ends at end of day" has to use the site's time zone, not the server's or the user's browser.
+
+And daylight saving, where a day has 23 or 25 hours, breaks code that adds 24 hours instead of one calendar day.
+
+So the fix includes tests across time zones, India, US, far-east sites, and around DST changes. I'd also run a test server in a non-UTC zone, that exposes hidden assumptions fast.
+
+@p17-621 | Customers are receiving duplicate emails or notifications. How do you investigate?
+Let me think about it this way, duplicates mean something ran twice. So I find what ran twice and why.
+
+First, facts. Which notifications, for which events, since when, and are the duplicates identical in content and timing? Exact duplicates seconds apart point to retries or concurrent processing. Hours apart, more like a scheduled job re-running or a replay.
+
+Common causes. Message redelivery, the consumer sent the email, then failed or timed out before acking, so the broker delivered it again. With at-least-once delivery that will happen sometimes. Retries, the HTTP call to the email provider timed out but actually succeeded, and the retry sent it again. Multiple instances, a scheduled job like a daily reminder running on every server instead of one. That often shows up exactly when you scale out from one server to two. And duplicate events, the publisher emitted it twice, from two code paths or a DLQ replay.
+
+The fixes. Make sending idempotent. Record each notification with a unique key, like event id plus recipient plus template, in a table with a unique constraint, and skip if it's already there, before sending or atomically with it. Use the provider's idempotency key if they support one. Make scheduled jobs run once with clustering or a distributed lock. And consumers dedupe by message id.
+
+I'd also deal with the user side, explaining and apologising if needed, and add a metric for notifications per event, so duplicates actually show up somewhere.
+
+@p17-622 | The same version works on one server but fails on another. How do you find the difference?
+So if the code really is identical, the difference is in the environment. I compare things one by one instead of guessing.
+
+Step one, verify it's actually the same version. File versions and hashes of the deployed binaries, the build number from a version endpoint, the deployment logs for that server. Partial deployments, where some files didn't copy because they were locked, are surprisingly common.
+
+Then configuration. web.config or appsettings, environment variables, IIS settings like app pool identity, CLR version, 32-bit mode, pipeline mode, machine-level config. Export them and run a diff tool, that shows the differences fast.
+
+Then runtime and OS. Installed .NET versions, Windows patches, TLS settings and cipher suites in the registry, installed certificates and their private key permissions, regional settings and time zone, which affect how dates and numbers get parsed.
+
+Dependencies and network. Connection strings pointing to different databases, firewall rules, DNS, proxy settings, access to file shares. And permissions, what the app pool identity can access on folders, certs and databases.
+
+Once I find it, I fix that difference. But honestly the real fix is stopping drift. Infrastructure and config defined as code, servers built from the same scripts, configuration applied by the pipeline and not by hand, and periodic drift detection that compares servers against what's expected.
+
+@p17-623 | After a front-end release, some users see a blank page or old version. Why?
+In my experience it's nearly always caching plus code splitting.
+
+A single-page app loads index dot html, which points to bundles with hashed names, like main dot some hash dot js, and lazy-loaded chunks. Two things go wrong after a release.
+
+One is a stale index.html. If the browser, a proxy or the CDN cached it, users keep loading the old version, which might call APIs that changed. The fix is serving index.html with Cache-Control no-cache, so the browser revalidates every time, while the hashed assets get long cache times.
+
+The other is missing old chunks. A user has the old app open, goes to a lazy route, and the old chunk it wants doesn't exist anymore because the deployment replaced all the files. The browser throws ChunkLoadError or "Failed to fetch dynamically imported module", and the route is just blank. So keep previous versions' assets around for a while after deploying instead of deleting them, and in the app, catch chunk load errors and reload the page once, which picks up the new index.html.
+
+Service workers can also keep serving the old version until every tab closes. You need a proper update flow that detects a new version and asks the user to refresh.
+
+Other blank-page causes are a JavaScript error early in startup on some browsers, missing runtime config, or a wrong base href on a sub-path. The browser console and front-end error tracking will tell you which, so I'd check those first.

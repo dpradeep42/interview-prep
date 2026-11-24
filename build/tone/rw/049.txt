@@ -1,0 +1,139 @@
+@p17-576 | How do you include security testing in the delivery process?
+So basically I don't treat security testing as one big activity at the end. It's layers, and most of it runs in the pipeline on its own.
+
+On every pull request we've got static analysis, so things like SonarQube security rules, Roslyn analyzers, Semgrep or CodeQL. They catch injection risks, unsafe deserialisation, weak crypto, hardcoded secrets, that kind of stuff. Then dependency scanning checks our NuGet and npm packages and the container images for known vulnerabilities, and the build fails if something critical shows up. Secret scanning sits on top so credentials never get committed in the first place.
+
+Then on a deployed test environment we run OWASP ZAP. The baseline scan is quick, so it goes in the nightly pipeline, and the full scan runs less often. It finds missing security headers, cookie flags, reflected XSS, some injection issues.
+
+Honestly though, the tests I value most are the ones teams usually skip, which is security tests on business logic. A user from site A shouldn't read site B's data, a role without permission should get a 403, IDs from another tenant get rejected, bad input gets rejected, and sensitive fields don't show up in responses or logs. Tools won't find those for you.
+
+For infra, Checkov or something similar scans Terraform and Kubernetes manifests. And before big releases, specialists do a pen test, because they find logic flaws that automation misses. Whatever comes out of all this gets tracked like a normal bug, with fix deadlines based on severity.
+
+@p17-577 | How do you test web accessibility?
+Okay, so accessibility is partly about users with disabilities and partly it's a legal or contract thing, usually WCAG 2.1 or 2.2 level AA. And the honest answer is tools only catch part of it, so you need some manual checking too.
+
+On the automated side, axe-core is kind of the standard engine. We use it in unit tests with jest-axe or vitest-axe on rendered components, in end-to-end tests with the axe Playwright package so it scans full pages in a real browser, and in Storybook with the accessibility add-on, so designers and devs see the issues per component. It catches missing labels, poor colour contrast, missing alt text, wrong ARIA, duplicate ids. Lint rules, like eslint-plugin-jsx-a11y or Angular's accessibility lint rules, catch stuff while you're still coding. Lighthouse gives a score as well.
+
+One thing I like is Testing Library queries. If my test can't find a button by its role and accessible name, a screen reader user probably can't find it either.
+
+Then the manual part. I go through the whole flow with only the keyboard, checking the focus is visible and the tab order makes sense. I try key journeys with NVDA or VoiceOver. I zoom to 200 percent, try small screens, and check error messages are actually announced and make sense.
+
+Using components like MUI or Angular Material gives you a big head start since they handle a lot of the ARIA and keyboard stuff. But custom components need the same checks.
+
+@p17-578 | What is visual regression testing?
+See, functional tests can tell you a button exists and works, but not that it's now hidden behind another element, or the layout broke on mobile, or a theme change made the text unreadable. Visual regression testing is for exactly that, catching changes in how the UI looks that nobody intended.
+
+How it works is pretty simple. You take screenshots of pages or components in a known state and store them as approved baselines. On later runs it takes new screenshots and compares them, pixel by pixel or perceptually. If the difference is over a threshold, the test fails and you get a diff image with the changes highlighted. Then the developer either approves it as an intended change or fixes it.
+
+For tools, Playwright has screenshot assertions built in, toHaveScreenshot. Storybook with Chromatic captures every story on each pull request, which is really nice for a design system. Percy or Applitools give smarter comparison and review flows.
+
+The hard part, honestly, is making it stable. Screenshots have to be deterministic, so fixed test data and dates, animations off, fonts loaded, same browser and OS, ideally the same container image in CI. Timestamps and other dynamic bits get masked, and a small threshold absorbs anti-aliasing noise.
+
+I don't screenshot everything. I focus on shared components and a few key pages at the important screen sizes, so reviewing diffs stays quick. In our component-based front end, covering the shared library visually protects every feature package that uses it.
+
+@p17-579 | How do you test Redux Toolkit slices, selectors and custom hooks?
+Actually, with Redux Toolkit most of the logic is just plain functions, so it's one of the easier things to test.
+
+Reducers are pure. So the test just calls the reducer with a previous state and an action from the slice's action creator, say allocation added with a kit, and checks the new state. No store, no rendering. I test the meaningful transitions and edge cases, I don't bother with every trivial setter.
+
+Selectors are also pure functions of state. I build a state object and check what comes back, mainly for the memoised ones made with createSelector that calculate derived data, like kits expiring in the next 30 days or totals per site.
+
+For thunks I create a real store with configureStore and the app's reducers, mock the API at the network level with MSW, dispatch the thunk and check the resulting state. Going through the store is closer to how the app actually uses it.
+
+With RTK Query, I render the component that uses the generated hooks inside a test store provider, MSW handles the endpoints, and I check loading, success and error states. You do need to reset the API state between tests, otherwise cached data leaks across.
+
+For custom hooks, renderHook from React Testing Library, with a wrapper that gives it the store, router or query client. I check the returned values, call the returned functions inside act, and check the updates.
+
+But mostly I'd rather test components the way a user uses them, with a real store, and keep isolated reducer tests for the tricky logic.
+
+@p17-580 | Do you practise test-driven development?
+Honestly, yes, but selectively. I use it where it pays off, I'm not dogmatic about doing it everywhere.
+
+The cycle is red, green, refactor. You write a small failing test for the next bit of behaviour, write the simplest code to make it pass, then clean up the code and tests while they stay green, and repeat in small steps.
+
+Where it really works for me is business rules with clear inputs and outputs, like validation, calculations, allocation logic. Writing the test first forces me to pin down the behaviour and the edge cases before I get lost in the implementation. Bug fixes too. I always write a failing test that reproduces the bug first, so I know the fix actually works and the bug can't quietly come back. And it helps when I'm designing a class's API, because writing the test first shows you very quickly if the interface is awkward to use.
+
+Where I'm more relaxed is exploratory work, where I don't know the shape of the solution yet. There I spike first, then write the tests and usually rewrite the code properly. Same for UI layout and thin glue code, where an integration test gives better value anyway.
+
+What I've seen from it is cleaner, more decoupled code, because testable code tends to have clear dependencies, and a lot more confidence when refactoring.
+
+Whether the test comes first or right after, my rule is the tests describe behaviour, not implementation, and no logic change goes in without one.
+
+@p17-581 | How do you add tests to legacy code that has none?
+So you can't stop everything and write tests for the whole legacy codebase, that never happens. What I follow is basically the approach from Working Effectively with Legacy Code, which is you add tests where you're about to make a change.
+
+I start with characterisation tests. Before touching a piece of code, I write tests that capture what it does today, not what it should do. Call it with realistic inputs and assert whatever comes back. Snapshot tools like Verify make that quick when the output is complex. Those tests protect the existing behaviour, including the weird bits other parts of the system might depend on.
+
+Then you need seams. Legacy code usually creates its own dependencies directly, so new SqlConnection, static calls, DateTime dot Now, HttpContext dot Current. A seam is a place where you can swap behaviour for a test without changing the logic. So I extract an interface and inject it, or pull the hard call into a virtual method and override it in a test subclass, or wrap statics behind a small adapter, or just pass the value in as a parameter. All in small, safe refactoring steps, mostly tool-assisted.
+
+For new functionality I use sprout and wrap. I write it as a new, tested class or method and call it from the old code, instead of adding more untested lines to a huge method.
+
+And for really tangled code, integration tests around the edges, like the real API or stored procedure against a test database, give you protection fastest. That's how we change the risky areas in our .NET Framework core.
+
+@p17-582 | How would you test a randomisation algorithm in a clinical trial system?
+Let me put it this way, randomisation decides which treatment arm a patient goes to, so if it's wrong, it hurts the scientific validity of the trial. So I test it two ways, normal tests and statistical checks.
+
+For the normal tests, the algorithm has to take its random source as a dependency. Then tests can give it a seeded generator or a fixed sequence, and I can assert exact results. With block size four and a one to one ratio, each block has two of each arm. Stratification puts the patient in the right stratum based on their factors. When a site or stratum is capped, the right thing happens. And with a pre-generated randomisation list, patients get the next entry in their stratum in order, and no entry is ever used twice.
+
+Then the edge cases, like the last slot in a block, the list running out, invalid strata, re-randomisation rules, and two sites randomising at the exact same moment. Those two must never get the same entry.
+
+The statistical part is simulation. You run it thousands of times, [like 100,000 simulated patients], and check the allocation ratios match the design within tolerance, balance holds within strata and sites for dynamic methods like minimisation, and there's no predictable pattern. That runs as part of study configuration testing, not every build.
+
+And since it's a regulated system, the tests, the simulation reports and the configuration they ran against are kept as validation evidence. The study config also goes through UAT before it goes live.
+
+@p17-583 | How do you test both states of a feature flag?
+Yeah, so the risk with flags is they double the paths through your code, and usually one state, the one that isn't switched on in test, never gets tested. Then someone flips it and it breaks.
+
+What I do is, for every flag that changes logic, unit tests for both states. The flag check is injected, through IFeatureManager or a small interface, so the test just sets it on or off. Each flagged behaviour gets one test with it on and one with it off.
+
+For integration and end-to-end tests, they run against the config production will actually have at release. If prod starts with the flag off, the main run uses off, and then there's a second run, or a subset of tests, with it on. I've seen test environments with every flag switched on, and then the off path, which is literally what production runs, isn't tested at all.
+
+I don't test every combination though. With a few flags that explodes fast. Flags should be independent where possible, and I only test combinations for flags that actually interact.
+
+For important flags I test the flip itself. Switching at runtime shouldn't break requests in flight or leave things inconsistent, like jobs started under the old behaviour. I also test the failure default, so if the flag service is down, the code falls back to the safe value.
+
+And once a flag is fully rolled out and removed, the tests for the dead path go too. Keeps the suite honest about what the code really does.
+
+@p17-584 | How do you test Azure Functions or AWS Lambda handlers?
+In my experience the trick with serverless is keeping the handler thin, then testing is easy.
+
+So the function method or Lambda handler just translates the trigger into a call. It parses the HTTP request, queue message or S3 event, calls a service class, and maps the result back. The business logic sits in that service class, injected through DI, which both the Azure Functions isolated worker and Lambda support. That way most of my tests are just plain unit tests on the service.
+
+For the handler itself, I build the input object, like an SQSEvent with some sample records, an API Gateway HTTP request, or for Azure Functions a ServiceBusReceivedMessage or a fake HttpRequestData, plus a test context, like TestLambdaContext from the Lambda test utilities package, and then call the method. I check the response and that the service got called correctly. For SQS batch handlers I test that partial failures get reported properly. Sample events from the AWS docs, or captured from real environments, make good realistic inputs.
+
+Locally, Azure Functions Core Tools runs the functions with Azurite emulating queues and blobs. For Lambda there's the Lambda Test Tool, SAM CLI local invoke, or LocalStack.
+
+But emulators can't check everything. So we also deploy through the pipeline to a real cloud test environment and trigger it with a real message or HTTP call. That's what catches the classic serverless problems, like a missing IAM permission or a wrong queue binding, which no unit test is going to find.
+
+@p17-585 | How do you set up OpenTelemetry in a .NET service?
+Okay, so OpenTelemetry is the vendor-neutral standard for traces, metrics and logs. The nice part in .NET is the runtime already produces the raw signals, Activity for traces, System.Diagnostics.Metrics for metrics, and ILogger for logs. OpenTelemetry just collects and exports them.
+
+In Program dot cs, you call AddOpenTelemetry on the services, then ConfigureResource to set the service name, version and environment, which every signal carries. WithTracing adds instrumentation for ASP.NET Core, HttpClient, SQL client or EF Core, plus any custom ActivitySource the app has. WithMetrics adds ASP.NET Core, HttpClient and runtime instrumentation, so you get request durations, GC, thread pool, exception counts, plus your own Meters. For logs you add OpenTelemetry to the logging builder, so log lines carry the trace and span ids. Then UseOtlpExporter sends everything over OTLP, usually to a local Collector, which forwards to Datadog, Grafana, Azure Monitor or CloudWatch. The endpoint and headers come from the standard environment variables, like OTEL exporter OTLP endpoint, so the same code works everywhere.
+
+A few habits I stick to. Clear, stable names for custom spans and metrics. Useful attributes like tenant or study id, but never personal data. Record exceptions on spans. And filter out noise, like health check requests, otherwise they flood everything.
+
+In our case the newest services use OpenTelemetry with Datadog, while older parts still log to Splunk with Serilog. The good thing about standardising on OpenTelemetry is if we change the backend later, it's config, not code.
+
+@p17-586 | What does the OpenTelemetry Collector do, and why use one?
+So the Collector is a separate process. It receives telemetry, processes it, and exports it to one or more backends. The apps just send to the collector over OTLP instead of talking to each vendor directly.
+
+The config is pipelines for traces, metrics and logs, and each pipeline has receivers, processors and exporters. Receivers take data in, OTLP from apps, Prometheus scraping, host metrics, log files, Kafka and so on. Processors change it, so batching, memory limits, adding attributes like cluster and region, dropping noisy spans like health checks, redacting sensitive attributes, tail-based sampling. Exporters send it out to Datadog, Grafana, Jaeger, Prometheus, Azure Monitor, CloudWatch, or several of them at once.
+
+Why bother? For me the big one is apps stay simple and vendor-neutral. Switching or adding a backend is a collector config change, not redeploying every service. Retries and buffering happen in the collector too, so if the backend has an outage, the app doesn't slow down. Redaction, sampling and enrichment rules are applied the same way for every service. And the backend credentials live in one place instead of in every app.
+
+For deployment, you usually have an agent collector close to the apps, per host, as a sidecar or a DaemonSet, and optionally a gateway collector cluster for central stuff like tail sampling.
+
+One catch, the collector is now part of your pipeline, so you have to monitor it and size it properly, otherwise it drops data right when load is highest.
+
+@p17-587 | Counter vs gauge vs histogram: which metric type do you use when?
+Picking the right type actually matters, because it decides what questions you can answer later.
+
+A counter only goes up. Requests handled, orders created, errors, bytes sent. You never really look at the raw number, you look at the rate, like requests per second, or the increase over a window. And in Prometheus-style systems restarts are fine, because the rate functions handle resets.
+
+Then a gauge or up-down counter is a current value that goes up and down. Up-down counter is for things you increment and decrement yourself, like active connections or items in an in-memory queue. A gauge is something you observe at a point in time, like memory used, queue depth read from the broker, or the temperature of a storage unit. For gauges you look at averages and max over time. Rates don't make sense there.
+
+A histogram records the distribution, like request duration or payload size, into buckets. From that you get percentiles, p95, p99 latency, which matter way more than averages, because the average hides the slow requests users actually notice. Histograms also aggregate across instances correctly, which pre-computed percentiles can't do.
+
+In .NET's System.Diagnostics.Metrics these are Counter, UpDownCounter, ObservableGauge and Histogram. So say an allocation service, I'd have a counter for allocations by outcome, a histogram for allocation duration, and an observable gauge for available kits per depot.
+
+Just make sure the histogram buckets cover the expected range, or use exponential histograms so you don't have to pick them by hand.
