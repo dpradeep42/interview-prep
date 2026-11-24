@@ -1,6 +1,6 @@
-// Offline cache for Interview Prep. Version b0cca2ed3c
-var CACHE = 'ip-b0cca2ed3c';
-var FILES = ["./","index.html","app.css?v=b0cca2ed3c","app.js?v=b0cca2ed3c","data/index.json?v=b0cca2ed3c","data/answers.json?v=b0cca2ed3c"];
+// Offline cache for Interview Prep. Version e4bb9c7f39
+var CACHE = 'ip-e4bb9c7f39';
+var FILES = ["./","index.html","app.css?v=e4bb9c7f39","app.js?v=e4bb9c7f39","data/index.json?v=e4bb9c7f39","data/answers.json?v=e4bb9c7f39"];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); })); });
 self.addEventListener('activate', function (e) { e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== CACHE && k.indexOf('ip-') === 0; }).map(function (k) { return caches.delete(k); })); }).then(function () { return self.clients.claim(); })); });
 self.addEventListener('fetch', function (e) {
