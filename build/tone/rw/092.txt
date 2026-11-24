@@ -1,0 +1,105 @@
+@p1-49
+Isolation levels control what one transaction can see of other transactions' uncommitted or changing data. Higher isolation gives you more consistency, but more locking and less concurrency.
+
+Read Uncommitted allows dirty reads, so you can see data another transaction hasn't committed yet, which might get rolled back. Read Committed, SQL Server's default, prevents dirty reads, but if you read the same row twice, it might have changed in between. Repeatable Read prevents that by holding read locks until the end, but new rows can still appear, which are called phantoms. Serializable stops phantoms too, by locking ranges, so transactions behave as if they ran one after another. And then there are the row-versioning options. Snapshot isolation, and Read Committed Snapshot, or RCSI, let readers see a consistent version of the data without taking locks, so readers don't block writers.
+
+I choose per use case. Most of our workload runs fine on read committed with RCSI turned on, which honestly removed a lot of reader-writer blocking. For allocating the last available drug kits, correctness matters more, so that short transaction uses stricter locking.
+
+I can explain how RCSI uses tempdb for versioning.
+
+@p1-50
+A deadlock is when two transactions each hold a lock the other one needs, so neither can continue. SQL Server detects the cycle, picks one transaction as the victim, rolls it back, and returns error 1205.
+
+The usual causes are transactions touching the same tables in a different order, transactions that are too long and hold locks while doing other work, and missing indexes, because a scan locks way more rows than a seek. Higher isolation levels make it more likely too.
+
+To fix and prevent them, access tables in a consistent order, keep transactions short with no external calls inside, add the right indexes so locks stay narrow, and consider RCSI so readers don't take shared locks. Because deadlocks can still happen now and then, the application should retry the victim safely, which EF Core's retrying execution strategy can do for transient errors.
+
+To investigate, I use the system health Extended Events session, which captures the deadlock graph showing both queries and the locked resources. In our system, I traced a recurring deadlock between an inventory update and a reporting query to a missing index causing a scan. Adding the index stopped it. I can explain how to read a deadlock graph.
+
+@p1-51
+Both have their place, I'd say, and parameter sniffing is a performance issue that affects both.
+
+Stored procedures keep logic close to the data, can be secured with execute-only permissions, and are good for complex set-based operations. But they're harder to version, review, unit test and refactor than application code. ORM queries, like EF Core LINQ, live in the codebase, are type-safe, automatically parameterised, and easy to change and test. Both get cached, reusable plans, so performance is similar for parameterised queries. I default to EF Core and use stored procedures for heavy, set-based logic or existing tuned procedures.
+
+Parameter sniffing is when SQL Server compiles a plan using the parameter values of the first call, and reuses that plan for every later call. If the first call was for a tiny study, it might pick a nested loop plan, which is terrible for a huge study. So the same query's fast for some values and really slow for others. Fixes include OPTION RECOMPILE where values vary wildly, OPTIMIZE FOR, or separate queries for different data shapes. Query Store helps spot and force a good plan.
+
+In our IRT data, study sizes vary a lot, so I check for this whenever a query's fast for one study and slow for another.
+
+@p1-52
+Honestly, it depends on the data and how it's accessed.
+
+SQL Server on RDS is relational. It's the right choice when data has rich relationships, needs complex joins, strong consistency and multi-row transactions, and ad-hoc querying and reporting. That's exactly clinical trial data, studies, sites, subjects, kits and shipments, all related, with strict integrity rules. DynamoDB is a key-value and document database. It gives single-digit millisecond responses at any scale, it's serverless with pay-per-request pricing, and needs almost no operations work. But you have to design the table around your access patterns up front, using partition and sort keys. It's weak at ad-hoc queries, joins and reporting, and changing access patterns later can be painful.
+
+So my rule is, if I can list the access patterns, they're simple key lookups, and scale or cost matters, DynamoDB fits. If the domain's relational, or reporting needs are unclear, I go with SQL.
+
+In CIRT, the core IRT data is in SQL Server, one database per study, and in the newer IQVIA services on AWS, DynamoDB is used for simpler, high-volume data like event or status lookups. I can explain partition key design.
+
+@p1-53
+All three remove data, but at very different levels.
+
+DELETE removes rows one at a time, and can use a WHERE clause to remove only some rows. Each deleted row is fully logged, triggers fire, and it can be rolled back inside a transaction. On large tables it's slow and can escalate locks, so for big cleanups I delete in batches. TRUNCATE removes all rows from a table at once by deallocating its data pages. It's really fast and minimally logged, it resets the identity seed, and it doesn't fire DELETE triggers. It can't have a WHERE clause, and it's not allowed if a foreign key references the table. In SQL Server it can be rolled back inside a transaction too, which people often don't know. DROP removes the whole table, the data, the structure, indexes and permissions.
+
+In a regulated system like ours, hard deletes of business data are rare. We usually use soft deletes, setting an IsDeleted flag or a status, with an audit trail of who did it and when, because clinical data has to stay traceable. TRUNCATE is only used on staging tables, like during data imports. I can explain how we implement soft delete with EF Core query filters.
+
+@p1-54
+Both page through large result sets, but they work very differently and perform very differently on deep pages.
+
+OFFSET FETCH, which is Skip and Take in EF Core, says "skip the first N rows, then return the next 20". It's simple and lets you jump to any page number. But the database still has to read and throw away all the skipped rows, so page 5,000 is much slower than page 1. And if rows get inserted while someone's paging, they can see duplicates or miss rows. Keyset pagination, also called seek pagination, remembers the last row's key from the previous page and asks for "the next 20 rows after this key", using a WHERE clause on an indexed column. It seeks straight to that position, so every page is equally fast, and it's stable when data changes. The downside is you can't jump to an arbitrary page, only next and previous.
+
+So I use OFFSET for admin screens with small data and page numbers, and keyset for large tables, infinite scrolling, exports and APIs, returning a continuation token.
+
+For our shipment history API, we switched to keyset on ShipmentDate plus Id, and deep pages became as fast as the first one. I can show the query.
+
+@p1-55
+A CTE, a Common Table Expression, is a named temporary result you define with WITH at the start of a query. It makes complex queries readable by breaking them into named steps, and recursive CTEs can walk hierarchies, like a depot and its sub-depots.
+
+Window functions do calculations across a set of rows related to the current row, without collapsing them like GROUP BY does. They use the OVER clause, with PARTITION BY to define groups and ORDER BY to define order. Common ones are ROW_NUMBER, RANK and DENSE_RANK, LAG and LEAD to look at the previous or next row, and running totals with SUM OVER.
+
+A classic use case is "get the latest record per group". Say, the latest status for each shipment. In a CTE, I select ROW_NUMBER over PARTITION BY ShipmentId ORDER BY StatusDate descending, then filter where the row number equals 1. Another one is a running total of kits dispensed per site over time.
+
+I actually used exactly that pattern in IRT, to show each shipment's current status from a status history table, and LAG to work out how long each shipment spent in each status for a delay report. I can write out the query if that helps.
+
+@p1-56
+These are three levels of automated testing, and the test pyramid describes the healthy balance between them.
+
+Unit tests check one class or function in isolation, with its dependencies mocked or faked. They run in milliseconds, so you can have thousands, and they pinpoint exactly what broke. Integration tests check that real components work together, like the API with a real SQL Server database, or a repository with real queries. They're slower but catch wiring, configuration and query problems that mocks hide. End-to-end tests drive the whole system through the UI, like a real user, with tools like Playwright or Cucumber. They give the most confidence, but they're slow and more fragile.
+
+The pyramid says many unit tests at the bottom, fewer integration tests in the middle, and a small number of end-to-end tests at the top for critical journeys. If it's upside down, an "ice cream cone", the suite gets slow and flaky, and people stop trusting it. I've seen that happen.
+
+In our IRT work, we have xUnit unit tests for business rules, integration tests with WebApplicationFactory and a real database, and Playwright and Cucumber end-to-end tests for key flows like randomisation and shipment creation. I can explain how this supports GxP validation.
+
+@p1-57
+Both are mature .NET testing frameworks, and the differences are mostly style and conventions.
+
+xUnit uses Fact for a single test and Theory with InlineData or MemberData for parameterised tests. It creates a new instance of the test class for every test, which keeps tests isolated by design. Setup goes in the constructor, cleanup in Dispose, and shared expensive setup, like a database, goes in fixtures with IClassFixture or collection fixtures. It's what Microsoft uses for .NET itself and it's the default in lots of new projects. NUnit uses Test and TestCase attributes, has SetUp and TearDown methods, and OneTimeSetUp for shared setup. It has a rich constraint-based assertion model with Assert dot That, and some built-in features like ordering and categories.
+
+Both integrate with dotnet test, run in CI, and report coverage to SonarQube, so the choice rarely matters technically.
+
+My practice is to use whatever the repository already uses, because consistency matters more than preference. For new projects, I'd go with xUnit, because the per-test instance makes accidental shared state between tests less likely. I can show a Theory example.
+
+@p1-58
+Moq is a library for creating fake implementations of interfaces in unit tests, so I can test a class without its real dependencies.
+
+I create a Mock of the interface and set up behaviour, like Setup for GetAsync with a given id returning a test entity, or throwing an exception to test error handling. I pass the mock's Object into the class under test. After the call, I assert the outcome, and where the interaction is the actual behaviour, I verify it, like Verify that SaveAsync was called once. I avoid verifying every internal call, because then tests break on every refactor even when behaviour's correct.
+
+What I don't mock is things I don't own and whose behaviour is complex, like DbContext or the internals of HttpClient. Mocking DbContext doesn't test the real query translation, so I use a real database with Testcontainers instead, and for HttpClient I use a fake message handler. I also don't mock simple value objects, or the class under test itself, obviously.
+
+For example, in our vendor exchange tests, I mock ISftpClient to fail once with a timeout and then succeed, and assert the retry worked. I can show that test.
+
+@p1-59
+For integration tests of an ASP.NET Core API, I basically run the real application in memory and call it over HTTP, with only external dependencies replaced.
+
+The key tool is WebApplicationFactory of Program. It boots the actual app, with the real middleware pipeline, routing, DI, filters and serialisation, on an in-memory test server, and gives me an HttpClient to call it. In ConfigureTestServices, I swap out things I can't use in tests, like a vendor API client, a message publisher, or authentication, using a test auth handler that creates a user with specific roles. For the database, I prefer a real SQL Server in Docker with Testcontainers rather than an in-memory provider, because in-memory doesn't behave like SQL. Each test seeds its own data and cleans up, often with Respawn, so tests stay independent.
+
+Then I assert the status code, the response body, and the side effects, like the row in the database or the message published.
+
+In our services, these tests caught things unit tests never would, wrong middleware order, missing DI registrations, and EF queries that couldn't be translated. I can show the factory setup.
+
+@p1-60
+Reliable Playwright tests are mostly about avoiding the usual causes of flakiness, brittle selectors, timing assumptions and shared state.
+
+For locators, I use what users see, getByRole, getByLabel, getByText, or a data-testid attribute, instead of long CSS or XPath paths that break when the layout changes. For timing, I rely on Playwright's auto-waiting and web-first assertions, like expect locator toBeVisible, which retry until they pass or time out. I never use fixed sleeps. For isolation, each test gets a fresh browser context and its own seeded data, so tests can run in parallel without affecting each other. I log in once and reuse the saved storage state, which saves a lot of time.
+
+When a test fails in CI, traces, screenshots and videos show exactly what happened, step by step. I also use the page object pattern to keep tests readable.
+
+In our IRT suite, honestly the biggest improvement came from replacing sleeps with web-first assertions and seeding data through the API instead of the UI. Flaky failures dropped a lot, and the suite got faster. I can explain how we run them in the pipeline.
