@@ -1,0 +1,181 @@
+@p17-780 | Stored procedure vs function in SQL Server: what is the difference?
+Okay, both are reusable database code, but the rules and the uses are different.
+
+Stored procedures run with EXEC. They can hold almost any T-SQL, inserts, updates, deletes, transactions, try-catch, temp tables, dynamic SQL, calls to other procedures. They can return multiple result sets, output parameters and a return code. But you can't use them inside a SELECT. So they're for business operations, data changes and batch processes.
+
+Functions return a value and you can use them inside queries, in the SELECT, the WHERE, a JOIN. But they're not allowed to change database state. No inserts, updates or deletes on real tables, no transactions, no dynamic SQL, limited error handling.
+
+Functions come in three flavours. Scalar functions return one value. Inline table-valued functions are a single SELECT and behave like a parameterised view, the optimiser expands them into the main query, so they perform well. Multi-statement table-valued functions build a table variable in several steps, and historically they had bad cardinality estimates, so they often performed badly.
+
+On performance, scalar functions called per row in big queries were famously slow, though SQL Server 2019 can inline a lot of them automatically now. Inline table-valued functions are usually the best choice when you need reusable query logic.
+
+My rule of thumb is procedures for operations and data changes, inline table-valued functions for reusable filters or calculations inside queries, and keep scalar and multi-statement functions out of hot queries. From .NET, procedures are easy to call with EF Core or Dapper, and functions can be mapped too.
+
+@p17-781 | How do PIVOT and UNPIVOT work in SQL Server?
+So PIVOT turns rows into columns. Say a table has rows of site, month and shipment count, and the report wants one row per site with a column per month. PIVOT aggregates the value, like the sum of shipment count, for each listed column value, January, February, March.
+
+The syntax is you select from a source subquery of site, month and count, then PIVOT with the sum of shipment count, for month, in the list of month columns, each written as a quoted identifier.
+
+The limitation is the column list has to be known when you write the query. If the columns depend on data, like a variable list of studies or visit types, you need dynamic SQL to build the list, and that has to be done safely, with QUOTENAME for the column names.
+
+Honestly I often prefer conditional aggregation instead. You select the site, then a sum of a CASE expression that only counts January rows as the January column, same for February and so on, grouped by site. It's more flexible, works across databases, can mix different aggregations, and most developers find it easier to read.
+
+UNPIVOT does the opposite, columns into rows, like turning January, February and March columns into rows of month and value. CROSS APPLY with a VALUES list is a more flexible alternative, and you decide how NULLs are handled, while UNPIVOT just drops them.
+
+In practice I'm a bit careful about pivoting in SQL for reports at all. It's often simpler to return normalised rows and let the reporting tool or the front end pivot them. The queries stay stable when new columns show up.
+
+@p17-782 | What are CROSS APPLY and OUTER APPLY, and when do you use them?
+See, APPLY lets you run a table expression for each row of the outer table, and the inner expression can use columns from that outer row. It's like a lateral join in other databases.
+
+CROSS APPLY only returns outer rows where the inner expression returns something, like an inner join. OUTER APPLY returns all outer rows, with NULLs when the inner expression returns nothing, like a left join.
+
+Where I use it. The classic one is top N per group, like the latest three shipments per site. Select from sites, cross apply a top three from shipments for that site, ordered by date descending. Very readable.
+
+Calling table-valued functions per row, passing columns from the outer row in as parameters.
+
+Splitting or parsing values. Cross apply STRING_SPLIT on a tags column with a comma to expand a delimited column into rows, or OPENJSON to shred JSON stored in a column.
+
+Computing reusable expressions. Cross apply a little select that calculates total as quantity times price, give it an alias, and then use that total in the SELECT, WHERE and ORDER BY without repeating the expression. I find that one really handy.
+
+And unpivoting columns into rows with cross apply over a VALUES list.
+
+On performance, APPLY with a correlated subquery effectively runs per row. So it's great when the outer set is small and the inner query does an index seek. For big outer sets, a window function approach, like ROW_NUMBER partitioned by site, might be better. I check the execution plan to decide.
+
+@p17-783 | How do LAG and LEAD work, and how do you calculate running totals in SQL?
+Actually these are window functions that read a value from a previous or next row in a defined order, without needing a self-join.
+
+LAG of quantity, one row back, default zero, over a partition by site ordered by shipped date, gives you the previous shipment's quantity for the same site, or zero if there isn't one. LEAD does the same for the next row. I use them to compare each value with the previous one, like stock change since the last count, to find time between events, like days between visits, and to detect status changes.
+
+Running totals use an aggregate with an OVER clause. Sum of quantity over a partition by site, ordered by shipped date, with a ROWS frame from unbounded preceding to current row, gives a cumulative quantity per site over time.
+
+The important detail is always specify ROWS for running totals. Without a frame, the default with ORDER BY is RANGE unbounded preceding, which treats rows with the same order value as peers. So you get surprising totals when there are ties, and it's slower too because it might use an on-disk worktable. ROWS is precise and faster. That one catches people out.
+
+Moving averages work the same way with a limited frame, like six preceding rows and the current row for a 7-day average.
+
+Other useful ones, FIRST_VALUE and LAST_VALUE, NTILE for buckets, and PERCENT_RANK.
+
+For performance, an index matching the partition and order columns lets SQL Server compute these without sorting. They replaced a lot of old cursor-based or self-join report queries, and they're usually much faster.
+
+@p17-784 | How do you query a hierarchy with a recursive CTE?
+Honestly recursive CTEs look scary but they're quite logical. Hierarchical data, an org chart, a folder tree, a bill of materials, regions containing countries containing sites, is often stored as a parent-child table where each row has a ParentId.
+
+A recursive CTE walks the tree. It has two parts joined with UNION ALL. The anchor part selects the starting rows, the root, or a specific node. The recursive part joins the table to the CTE itself, to find the children of whatever's been found so far. SQL Server keeps repeating the recursive part until no new rows come back.
+
+So for example, a CTE called Tree. The anchor selects the location with the root id at level zero. The recursive part selects locations whose parent id matches an id already in Tree, with level plus one. Then you select everything from Tree.
+
+You can also build a path string as you go, to sort and display the tree, and walk upwards from a node to find all its ancestors.
+
+Safety, MAXRECURSION defaults to 100 levels, so if the data has a cycle by mistake, the query errors out instead of looping forever. You can change it with the MAXRECURSION query option, and detect cycles by checking whether an id's already in the path.
+
+Performance, index ParentId. For large, heavily queried trees, there's the hierarchyid data type, closure tables storing every ancestor-descendant pair, or a materialised path column. Those make subtree queries fast but cost more on updates.
+
+In EF Core, recursive CTEs go in raw SQL or a view, since LINQ can't express recursion directly.
+
+@p17-785 | What is the gaps and islands problem in SQL?
+Yeah, gaps and islands is a classic SQL pattern. Islands are runs of consecutive values, like consecutive days a temperature sensor was out of range, or continuous periods a site was active. Gaps are the missing ranges, missing ids in a sequence, days with no data.
+
+To find gaps, use LEAD to compare each value with the next one. In a subquery you get each id and the next id, and then you keep rows where the next id minus the current one is more than one. The gap starts at id plus one and ends at next id minus one.
+
+Finding islands is the clever bit. The trick is the difference between the value and a row number. For dates, you subtract the row number, partitioned by sensor and ordered by date, as days from the reading date. For consecutive dates that difference stays the same, and when there's a gap it changes. Then group by sensor and that group key, and take the min and max dates for each island's start and end, and the count for its length.
+
+For status changes, like periods a depot was in each state, compare each row's status with the previous one using LAG, mark a change with a one, take a running sum of those flags to get a group number, and aggregate by group.
+
+Real uses I've seen, temperature excursion periods for shipments, continuous enrolment periods, consecutive missed visits, finding missing sequence numbers in imported files, and outage windows from monitoring data.
+
+These set-based solutions replace cursor loops and they're much faster on big data, especially with an index on the partition and order columns.
+
+@p17-786 | What regular database maintenance should be set up for SQL Server?
+So on-premise SQL Server doesn't look after itself. A few regular jobs keep it healthy, usually scheduled with SQL Server Agent, and often using a well-known maintenance script solution rather than the basic maintenance plans.
+
+Backups first. Full backups, say weekly or daily, differentials in between, and transaction log backups every few minutes in full recovery model, which also stops the log growing forever. Backups go to separate storage, get checked with RESTORE VERIFYONLY or checksums, and the most important bit, restores get tested regularly. A backup you've never restored is just a hope.
+
+Integrity checks, DBCC CHECKDB regularly, to catch corruption early while good backups still exist. For big databases, run it on a restored copy or split it across days.
+
+Statistics, update them regularly, especially on tables with big data changes, because the auto-update thresholds can be too slow for large tables and you get poor plans.
+
+Index maintenance, reorganise or rebuild only indexes that are actually fragmented and big enough to matter, with sensible thresholds, online where the edition allows, outside business hours. A lot of teams now care more about statistics than fragmentation, since modern storage reduces its impact.
+
+Cleanup, purge old backup history, job history and maintenance logs, and keep an eye on tempdb and log file sizes.
+
+Monitoring, alerts for failed jobs, low disk, long-running jobs, blocking and high-severity errors.
+
+And with lots of databases, like one per study in our case, the jobs have to loop through all of them, scale well, and be staggered so they don't all hit storage at the same time.
+
+@p17-787 | How do you implement a reliable queue table in SQL Server?
+Okay, sometimes a table is used as a work queue, like an outbox table or a list of jobs, with several workers taking items. The challenge is letting multiple workers dequeue at the same time without processing the same item twice and without blocking each other.
+
+The standard pattern uses three locking hints, ROWLOCK, UPDLOCK and READPAST. UPDLOCK takes an update lock on the rows being read, so two workers can't grab the same row. READPAST skips rows another worker has already locked instead of waiting. ROWLOCK keeps the locks fine-grained.
+
+You can dequeue in one statement. A CTE selects the top ten pending rows with those hints, ordered by id, and then you update that CTE, setting status to Processing, locked-by to the worker and locked-at to the current UTC time, and use OUTPUT to return the claimed rows. Or you delete them with OUTPUT if processing is idempotent and failures are handled somewhere else.
+
+The other essentials. An index on status and id, or a filtered index on pending rows, so the query doesn't scan. A timeout for stuck items, so anything in Processing too long goes back to Pending, because a worker might crash. An attempt counter that moves items to a failed state after a few tries, basically a dead-letter queue. And idempotent handlers, since an item can get processed again after a timeout.
+
+When not to use it, very high throughput or lots of consumers, where a real broker like RabbitMQ is better. But for outbox tables and moderate job volumes, I'd say a queue table is great because the work stays transactional with the business data.
+
+@p17-788 | What is the logical processing order of a SQL query?
+Right, SQL is written in one order but processed logically in another, and knowing that order explains a lot of common errors.
+
+The logical order is FROM, including joins and APPLY, then WHERE, then GROUP BY, then HAVING, then SELECT, where expressions, aliases and window functions get computed, then DISTINCT, then ORDER BY, then TOP, or OFFSET and FETCH.
+
+What that explains. You can't use a column alias from the SELECT in the WHERE, because WHERE runs before SELECT. But you can use it in ORDER BY, which comes after.
+
+You can't use aggregates in WHERE. Filtering on aggregates goes in HAVING, after grouping.
+
+Window functions like ROW_NUMBER can't go in WHERE either, because they're computed in the SELECT phase. So you wrap the query in a CTE or subquery and filter outside. I've seen that question come up a lot.
+
+With an outer join, a filter in the ON clause behaves differently from the same filter in WHERE. In ON, it decides which rows match, and unmatched outer rows are kept. In WHERE, it removes rows after the join, which can quietly turn a left join into an inner join. That one bites people in reports.
+
+TOP without ORDER BY gives you arbitrary rows, because order is only guaranteed by ORDER BY.
+
+And this is the logical order, not the physical execution order. The optimiser can reorder things, push filters down, choose join orders, as long as the result is the same. But for reasoning about what a query means, the logical order is the right mental model.
+
+@p17-789 | Which SQL Server date column type should you use: datetime, datetime2 or datetimeoffset?
+So SQL Server has several date and time types, and the choice affects precision, storage and time zone handling.
+
+datetime is the old one. Range from 1753, precision about three milliseconds, it rounds to point zero zero zero, zero zero three or zero zero seven, and uses 8 bytes. That rounding can cause surprising comparisons, so I don't use it for new columns.
+
+datetime2 has a range from year 1, configurable precision down to 100 nanoseconds, and 6 to 8 bytes. It's the recommended type for date and time without an offset, and EF Core maps DateTime to it by default.
+
+datetimeoffset is datetime2 plus a time zone offset, like plus five thirty, in 10 bytes. It records the moment and the offset it was captured in, and maps to DateTimeOffset in .NET.
+
+date is just the date, 3 bytes, for things like date of birth or a visit date with no time. Maps to DateOnly in newer .NET. And time is just the time of day.
+
+How I choose. For event timestamps, created, updated, shipped, either datetime2 holding UTC with a clear naming convention like CreatedAtUtc, or datetimeoffset if the original local offset matters, like when and where a user did something.
+
+Business dates without a time, use date. That avoids the off-by-one-day issues you get from time zone conversions.
+
+Be consistent in comparisons, because mixing types causes implicit conversions that can stop index use.
+
+And avoid GETDATE, which returns server local time. Use SYSUTCDATETIME or SYSDATETIMEOFFSET so values don't depend on the server's time zone. I've seen that cause real bugs between servers in different regions.
+
+@p17-790 | What are computed columns, and when should they be persisted or indexed?
+Let me give examples first. A computed column is defined by an expression over other columns in the same row. Full name as first name plus a space plus last name, line total as quantity times unit price, or pulling a value out of JSON with JSON_VALUE on a payload column, reading the status property.
+
+By default it's virtual, not stored, calculated whenever you read it. Storage stays small but every read costs CPU.
+
+PERSISTED stores the value physically and updates it automatically when the source columns change. Reads get faster, writes a bit slower. The expression has to be deterministic, always the same result for the same inputs, so things like GETDATE aren't allowed.
+
+You can index a computed column, persisted or not, if it's deterministic and precise. That's really useful for making queries SARGable. If queries filter on an expression, like the year of the shipped date equals 2025, or a JSON property, a computed column with an index lets the optimiser seek instead of scanning. SQL Server can even match the expression in the query to the indexed computed column on its own.
+
+Where I find them practical, indexing JSON properties stored in a JSON column, normalised search keys like upper-cased or trimmed codes, derived values used in filters or sorting, and keeping calculated values consistent without app code.
+
+Cautions, certain SET options have to be right for indexes on computed columns, which can affect older apps or connections. And complex expressions with scalar user-defined functions can hurt performance and block parallelism.
+
+In EF Core, HasComputedColumnSql maps them, and the values get read back after saves.
+
+@p17-791 | How do you enforce data integrity with constraints in SQL Server?
+Honestly I'm a big believer in constraints. They make the database itself reject bad data, whatever application, script or person is writing it. App validation matters, but bugs, other services or manual fixes can bypass it.
+
+The main ones. NOT NULL for required columns, simple and very effective. Primary key to uniquely identify each row.
+
+Unique constraints or unique indexes for business uniqueness, like one kit number per study, or one active record per patient using a filtered unique index.
+
+Foreign keys, so relationships point to rows that exist. You can't have shipments for a site that doesn't exist. They document the data model too. Options like ON DELETE CASCADE need care.
+
+Check constraints, rules on values, like quantity can't be negative, status must be one of pending, shipped or received, or end date has to be on or after start date. They can reference several columns in the same row.
+
+Default constraints, values when none is given, like created-at UTC defaulting to the current UTC time.
+
+Why I like them. They catch bugs early, protect against bad data from imports and manual scripts, help the optimiser, since trusted foreign keys and check constraints let it skip unnecessary work, and they act as documentation.
+
+Things to watch. Constraints added WITH NOCHECK, or disabled during loads, become untrusted and the optimiser ignores them, so re-enable them WITH CHECK. Name constraints explicitly so deployments and error messages are predictable, SSDT handles that well. And translate constraint violations into friendly API errors instead of showing raw SQL errors.
