@@ -1,0 +1,111 @@
+@p5-78
+A CloudWatch alarm basically watches a metric and takes action when it crosses a threshold for a certain period.
+
+You define the metric, the statistic, like average or p95, the threshold, and how many evaluation periods must breach. Like, "ALB 5xx errors above 1 percent of requests, for 5 consecutive minutes". The alarm has three states, OK, ALARM and INSUFFICIENT_DATA. When it changes state, it can trigger actions, send a notification through SNS to email, Slack or a paging tool, trigger autoscaling, or run automation. Composite alarms combine several alarms with AND and OR logic, which cuts noise, say only paging when both errors are high and traffic is normal. Anomaly detection alarms learn a metric's normal pattern instead of a fixed threshold.
+
+The skill is in making alarms actionable. Too sensitive, and people start ignoring them. Too loose, and you find out from users. I prefer alarms on symptoms users feel, like errors and latency, and a few critical ones like dead-letter queue depth.
+
+In the newer IQVIA services on AWS, we have alarms on 5xx rates, p95 latency, RDS CPU and connections, and any message in a dead-letter queue. After the SQL fix, we added a latency alarm on that endpoint too. For things a metric can't show, like a scheduled job that failed, we record it in a failed-jobs table and alert on it, and AlertWatchDog, our alert engine, emails business alerts like low stock.
+
+@p5-79
+I troubleshoot production issues in a fairly structured way. Understand the impact, stabilise, then find the root cause.
+
+I start with scope and timing. Which users or features are affected, since when, and what changed recently, like a deployment, a configuration change or a traffic spike. Then dashboards and alarms, ALB 5xx rates and target health, ECS task restarts and CPU or memory, RDS CPU, connections and slow queries, and queue depth. Then logs, Logs Insights filtered by errors, or by the correlation id from a failing request, to see exactly where it breaks. ECS service events show things like out-of-memory kills or failing health checks. CloudTrail shows configuration changes, and the AWS Health Dashboard shows if it's an AWS-side problem.
+
+Mitigation comes before the perfect fix. If a deployment caused it, roll back. If it's load, scale out. Then find and fix the root cause, and write a blameless post-incident review with actions, like a new alarm or test.
+
+In our RabbitMQ outage in [mid-2024], shipment status updates stopped arriving for [about 40 minutes]. The broker logs showed a memory alarm blocking publishers, and because we published without confirms, [about 1,200] updates were lost silently. We recovered by replaying the vendor files, then added publisher confirms and alerts so it can't happen silently again. I can walk through that incident.
+
+@p5-80
+Disaster recovery design starts with the business, not the technology. You agree two numbers.
+
+RTO, the Recovery Time Objective, is how long the system can be down. RPO, the Recovery Point Objective, is how much data loss is acceptable, measured in time. Those decide the strategy and the cost. You've got four standard strategies. Backup and restore is the cheapest, with hours of recovery. Pilot light keeps core data replicated and minimal infrastructure ready in another region. Warm standby runs a scaled-down copy of the full system that can scale up quickly. And active-active runs in multiple regions at once, with near-zero RTO, at the highest cost.
+
+The building blocks are automated backups with cross-region copies, data replication, like RDS cross-region read replicas, DynamoDB global tables and S3 cross-region replication, and infrastructure as code, so we can rebuild a whole environment in another region quickly. Then runbooks, and honestly the most important bit, regular DR drills, because an untested DR plan is just a hope.
+
+For a clinical trial system, sites have to be able to randomise and dispense around the clock, so RTO and RPO are strict and DR is part of our validation. I can explain how a DR drill is run.
+
+@p5-81
+Autoscaling means automatically adjusting capacity to match the load, adding instances when demand goes up, and removing them when it goes down. You get performance during peaks and save cost during quiet times.
+
+In AWS, it applies at a few levels, EC2 Auto Scaling groups for instances, ECS service autoscaling for the number of tasks, Lambda, which scales automatically, and DynamoDB capacity. Policy-wise, target tracking is the most common. You set a target, like keeping average CPU at 60 percent, or a number of requests per task, and AWS adds or removes capacity to stay near it. Step scaling reacts to alarm thresholds with defined steps. Scheduled scaling handles predictable patterns, like scaling up before business hours. For message consumers, scaling on queue depth works better than CPU.
+
+A good rule is to scale out quickly and scale in slowly, with cooldowns, to avoid flapping. And the application has to be ready for it, stateless services, fast startup, health checks, and graceful shutdown.
+
+The ECS services on the AWS side use target tracking on CPU and request count, with a minimum of two tasks across availability zones for resilience. I think that's a sensible default. I can explain how graceful shutdown makes scale-in safe.
+
+@p5-82
+Both are virtual firewalls in an AWS VPC, but they work at different levels and in different ways.
+
+A security group is attached to individual resources, like an EC2 instance, an ECS task or an RDS database, through their network interfaces. It's stateful, so if you allow inbound traffic, the response is automatically allowed back out. It only has allow rules, anything not allowed is denied. And rules can reference other security groups, like "the database accepts port 1433 only from the API's security group", which is very clean. A network ACL is attached to a subnet and applies to all traffic entering or leaving that subnet. It's stateless, so you have to explicitly allow return traffic, usually on ephemeral ports. It has both allow and deny rules, evaluated in numbered order, and the first match wins.
+
+In practice, security groups do most of the work, because they're simpler and more precise. NACLs are kind of a coarse extra layer, say to explicitly block a known bad IP range for a whole subnet.
+
+In the newer IQVIA services on AWS, the ALB, ECS services and RDS each have their own security group, chained by references, so only the expected path is open. I can draw that out.
+
+@p5-83
+Okay, so a NAT Gateway lets resources in a private subnet make outbound connections to the internet, while staying unreachable from the internet.
+
+The ECS tasks and databases run in private subnets, with no public IP addresses, which is good for security. But they still sometimes need to call out, like to download packages, call an external vendor API, or reach AWS services. The NAT Gateway sits in a public subnet. Private subnets route their internet-bound traffic to it, and it translates the private addresses to its own public IP. Responses come back through it, but nobody on the internet can start a connection inward. It's fully managed and scales automatically. For high availability, you need one per availability zone.
+
+The catch is cost. You pay per hour and per gigabyte processed. A common mistake is sending all traffic to AWS services, like S3, ECR and CloudWatch, through the NAT, which can get expensive. VPC endpoints solve that. Gateway endpoints for S3 and DynamoDB are free, and interface endpoints for other services keep traffic private and often cheaper.
+
+In the AWS-side VPC, we use NAT Gateways for vendor calls, and VPC endpoints for S3, ECR and Secrets Manager. I can explain how that reduced data transfer costs.
+
+@p5-84
+Containers should access AWS services using IAM roles, never with access keys baked into images or configuration.
+
+On ECS, each task definition has a task role. When the container runs, ECS provides temporary credentials for that role through a local endpoint, and the AWS SDK's default credential chain picks them up automatically. So in code I just create the S3 or Secrets Manager client with no credentials at all. Those credentials expire and rotate automatically. On EKS, the same idea uses EKS Pod Identity or IRSA, IAM roles for service accounts. Each service gets its own role with least-privilege policies, like read access to one secret and write access to one S3 prefix. There's also the separate task execution role, which ECS itself uses to pull the image from ECR and fetch secrets at startup. People mix those two up a lot.
+
+For network security, VPC endpoints keep traffic to AWS services private, and resource policies, like bucket policies, can require requests to come from our VPC endpoint.
+
+In the newer IQVIA services on AWS, no service has an access key anywhere. If a container were compromised, the attacker would only get short-lived credentials limited to that service's permissions. I can show what a task role policy looks like.
+
+@p5-85
+Both store configuration values and secrets, but Secrets Manager is purpose-built for secrets.
+
+Secrets Manager is designed for sensitive values like database passwords, API keys and certificates. Its big feature is automatic rotation. For RDS, it can rotate the database password on a schedule and update the database at the same time, and for other secrets, you write a rotation Lambda. It supports cross-account sharing through resource policies, versioning with staging labels, and it's priced per secret per month, plus API calls. Parameter Store, part of Systems Manager, is a general configuration store. It's hierarchical, so you can organise values by path, like slash irt slash prod slash shipments, and load a whole path at once. It supports SecureString parameters encrypted with KMS, the standard tier is free, but there's no built-in rotation.
+
+So my rule is Secrets Manager for real secrets, especially ones that should rotate, and Parameter Store for normal configuration and feature settings.
+
+In our AWS services, database credentials and vendor SFTP keys are in Secrets Manager, with rotation for RDS, and settings like timeouts and URLs are in Parameter Store. Both feed ASP.NET Core configuration at startup. I can explain how we handle rotation without downtime.
+
+@p5-86
+Reducing AWS cost is really about paying only for what you actually need, and making cost visible to the teams.
+
+Right-sizing is the obvious start. Lots of ECS tasks and databases are over-provisioned, so I look at actual CPU and memory usage and reduce sizes. Then scaling, autoscaling for production, and scaling non-production environments down at night and on weekends, or to zero. Commitment discounts, Savings Plans or reserved instances for steady baseline usage, and Spot capacity for interruptible work like batch jobs. Storage, S3 lifecycle policies to move old data to cheaper tiers, and deleting unused snapshots, volumes and old images. Data transfer, VPC endpoints instead of NAT Gateway for traffic to AWS services, which is a common hidden cost. Log retention policies, because CloudWatch logs kept forever add up. And visibility, cost allocation tags per service and team, budgets and alerts, and reviewing Cost Explorer regularly.
+
+The thing is to keep it continuous, not a one-off clean-up.
+
+In our AWS environments, scheduling non-production ECS services to scale down outside working hours, and setting log retention, were simple changes with a noticeable saving. I can explain how I'd approach a cost review.
+
+@p6-1
+So Terraform keeps a state file that maps the resources in my code to the real resources in the cloud, along with their ids and attributes. Terraform uses it to work out what to create, change or delete on each run.
+
+If that state is lost, the real resources still exist and keep running. Nothing is deleted. But Terraform no longer knows it manages them. So on the next plan, it thinks nothing exists, and it tries to create everything again. That either fails, because names are already taken, or worse, creates duplicates, like a second database or load balancer.
+
+To recover, the simplest option is to restore a previous version of the state. That's why I store state remotely in an S3 bucket with versioning enabled, so an old version can be restored in minutes. If there's no backup, I'd rebuild the state with terraform import, mapping each existing resource back to its address in the code, using import blocks in newer Terraform versions, then run plan until it shows no changes.
+
+To prevent it in the first place, remote state in S3 with versioning and encryption, state locking with DynamoDB, so two people can't write at once, restricted access to the bucket, and never editing state files by hand. With that setup, honestly, losing state becomes a small inconvenience instead of an incident.
+
+@p6-2
+A Terraform module is a reusable package of Terraform code, a folder of resources with input variables and outputs, that you can call many times with different values. It's kind of like a function for infrastructure.
+
+Say instead of writing the same 200 lines for every ECS service, defining the task definition, the service, the load balancer target group, the security groups, log groups and alarms, I write one ecs-service module once. Each service then calls it with just its own values, like the name, the image, CPU, memory and port. The module's outputs, like the service's URL or security group id, can be used by other parts of the configuration.
+
+What you get is consistency, because every service is built the same way with our security and tagging standards built in, less duplication, and easier changes, because improving the module improves every service.
+
+Modules can come from a local folder, a Git repository, or a registry, like the public Terraform Registry or a private one. Good practice is to version them, using tags, so a change to a module doesn't suddenly affect every environment. Each environment moves to the new version deliberately.
+
+I keep modules focused on one purpose, with clear inputs and sensible defaults, and avoid making them so generic that they become hard to understand.
+
+@p6-3
+For environments in Terraform, my goal is that dev, test and production are built from the same code, with only the values different, and that each environment's state is completely separate.
+
+The approach I'd go with is a folder per environment. Shared logic lives in modules, and each environment folder, like dev, uat and prod, has a small main file that calls those modules, plus its own variable values, like instance sizes or the number of tasks. Each environment has its own backend, meaning its own state file, and ideally production is in a separate AWS account. That way, running Terraform in dev can never accidentally touch production.
+
+Terraform workspaces are another option, where one configuration has several state files. They're fine for very similar, short-lived environments, but for production, I prefer separate folders and state, because it's more explicit and safer.
+
+Environment-specific values go in tfvars files, and secrets never do, they come from a secrets manager.
+
+Changes are applied through the pipeline, not from laptops. The pipeline runs plan, the plan is reviewed, and then it's applied, environment by environment, with approval before production. Pinning module and provider versions keeps the environments consistent, so what we tested in UAT is what we apply in production.
