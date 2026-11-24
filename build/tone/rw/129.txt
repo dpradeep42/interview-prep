@@ -1,0 +1,125 @@
+@p7-22
+any and unknown are both TypeScript types that can hold any value, but they're kind of opposites in terms of safety.
+
+any switches off type checking. You can assign anything to it, and you can do anything with it, call methods, access properties, pass it anywhere, and TypeScript won't complain. So errors only show up at runtime. It's also contagious. Values derived from an any are any too, so type safety quietly disappears from parts of the code.
+
+unknown is the safe version. You can assign anything to it, but you can't use it until you prove what it is. Before calling a method or reading a property, you have to narrow the type, using checks like typeof, instanceof, the in operator, or a type guard function, or validate it with a schema library like Zod. So TypeScript forces you to handle the uncertainty.
+
+In practice, I use unknown for values whose type I genuinely don't know, JSON from an API, data parsed from storage, or the error in a catch block, which TypeScript now types as unknown by default in strict mode. Then I validate it, say with Zod, which also gives me the correct type.
+
+I avoid any, and our ESLint rules flag explicit any. The only acceptable uses are temporary migrations from JavaScript, or rare cases with badly typed libraries, and even then, I keep it as small and isolated as possible.
+
+@p7-23
+Generics in TypeScript let you write functions, classes and types that work with many types, while still keeping full type safety. Instead of fixing a type, you use a type parameter, usually called T, which gets filled in when the code is used.
+
+A simple example is a function that returns the first item of an array. Without generics, you'd either write it for each type, or use any and lose type information. With a generic, function first of T, taking an array of T and returning T, if you pass an array of shipments, TypeScript knows the result is a shipment.
+
+Generics are used everywhere in real code. Like a generic API helper, get of T taking a URL, which returns a Promise of T, so each call is typed. Or a generic ApiResponse of T type that wraps any data. React's useState is generic, so useState of Shipment array gives you typed state. Generic components, like a Table of T that receives rows of T and column definitions for T.
+
+You can also constrain generics with extends, say T extends an object with an id property, so the function can safely use id. You can give defaults for type parameters, and the built-in utility types, like Partial, Pick, Omit and Record, are all generics.
+
+What you get is reusable code without losing type checking. It's honestly the same idea as generics in C#, which I use every day.
+
+@p7-24
+Union types, intersection types and narrowing are how TypeScript models values that can take different shapes.
+
+A union type, written with a vertical bar, means a value can be one of several types. Like string or number, or a status that's one of the literal strings Pending, Shipped or Delivered. That's a very common way to model fixed sets of values.
+
+An intersection type, written with an ampersand, combines several types into one that has all their properties. Say a Shipment type and an Auditable type combined give an object with the shipment fields and the audit fields.
+
+Type narrowing is how TypeScript works out the more specific type inside a union, based on checks in your code. If a value is string or number and I check typeof value equals string, inside that if block TypeScript knows it's a string. Other ways to narrow are instanceof, the in operator, equality checks, and custom type guard functions that return "value is Type".
+
+The most useful pattern, I think, is a discriminated union. Each type in the union has a common literal property, like kind or status. Like an API result that's either success with data, or error with a message. A switch on that property narrows it fully. And with a never check in the default case, TypeScript gives an error if I add a new case and forget to handle it.
+
+@p7-25
+Strict mode can mean two things, honestly, and both are worth knowing.
+
+In TypeScript, strict mode is the strict option in tsconfig. It turns on a group of stronger type checks. The big one is strictNullChecks, where null and undefined are no longer allowed everywhere, so TypeScript forces you to handle missing values, which prevents the most common runtime errors. Others include noImplicitAny, which reports values whose types TypeScript can't infer instead of quietly using any, strict function types, strictPropertyInitialization, which checks class properties are initialised, and treating catch errors as unknown. For new projects, I always turn strict mode on, and lots of teams add extra options too, like noUncheckedIndexedAccess. For older code, it can be enabled gradually.
+
+In JavaScript, strict mode is enabled with the "use strict" directive at the top of a file or function. It makes JavaScript less forgiving. Like, assigning to an undeclared variable throws an error instead of creating a global variable by accident, this is undefined in plain function calls instead of the global object, and some unsafe features, like the with statement, aren't allowed. ES modules and classes are in strict mode automatically.
+
+And in React, there's also StrictMode, a component that runs extra checks in development, like rendering components twice to find side effects.
+
+All three exist to catch mistakes early, which is why I keep them on.
+
+@p7-26
+Okay, so Node.js runs JavaScript on a single main thread, using an event loop. So understanding synchronous versus asynchronous code really matters there.
+
+Synchronous code runs line by line and blocks the thread until it finishes. In Node, that's dangerous, because while the main thread is busy, nothing else can happen, no other request is handled, no timer fires, and no response is sent. Like, using readFileSync on a large file inside a request handler, or doing a heavy calculation like hashing a big file, freezes the whole server for every user.
+
+Asynchronous code starts an operation, like reading a file, querying a database or calling an API, and lets the main thread carry on with other work. Node hands the I/O to the operating system, or to its internal thread pool from libuv, and when the result is ready, a callback is queued, and the event loop runs it. With Promises and async and await, the code still reads top to bottom, but the thread is free while waiting. That's why Node can handle thousands of concurrent connections with one thread, as long as the work is mostly I/O.
+
+So my rules in Node are pretty simple. Always use the asynchronous versions of I/O functions, never synchronous ones in request handling. For CPU-heavy work, use worker threads, or move it to a separate service or queue. And monitor event loop delay, because it shows when something is blocking.
+
+It's the same principle as async and await in ASP.NET Core, don't block threads while waiting for I/O.
+
+@p7-27
+Express is the most popular web framework for Node.js. It's minimal and flexible. It gives you routing, middleware and helpers for requests and responses, and you add whatever else you need through packages.
+
+Middleware is the core concept of Express. A middleware is a function that receives three things, the request, the response, and a next function. Middleware functions run in the order they're registered, forming a pipeline that every request passes through. Each one can do something with the request, like reading headers or adding data, modify the response, end the request by sending a response, or call next to pass control to the next middleware. If it neither responds nor calls next, the request just hangs, which people forget sometimes.
+
+Typical middleware includes parsing JSON bodies with express.json, logging, CORS, security headers with Helmet, authentication that validates a token and attaches the user to the request, and rate limiting. Middleware can be applied globally with app.use, to a path, or to a single route, and routers group related routes with their own middleware.
+
+Error-handling middleware is special. It has four parameters, starting with the error. When any middleware or route calls next with an error, or, in Express 5, an async handler throws, Express skips to the error middleware, which can log it and send a consistent error response.
+
+It's the same idea as the middleware pipeline in ASP.NET Core, which I use every day.
+
+@p7-28
+In Node.js, I handle errors at three levels, where they happen, in one central place, and as a last safety net for the whole process.
+
+Where they happen, for asynchronous code with async and await, I use try and catch around operations that can fail and that I can do something about, like retrying a call or returning a specific message. For Promises without await, every chain needs a catch. I never leave a Promise rejection unhandled.
+
+Then central handling. In Express, I add error-handling middleware with four parameters at the end of the pipeline. All errors are passed there, either by calling next with the error, or automatically in Express 5 when an async handler throws. It logs the error with the request details and correlation id, and sends a consistent response, like a problem details JSON with the right status code, without exposing stack traces in production. I use custom error classes, like a NotFoundError or ValidationError, with a status code, so the handler can map them correctly.
+
+And the safety net, process-level handlers for unhandledRejection and uncaughtException. They log the error and then shut down gracefully, letting the container or process manager restart the service, because honestly, after an uncaught exception, the process may be in a broken state.
+
+I also validate input early with a schema library like Zod, which turns bad input into clear 400 errors instead of crashes later.
+
+@p7-29
+I secure Node.js APIs in the same layers as any API, just using the tools from the Node ecosystem.
+
+Authentication and authorisation come first. Every protected route validates a JWT from our identity provider, checking the signature, issuer, audience and expiry, with a library like jose or passport, and then checks the user's roles or permissions, including whether they own the resource they're asking for. Then input validation. Every request body, parameter and query is validated with a schema library like Zod, rejecting anything unexpected, with a limit on body size. Injection, so parameterised queries or a safe ORM, never build SQL from strings, and avoid passing user input to shell commands. Security headers and CORS, Helmet adds headers like content security policy, and CORS allows only known origins. Rate limiting against brute force and abuse. Secrets in a secrets manager or environment variables, never in code. Safe errors, with no stack traces in responses. Dependencies, npm audit or Snyk in the pipeline, keeping packages updated, and committing the lock file. And HTTPS everywhere, running as a non-root user in the container, and logging security events.
+
+These are basically the same principles I apply to our .NET APIs, only the libraries differ.
+
+@p7-30
+Node.js and .NET are both strong backend choices, and I pick between them based on the workload and the team.
+
+Node.js is excellent for I/O-heavy services, like APIs that mostly call other services or databases, real-time features with WebSockets, and lightweight tools. It starts quickly, it has a huge package ecosystem, and teams can use one language, JavaScript or TypeScript, on both front end and back end. The downsides are that it runs JavaScript on one main thread, so CPU-heavy work needs care, and the ecosystem is fragmented, with lots of choices and varied package quality.
+
+.NET, with ASP.NET Core, has very high performance, including for CPU-heavy work, because it's compiled and truly multi-threaded. C# has strong static typing, and there's a complete, consistent platform built in, dependency injection, configuration, logging, Entity Framework Core and great tooling. It's very well suited to large, long-lived business systems with complex domain logic, and it's long-term supported by Microsoft.
+
+In our case, our core domain services, like shipments and supply, are in .NET, because of the complex business rules, the team's skills, and long-term maintainability in a regulated environment. We use Node for small tooling services where it fits better, and Python for some validation and automation work.
+
+So honestly, I don't see one as better. I'd pick the right tool for the job, with a strong reason needed to add a new language to a team.
+
+@p7-31
+We used Python where it was clearly the right tool, not to replace .NET, which is still our main platform for core services.
+
+The main example is a [vendor file pre-validation service] that I built with FastAPI. Vendors send us files in various formats, and errors in those files used to be found only when our .NET import failed, which was slow to diagnose. With Python and Pydantic, I could describe each file format as a model, with types and validation rules, in very readable code. The service checks a file and returns exact, row-by-row errors, like "row 52, ship date is in the future", before our .NET import runs. That made problems much faster to find and explain to vendors, and the models were easy for others to read and update.
+
+Python is also part of our release automation, together with Shell and Ansible, for the install scripts that run across our environment nodes. Python is well suited to that kind of scripting and automation work, with excellent libraries for files, APIs and configuration.
+
+So my view is, our core domain services stay in .NET, for consistency and maintainability, and we use Python where its strengths, like data validation and automation, give a real benefit. I'm honestly comfortable in both.
+
+@p7-32
+I structure a FastAPI application by separating the web layer, the business logic and the data access, pretty much like I would in ASP.NET Core.
+
+The entry point, main.py, creates the FastAPI app, includes the routers, adds middleware, like CORS and logging, and sets up startup and shutdown with a lifespan function. Then there's a routers folder, with one router per feature, like files or shipments, each defining its endpoints. Those endpoints stay thin. They receive validated input, call a service, and return a response. A schemas folder has Pydantic models for requests and responses, which give automatic validation and show up in the generated OpenAPI documentation. A services folder holds the business logic, independent of FastAPI, so it's easy to test. And a data or repositories folder handles the database, say with SQLAlchemy.
+
+Dependencies, like the database session, the settings or the current user, are provided with FastAPI's Depends, which works like dependency injection and makes them easy to replace in tests. Settings come from environment variables through pydantic-settings, so there's no configuration in code.
+
+For quality, async endpoints where we do I/O, tests with pytest and FastAPI's TestClient, overriding dependencies, linting with Ruff, type checks with mypy, and the app runs in Docker.
+
+That's the structure of the [vendor file pre-validation service] I built.
+
+@p7-33
+In FastAPI, authentication is built with its dependency system, so each endpoint just declares that it needs a signed-in user.
+
+In our setup, users sign in through Keycloak, our single sign-on identity provider, using OpenID Connect, so the API doesn't handle passwords at all. Clients send an access token in the Authorization header as a Bearer token. I create a dependency, like get_current_user, that reads the token using FastAPI's security helpers, such as HTTPBearer or OAuth2PasswordBearer, and validates the JWT with a library like PyJWT. It checks the signature against the identity provider's public keys, which are fetched and cached, plus the issuer, the audience and the expiry. If it's invalid, it raises a 401 HTTPException. If it's valid, it returns a user object with the claims.
+
+Endpoints add that dependency as a parameter, with Depends, and get the user. For authorisation, I add another dependency, like require_role of admin, which checks the user's roles or scopes and raises 403 if they're missing. It can be applied to one endpoint, or a whole router.
+
+Because these are dependencies, tests can easily override them with a fake user. And FastAPI automatically shows the security scheme in the OpenAPI docs page.
+
+It's basically the same idea as JWT bearer authentication with authorisation policies in ASP.NET Core.
