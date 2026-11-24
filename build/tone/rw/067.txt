@@ -1,0 +1,183 @@
+@p17-792 | What are the high availability and disaster recovery options for on-premise SQL Server?
+So for on-premise SQL Server you've basically got a handful of options, and they're often combined.
+
+Always On availability groups. A group of databases is replicated from a primary replica to secondary replicas on other servers. Synchronous commit replicas, usually in the same data centre, give zero data loss and automatic failover. Asynchronous ones, often in another data centre, give you disaster recovery with a small possible data loss. Secondaries can be readable, so you can run reports and backups there. Apps connect through a listener name, so failover is transparent apart from a short blip. One catch, only databases get replicated. Logins, jobs and linked servers have to be synced separately, and people do forget that.
+
+Failover cluster instances. The whole SQL Server instance fails over to another node, using shared storage. That protects against server failure, instance-level objects included, but the shared storage is a single point of failure, so it's usually paired with something else for DR.
+
+Log shipping. Transaction log backups get copied and restored on a standby server on a schedule. Simple and reliable for DR, but data loss equals the shipping interval and failover is manual.
+
+And offsite backups, always, because replication also replicates mistakes, like an accidental delete.
+
+Which one you pick depends on the RPO and RTO targets, budget and licensing.
+
+On the app side, use the listener, set MultiSubnetFailover to true in the connection string, add retry logic for transient errors during failover, and actually practise failovers. With lots of databases, like one per study, availability groups need planning around how many databases go in each group and the sync load.
+
+@p17-793 | How does EF Core map inheritance: TPH, TPT and TPC?
+Okay, say you've got a class hierarchy, a base Notification with EmailNotification and SmsNotification. EF Core can map that to tables three ways.
+
+TPH, table per hierarchy, is the default. One table holds every type, with a discriminator column saying which type each row is, and columns for all properties of all types, nullable for the types that don't use them. Queries are fast, no joins, and polymorphic queries are simple. The downsides, lots of nullable columns, you can't enforce NOT NULL on subtype-specific columns at the database level, and the table gets wide if there are many subtypes.
+
+TPT, table per type. A table for the base type and one for each derived type with its own columns, linked by the primary key. The schema's clean and normalised, but every query for a derived type needs joins, and polymorphic queries join all the tables, which gets slow with many types.
+
+TPC, table per concrete type, since EF Core 7. Each concrete type gets its own complete table with all properties, inherited ones included, and there's no base table. Querying one specific type is fast, no joins, and polymorphic queries use UNION ALL across tables. Keys have to be unique across all the tables, so you need sequences or GUIDs instead of identity columns per table.
+
+My default is TPH for small hierarchies with few differing properties, because it performs best. TPC fits when you mostly query specific types. I'd stay away from TPT on performance-sensitive paths.
+
+And honestly, often the best option is to skip inheritance in the data model altogether, and use composition, or a type column with a JSON column for the type-specific details.
+
+@p17-794 | What are ExecuteUpdate and ExecuteDelete in EF Core?
+Before EF Core 7, updating or deleting lots of rows meant loading entities into memory, changing them and calling SaveChanges, which sends one statement per row and eats memory, or you wrote raw SQL.
+
+ExecuteUpdate and ExecuteDelete, plus their async versions, run set-based statements straight in the database from a LINQ query, without loading anything. So you take the shipments, filter where status is pending and created before a cutoff, and call ExecuteUpdateAsync, setting status to expired and updated-at to now. That becomes a single UPDATE with a WHERE. ExecuteDeleteAsync becomes a single DELETE the same way. Both return the number of affected rows.
+
+You get much faster bulk changes, minimal memory, and it's still type-safe LINQ instead of raw SQL strings.
+
+But honestly there are some caveats I'd point out. They bypass the change tracker, so entities already loaded in the DbContext aren't updated and might be stale.
+
+They don't run the SaveChanges logic. Interceptors and overrides that set audit fields, raise domain events or write audit trails just won't fire. In a regulated system where every change needs an audit record, that's a serious problem. You have to handle auditing explicitly, with triggers or temporal tables, or just not use these methods for audited data.
+
+They run immediately, outside SaveChanges, so put them in an explicit transaction with other changes if consistency matters. Concurrency tokens aren't checked automatically either.
+
+For huge operations, batch them, like deleting in chunks, to avoid long locks and log growth.
+
+So what I do is use them for maintenance, cleanup and non-audited bulk updates, and keep normal SaveChanges for business operations that need auditing.
+
+@p17-795 | How do you query unmapped types or keyless entities in EF Core?
+Sometimes you need query results that don't match a normal entity, like a reporting query, a view, a stored procedure, or a projection from raw SQL. EF Core has a few tools for that.
+
+Keyless entity types. You configure a class with HasNoKey, and map it to a view with ToView, or to a SQL query with ToSqlQuery. Then you can query it with LINQ, filtering and sorting on top. They're read-only, EF never tracks or saves them, because there's no key to identify rows. Good for views and reporting projections you use a lot.
+
+SqlQuery for unmapped types, since EF Core 8. You call Database dot SqlQuery with a DTO type and an interpolated SQL string, say counting shipments per site for a given study id, and it maps the results straight into that class without registering it in the model. The interpolated values become parameters, so it's safe from injection. You can even compose LINQ on top, add a Where or an OrderBy, when the SQL can work as a subquery. It works with scalar types too, like a SqlQuery of int.
+
+FromSql on a DbSet is for raw SQL that returns a mapped entity type.
+
+When I reach for these, complex reporting queries LINQ can't express well, window functions, recursive CTEs, hints, existing views or procedures in a legacy database, and read models in a CQRS-style design.
+
+Dapper's the other option for heavy read queries, and some teams use it alongside EF Core.
+
+Either way, my approach is to keep the SQL in one place, test it against a real database, and watch out for column name mismatches, because you only find those at runtime.
+
+@p17-796 | Should every foreign key column have an index?
+Mostly yes, I'd say. SQL Server doesn't create indexes on foreign key columns automatically, unlike primary keys. Whether you need one depends on how the column's used, but most of the time you do.
+
+Why it matters. Joins, because queries usually join on foreign keys, like shipments to sites on site id. Without an index, finding shipments for a site means scanning the whole shipments table.
+
+Filtering, because "all shipments for this site" or "all items for this order" are some of the most common queries you'll have.
+
+And deletes and updates on parent rows. This is the one people miss. When you delete a site, or change its key, SQL Server has to check the child table for referencing rows. Without an index on the child's foreign key, it scans the whole child table for every parent row, holding locks, so deletes get extremely slow and you get blocking or deadlocks. Classic hidden problem in cleanup jobs. Cascading deletes find child rows the same way.
+
+When you might skip it, very small tables, or a foreign key that's never used for lookups and whose parent rows never get deleted, like a static reference table with a few rows. Even then I'd check the access patterns.
+
+Often the best index has the foreign key as the leading column plus other columns used together, like site id and shipped date, which covers both the foreign key and common queries.
+
+EF Core creates foreign key indexes by default in migrations, which is a good default. In databases built by hand or with SSDT, I check for missing ones with a query over the system views that lists foreign keys without a matching index.
+
+@p17-797 | What is a heap table, and why is a table without a clustered key usually a problem?
+Right, a heap is just a table with no clustered index. Rows sit in no particular order, on whatever pages have space, and nonclustered indexes point to rows with a physical row identifier, the RID, which is file, page and slot.
+
+The problems. Forwarded records. When a row gets updated and grows, like a varchar getting longer, and doesn't fit on its page anymore, SQL Server moves it to another page and leaves a forwarding pointer behind. Reads then follow extra pointers, so more I/O. Over time, heavy updates make heaps slower and slower.
+
+Space isn't reclaimed well after deletes either, unless the table's rebuilt or the deletes take table locks, so heaps can grow full of empty pages.
+
+Lookups from nonclustered indexes are RID lookups, and range queries in any order need sorts or scans.
+
+Clustered indexes are the default for good reasons. Rows are stored in key order, range scans on the key are efficient, there are no forwarded records, and space management's better. A narrow, unique, ever-increasing key, like an identity or a sequential value, makes a good clustered key.
+
+When is a heap fine? Staging tables for fast bulk loads that get read once and truncated, where insert speed matters and you read all the data anyway, or temp tables.
+
+To find heaps, I query sys dot indexes for index id zero, and check the index physical stats DMV for forwarded record counts. In older databases, from what I've seen, finding big, frequently updated heaps and adding a clustered index can give a really noticeable speed-up.
+
+@p17-798 | How do STRING_AGG and STRING_SPLIT work in SQL Server?
+These two handle going between rows and delimited strings, which used to need pretty awkward tricks.
+
+STRING_AGG, from SQL Server 2017, concatenates values from multiple rows into one string with a separator. So you select the site id and STRING_AGG of kit number with a comma and space, within group ordered by kit number, grouped by site, and you get one row per site with a comma-separated list of kits. The WITHIN GROUP part controls the order. Before this, people used FOR XML PATH with STUFF, which was hard to read and had escaping issues. Watch the result length though. Cast the input to nvarchar max if the result can go past 8000 bytes, otherwise it errors.
+
+STRING_SPLIT, from 2016, splits a delimited string into rows, with a column called value. You select value from STRING_SPLIT of an ids parameter and a comma, or use it with CROSS APPLY to split a column per row. Limitations, in older versions the output order isn't guaranteed, and SQL Server 2022 adds an enable ordinal argument that gives you the position. It only supports a single-character separator.
+
+Where they help, building display strings for reports or exports, accepting a list of ids as a parameter in legacy code, and parsing simple imported data. Though from .NET, for id lists I'd go with table-valued parameters or JSON with OPENJSON, which are typed and cope with bigger lists.
+
+One design caution. Storing comma-separated values in a column is usually a normalisation problem. These functions make that data easier to work with, but for new designs a proper child table or a JSON column is better.
+
+@p17-799 | What are the risks of cross-database queries and linked servers?
+I mean, they're convenient, that's why they're everywhere. In SQL Server you can query another database on the same instance with three-part names, database dot schema dot table, and another server with linked servers and four-part names, or OPENQUERY. It's common in older systems, like a setup with a database per study plus a master database [and some cross-database queries]. But there are real risks.
+
+Coupling. Queries depend on another database's schema and name. Renaming, moving or splitting databases breaks code in places that are hard to find, and database names often differ between environments, so the code needs synonyms or dynamic names.
+
+Deployment and tooling. SSDT projects need database references to validate cross-database objects, and migrations have to be coordinated across databases.
+
+High availability. Databases in different availability groups can fail over separately, so a cross-database query might suddenly point at a different server or just fail. Cross-database transactions in availability groups need special support.
+
+Performance with linked servers. The optimiser often knows very little about the remote data, so it might pull whole remote tables across the network and filter locally. Distributed transactions need MSDTC, which adds latency and more things to fail.
+
+Security. Linked servers are often set up with a fixed, highly privileged login, which is a common gap. Permissions and ownership chaining across databases need care too.
+
+What I'd do instead. Use synonyms so the names live in one place, keep cross-database access in a small number of views or procedures, put shared reference data behind an API or a cache, and replicate the data you need into the local database with ETL or change data capture, instead of querying remotely in real time.
+
+@p17-800 | How do you add a column or change a big table without downtime?
+Schema changes on big, busy tables can lock the table for ages and block users. The trick is knowing which operations are cheap, and splitting the risky ones into safe steps.
+
+Adding a nullable column is metadata-only in SQL Server, instant whatever the table size.
+
+Adding a NOT NULL column with a default is also metadata-only since SQL Server 2012 Enterprise, for runtime constant defaults. Older or lower editions might rewrite every row, which is slow and locks the table.
+
+Changing a column's type, or making it NOT NULL, can scan or rewrite the table. The safer way is add a new column, backfill it in small batches during quiet times, switch the app over to it, and drop the old column later.
+
+Indexes, use ONLINE on where the edition allows, and RESUMABLE in newer versions so you can pause and continue. Otherwise schedule it in a maintenance window.
+
+Foreign keys or check constraints, add them WITH NOCHECK first to skip the long validation, then validate later at a quiet time so they become trusted.
+
+Set a low lock timeout, or use wait at low priority for online operations, so a schema change waiting for a lock doesn't block everyone queued behind it. That one catches people out badly.
+
+Expand and contract. Deploy the schema change in a backward-compatible way first, release code that works with both shapes, then remove the old structure in a later release.
+
+And test on a production-sized copy, measuring duration and lock behaviour. Something instant on a small test database can take an hour in production, trust me.
+
+@p17-801 | What does the Angular CDK give you, like overlays and drag and drop?
+Basically the Angular CDK, the Component Dev Kit, is a set of behaviour building blocks from the Angular Material team, without Material's look. It's useful when you're building your own design system or custom components, because it solves the hard interaction problems for you.
+
+The parts I use most. Overlay, for floating panels like dropdowns, tooltips, popovers and dialogs, positioned relative to an element or the screen, with automatic repositioning when there's no space, scroll handling and backdrop clicks. Writing that from scratch is surprisingly hard.
+
+Portal, which renders a component or template somewhere else in the DOM. Overlays and dialogs use it.
+
+Drag and drop, reorderable lists, moving items between lists, drag handles, with animations and accessibility support. Handy for things like ordering steps in a configuration screen.
+
+Scrolling, virtual scroll for long lists, so only visible rows get rendered.
+
+Accessibility, FocusTrap to keep focus inside dialogs, LiveAnnouncer for screen reader announcements, ListKeyManager for keyboard navigation in menus and lists, and FocusMonitor to tell whether focus came from keyboard or mouse.
+
+Layout, BreakpointObserver to react to screen size changes in code. And then table, stepper, tree, clipboard, text-field auto-resize.
+
+Why it matters is a team can build components that match their own styling while getting tested, accessible behaviour. In our Angular 17 study builder, CDK features like drag and drop and overlays are the kind of building blocks that save weeks compared to custom implementations, and they're maintained alongside Angular versions, so upgrades are easier.
+
+@p17-802 | How do you theme and customize Angular Material components?
+Yeah, so Angular Material is styled through a theming system built on Sass, and since Material 17 and 18, on Material 3 design tokens.
+
+To create a theme, in the global styles you use the mat theme mixin, or in older versions you define palettes with define-palette and define-light-theme, picking primary, tertiary or accent colours, typography and density. Applying it to the html element generates CSS variables that all the components use. Dark mode is just a second theme applied under a class or a prefers-color-scheme media query.
+
+Customising the right way. Use the design tokens and the component override mixins, like the button overrides mixin in newer versions, to change specific things, a button's container colour or shape, without fighting the internal CSS.
+
+Use the CSS variables the theme exposes for your own components, so custom parts match Material colours and follow theme switches.
+
+Avoid ng-deep and deep selectors that target internal class names, the mat-mdc ones. They break when Material changes its internals, which is exactly what happened in the MDC migration around Angular 15, and a lot of teams had big upgrade work because of it. Learned that one the hard way.
+
+Density settings reduce spacing for data-heavy business screens, which enterprise apps often need.
+
+And for a company design system shared with React, the brand colours, spacing and typography should come from one set of design tokens that generates both the Angular Material theme and the MUI theme. That keeps both front ends consistent while Angular and React live side by side.
+
+@p17-803 | How do you make an Angular application accessible?
+For me accessibility means everyone, keyboard users and screen reader users included, can actually use the app. In Angular most of it's standard web accessibility, plus a few framework tools.
+
+Semantic HTML first. Real buttons for actions, anchors for navigation, labels linked to inputs, headings in order, tables for tabular data. Components should render semantic elements, not clickable divs. For custom components, use host bindings to add roles and ARIA attributes, like role and aria-expanded.
+
+Forms. Every control has a label, error messages are linked with aria-describedby, and invalid fields set aria-invalid. Reactive forms make it easy to show errors consistently.
+
+Focus management, and this is the one SPAs get wrong. Route changes don't move focus like a page load does. So after navigation, move focus to the main heading or content and announce the new page title. In dialogs, trap focus inside and send it back to the trigger on close. CDK FocusTrap and Material dialogs handle that.
+
+Dynamic updates. Use LiveAnnouncer from the CDK to announce things like "3 results found" or "saved successfully" to screen readers.
+
+Keyboard support. Everything works with the keyboard, focus is visible, and custom widgets like menus follow the standard keyboard patterns. The CDK key managers help there.
+
+Angular Material components have good accessibility built in, which is one reason I'd use them over custom widgets.
+
+Testing, the Angular ESLint accessibility rules, automated axe checks in component or end-to-end tests, and manual checks with a keyboard and a screen reader on the key flows.
