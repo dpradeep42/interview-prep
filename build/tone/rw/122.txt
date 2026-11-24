@@ -1,0 +1,115 @@
+@p6-4
+The main rule for secrets in Terraform is that they never go in the code, in tfvars files committed to Git, or in plain text anywhere.
+
+What I prefer is keeping secrets out of Terraform's hands where possible. Terraform creates the secret's container, like an AWS Secrets Manager secret or an SSM parameter, and the actual value is set separately, or generated, say with a random password resource, or by letting RDS manage the master password in Secrets Manager. Applications then read the secret at runtime, using their IAM role, so the value isn't passed around in configuration.
+
+When Terraform does need a secret, like a provider credential, it comes from environment variables or the pipeline's secure variables, never from a file. Sensitive variables are marked sensitive, so Terraform hides them in plan output and logs.
+
+One thing people miss. Even sensitive values are stored in plain text inside the state file. So the state itself has to be protected, an encrypted S3 bucket, tight access control, and no copies on laptops. Newer Terraform versions also support ephemeral values that aren't saved in state at all, which is even better.
+
+And for the pipeline's own access to AWS, I prefer short-lived credentials using OIDC, instead of long-lived access keys stored as secrets.
+
+@p6-5
+To deploy infrastructure changes safely, I follow a process where every change is reviewed, previewed, tested in lower environments, and applied by the pipeline, not by hand.
+
+All changes are code in Git and go through a pull request. Then the pipeline runs terraform fmt, validate, and security checks like tfsec or Checkov, then terraform plan, and posts the plan for review. The plan is honestly the most important artifact, because it shows exactly what will be created, changed or destroyed. I pay special attention to anything that says destroy or replace, because replacing a database or load balancer can mean downtime or data loss. After that, the same change is applied to dev and UAT, and only then to production, with an approval gate, and the saved plan is applied, so exactly what was reviewed is what runs.
+
+For risky resources, I add protections, like prevent_destroy lifecycle rules on databases, deletion protection in AWS, and create_before_destroy for resources that must be replaced without downtime. State locking stops two applies running at once.
+
+And I make small, frequent changes rather than big ones, and I know the rollback plan before I start, which is usually reverting the commit and applying again, or restoring from a backup for data resources.
+
+@p6-6
+Docker is basically a platform for packaging an application with everything it needs to run, its runtime, libraries, configuration and files, into a container image. That image runs the same way on a developer's laptop, in the pipeline, and in production, which kills the classic "it works on my machine" problem.
+
+The key terms are simple. A Dockerfile is the recipe for building an image. An image is the built, read-only package, made of layers. A container is a running instance of an image. And a registry, like Docker Hub or Amazon ECR, stores and shares images.
+
+Containers are different from virtual machines. A virtual machine includes a full operating system, so it's heavy and slow to start. Containers share the host's kernel and only isolate the process, using Linux namespaces and control groups, so they're lightweight, start in seconds, and lots of them can run on one machine.
+
+For the newer IQVIA services on AWS, each .NET API and worker service is packaged as a Docker image, using a multi-stage Dockerfile. One stage builds the app with the .NET SDK, and the final image only has the smaller ASP.NET runtime and the published output. The pipeline builds and scans the image, pushes it to Amazon ECR, and it runs on ECS. The same image moves from test to production, so what we tested is exactly what we release.
+
+@p6-7
+Okay, so a Docker image is built from layers. Each instruction in the Dockerfile that changes the filesystem, like FROM, COPY and RUN, creates a new read-only layer that records only the changes from the layer before it. The layers are stacked to form the final image. When a container runs, Docker adds one thin writable layer on top, and that disappears when the container is removed.
+
+Layers matter for two reasons. Sharing, for one. Images that use the same base image share those layers on disk and in the registry, so they're only downloaded and stored once. And build caching. When you rebuild, Docker reuses every layer whose instruction and inputs haven't changed, and only rebuilds from the first changed layer onwards.
+
+That's why the order of instructions matters. In a .NET Dockerfile, I copy only the project files and run dotnet restore before anything else. Then I copy the rest of the source code and build. Because the project files rarely change, the restore layer stays cached, and normal code changes don't download all the NuGet packages again. That makes builds much faster.
+
+Also, deleting a file in a later layer doesn't make the image smaller, because the earlier layer still has it. So I clean up within the same RUN instruction, and use multi-stage builds so build tools never reach the final image.
+
+@p6-8
+Both COPY and ADD copy files into a Docker image, but ADD has some extra behaviour.
+
+COPY does one simple thing. It copies files or folders from the build context, meaning the folder you're building from, into the image. It's predictable and does exactly what it says.
+
+ADD can do that too, but it has two extra features. If the source is a local tar archive, ADD automatically extracts it into the image. And ADD can download a file from a URL. Those sound convenient, but they can be surprising. Like, someone might add a tar file expecting it to be copied as is, and it gets extracted instead. And downloading from a URL with ADD doesn't let you verify the file or clean up easily in the same layer, and it can hurt caching.
+
+So the best practice, which Docker also recommends, is COPY by default, and ADD only when you specifically want automatic extraction of a local archive. For downloading files, it's better to use RUN with curl or wget, verify the checksum, and remove anything unnecessary in the same step.
+
+In our .NET Dockerfiles, we only use COPY. The project files for restore, then the source code, and in the final stage, COPY with the from option to take the published output from the build stage.
+
+@p6-9
+CMD and ENTRYPOINT both define what runs when a container starts, but they behave differently when you pass arguments.
+
+ENTRYPOINT defines the main executable, the thing the container always runs. CMD provides default arguments, or a default command, that are easily overridden. If you run the container with extra arguments, like docker run myimage something, those arguments replace CMD, but ENTRYPOINT stays.
+
+A common pattern is to use both, ENTRYPOINT for the executable, and CMD for default parameters. Say an ENTRYPOINT of dotnet MyApi.dll, with a CMD providing a default option, which can be changed at run time without rebuilding the image.
+
+There's also a detail about the form that people miss. Both should use the exec form, which is a JSON array, like square brackets with "dotnet" and "MyApi.dll". In that form, the application runs as process 1 in the container and receives signals directly. If you use the shell form, a plain string, it runs inside a shell, and the shell may not pass the SIGTERM signal on. Then the app can't shut down gracefully, and Docker eventually kills it after a timeout.
+
+For our .NET services, we use ENTRYPOINT in exec form with dotnet and the DLL, so the app receives SIGTERM and finishes in-flight requests on shutdown.
+
+@p6-10
+Smaller images build, push and start faster, and they have fewer packages that could contain vulnerabilities, so I always try to cut image size.
+
+The biggest win is multi-stage builds. In a .NET Dockerfile, the build stage uses the full .NET SDK image to restore, build and publish. The final stage starts from the much smaller ASP.NET runtime image and only copies in the published output. So the SDK, the source code and the build tools never reach the production image.
+
+Then pick a small base image, Alpine-based images, or Microsoft's chiseled Ubuntu images, which are very minimal, have no shell or package manager, and run as non-root by default. Use a .dockerignore file so things like bin, obj, .git and test folders aren't sent into the build. Combine RUN commands and clean up package caches in the same layer, because deleting files in a later layer doesn't shrink the image. Only install what's needed, with no extra debugging tools. And for .NET, options like trimming or native AOT can make some apps much smaller, if they're compatible.
+
+In our services, moving to multi-stage builds and a smaller runtime base image noticeably reduced image size and also cut the number of findings in our image scans, which was honestly a nice bonus.
+
+@p6-11
+Docker Compose is a tool for defining and running multi-container applications with one YAML file. Instead of starting each container with a long docker run command, you describe all the services, their images or build folders, ports, environment variables, volumes, networks and dependencies, in a compose.yaml file. Then docker compose up starts everything together, and docker compose down stops and removes it.
+
+Compose automatically creates a network for the application, and each service can reach the others by its service name, so the API can connect to a host called sqlserver or rabbitmq, without knowing IP addresses.
+
+Honestly, its main use is local development and testing. Like, for one of our .NET services, a compose file starts the API, SQL Server, RabbitMQ and Redis, so a new developer can run the whole environment with one command, instead of installing and configuring each dependency. It's also useful for integration tests in a pipeline. Health checks with depends_on make sure, say, the API waits until the database is ready.
+
+For production, Compose isn't usually used, because it runs on a single machine and doesn't give you scaling, self-healing or rolling deployments. That's the job of orchestrators like Amazon ECS or Kubernetes. We use Compose locally, and ECS in the real environments of the newer IQVIA services on AWS.
+
+@p6-12
+Containers are isolated by default, so networking and volumes are basically how they talk to each other and keep data.
+
+For networking, Docker uses network drivers. The default bridge network connects containers on the same host. With a user-defined bridge network, which is what Docker Compose creates, containers can reach each other by name, using Docker's built-in DNS. So an API container can connect to a database called sqlserver. Ports are only reachable from outside the host if you publish them, like mapping port 8080 on the host to port 8080 in the container. There's also host networking, where the container uses the host's network directly, and overlay networks that connect containers across multiple hosts.
+
+For volumes, a container's own filesystem is temporary. When the container is removed, its writable layer and any data written there are gone. So anything that has to persist, like database files, goes in a volume. Named volumes are managed by Docker and are the recommended option for data. Bind mounts map a folder from the host into the container, which is useful in development, say to mount source code. And tmpfs mounts are memory-only.
+
+In production, the IQVIA services I work on in ECS are stateless and don't keep data in the container at all. Data lives in managed services like RDS and S3, which is simpler and more reliable.
+
+@p6-13
+I secure Docker images at three points, how they're built, how they're scanned, and how they run.
+
+When building, start from small, trusted, official base images, like Microsoft's .NET images, pinned to specific versions, and rebuild regularly to get security patches. Use multi-stage builds so compilers and build tools don't reach the final image. Run as a non-root user, the newer .NET images include an app user for this. Never put secrets in the image, in the Dockerfile, in build arguments or in copied files, because anyone with the image can pull them out of the layers.
+
+For scanning, every image is scanned in the pipeline before it's pushed or deployed, using a tool like [Trivy], or the registry's own scanning, like Amazon ECR. The pipeline fails on high or critical vulnerabilities, so they're fixed before release, usually by updating the base image or a package. Images in the registry are also rescanned, because new vulnerabilities get discovered after release.
+
+At runtime, a read-only root filesystem where possible, dropped Linux capabilities, resource limits, and secrets injected at runtime from a secrets manager.
+
+In my team, we added image scanning to our Azure DevOps pipelines during the .NET 10 upgrade in [early 2026], which honestly made our image security visible on every build.
+
+@p6-14
+When a container misbehaves, I troubleshoot step by step, from the most basic information to the most detailed.
+
+I check the status before anything. Is it running, restarting, or exited? docker ps with the all flag shows that, and docker inspect shows the exit code and the reason. The exit code tells a lot. 137 usually means it was killed, often because it ran out of memory, 139 is a crash, and 1 is usually an application error at startup. Then the logs, with docker logs, or CloudWatch for the ECS services. Most problems show up there, a missing environment variable, a failed database connection, or an unhandled exception at startup. Then configuration, environment variables, ports, mounted volumes and the image tag. A wrong port mapping, or a service listening on localhost instead of all interfaces, is a classic. Then resources, using docker stats, to check memory and CPU against the limits. And then go inside, docker exec to open a shell, check files, and test connectivity to the database or other services. If the container crashes immediately, I override the entrypoint to start a shell, and investigate.
+
+On ECS, I check the stopped task's reason, the logs, and whether health checks are failing. One real case, in our [dev] Kubernetes cluster, was a service killed by its liveness probe because it needed [about 40 seconds] to warm up, and a startup probe fixed it.
+
+@p6-15
+So when a container crashes, the main process inside it exits, and the container stops with an exit code. What happens next really depends on how it's being run.
+
+With plain Docker, the restart policy decides. With "no", it stays stopped. With "on-failure", Docker restarts it when the exit code isn't zero. With "always" or "unless-stopped", it restarts automatically. In orchestrators, it's self-healing. On Amazon ECS, which IQVIA's newer services use, the service notices the task has stopped and starts a new one to keep the desired count, and the load balancer stops sending traffic to the failed task. Kubernetes does the same by restarting the container, and if it keeps crashing, you see CrashLoopBackOff, with longer and longer delays between restarts.
+
+Any data written inside the container's own filesystem is lost, which is why those services are stateless and keep data in databases and S3.
+
+To find the cause, I check the exit code and the stopped reason. 137 often means out of memory, and 1 is usually an application error. Then I check the logs, in CloudWatch for us, around the time of the crash, and the memory and CPU metrics.
+
+The thing is, don't rely on restarts as the fix. Restarts keep the service available, but the root cause, like a memory leak or a bad configuration, still needs fixing.
