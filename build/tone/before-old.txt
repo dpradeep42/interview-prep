@@ -1,0 +1,2 @@
+{"n": 832, "ban": 390, "ban_ans": 171, "spoken_ans": 447, "spoken_open": 16, "contr": 2635, "words": 178270, "burst": 0.464, "consec_open": 99, "contr_per100w": 1.48, "top_banned": [["(?:^|[.!?] )(?:first|second|third),", 336], ["(?:^|[.!?] )finally,", 16], ["\\bthe benefits? (?:is|are)\\b", 14], ["\\bthere are (?:a few|several|two|three) (?:ways|approaches|options|kinds|types|levels)\\b", 13], ["\\bthe trade-?off is\\b", 7], ["\\boverall,", 2], ["\\bensures?\\b", 1], ["\\ba few practical points\\b", 1]]}
+468

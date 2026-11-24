@@ -1,0 +1,107 @@
+@p1-1
+So .NET Framework is the original, Windows-only platform. Its last version is 4.8, and these days it only gets security and bug fixes. Things like WCF and classic ASP.NET live there.
+
+.NET Core was Microsoft's cross-platform, open-source rewrite. It runs on Linux and in containers, it's much faster, and it has dependency injection, configuration and logging built in. From .NET 5 onwards they dropped the "Core" name and it's just called .NET, one unified platform. The even-numbered versions, like .NET 6, 8 and 10, are long-term support releases with three years of support, and the odd ones are short-term.
+
+That's why in a regulated product like ours we standardise on the LTS versions. We moved from .NET 6 to 8, and in [early 2026] I upgraded [3] of our IRT services from .NET 8 to .NET 10. Honestly, it was mostly package updates and a few breaking changes, and we got about [10-15%] better p95 latency for free.
+
+So Framework is legacy, .NET is where everything new goes. I can walk you through how I plan an upgrade if that helps.
+
+@p1-2
+A value type holds its data directly. Think int, bool, DateTime, enums, structs. When you assign it to another variable or pass it to a method, the value gets copied, so changing the copy doesn't touch the original.
+
+A reference type, like a class, string, array or delegate, holds a reference to an object that lives on the managed heap. When you assign it, only the reference is copied, so two variables can point to the same object, and a change through one shows up through the other. Value types usually live inline, on the stack or inside their containing object, so they avoid heap allocations. But if you put a value type into an object variable, it gets boxed, and that costs an allocation.
+
+In practice, I use structs only for small, immutable values, and classes for business objects that have identity and behaviour. Like in our services, entities such as Shipment are classes, while a small Money or date-range type can be a readonly struct.
+
+One classic trap that catches people is a mutable struct inside a list, where you end up changing a copy. I can go into boxing in more detail if you like.
+
+@p1-3
+Basically, async and await let a method wait for slow work, like a database call or an HTTP request, without blocking the thread.
+
+Under the hood, the compiler rewrites an async method into a state machine. When the code hits an await on a task that isn't finished yet, it registers the rest of the method as a continuation and hands the thread back to the thread pool. And this is the important bit, no new thread is created for I/O. The operating system just tells us when the data arrives. Then the method picks up where it stopped, on a pool thread. Because threads aren't sitting idle while we wait, one server can handle way more requests with fewer threads.
+
+The rules I follow are async all the way down, never block with dot Result or dot Wait, because that can cause thread starvation or deadlocks, and avoid async void except for event handlers. In our IRT APIs, every database and HTTP call is async with cancellation tokens, so threads stay free while SQL Server is doing its work.
+
+I can also talk about ConfigureAwait, or what happens with exceptions in async methods.
+
+@p1-4
+A Thread is an actual operating system thread. It's expensive to create, it has its own stack, and you manage its lifecycle yourself. Honestly, I almost never create threads directly in modern code.
+
+A Task represents an operation that'll complete in the future. It might run on a thread-pool thread, or it might be pure I/O with no thread at all while it waits, like a database call. Tasks are what async and await are built on, they compose nicely with things like Task dot WhenAll, and they carry results and exceptions.
+
+ValueTask is a lighter option for methods that often complete synchronously, say a cache lookup that usually hits. A Task is a heap object, so returning ValueTask in those cases saves an allocation. But it has rules. You should await it only once, and you shouldn't store it.
+
+In practice, in our web APIs I use Task everywhere by default, and I'd only reach for ValueTask in a measured hot path, like a cached configuration lookup. Threads I leave to the framework, or to a BackgroundService for long-running work. I can show where ValueTask is actually worth it, if you want.
+
+@p1-5
+All three are about collections, but the difference is really where the work happens.
+
+IEnumerable works on data in memory. When you use LINQ on it, the filters run as C# code on the application server. IQueryable is different. It builds an expression tree, and a provider like EF Core translates that into SQL, so filtering, sorting and paging run inside the database. And a List is a concrete collection that's already loaded in memory, with indexing and a Count.
+
+The practical point is when the query actually executes. If you call ToList too early, or pass an IQueryable around as IEnumerable, EF Core pulls the whole table into memory and then filters it in C#. That's a classic performance bug, I've seen it more than once.
+
+So in our APIs I keep the query as IQueryable while I add filters, sorting and paging, and then call ToListAsync once at the end. On our shipment search screen, for example, building the filters on IQueryable meant SQL Server sent back just one page of rows instead of thousands.
+
+I can explain deferred execution too, it's closely related.
+
+@p1-6
+Okay so, an interface is a contract. It says what a type can do, not how, and a class can implement many interfaces. An abstract class is a partial base class. It can hold shared code, fields and constructors, but a class can inherit from only one.
+
+The way I decide is, if I need a capability or a dependency I want to swap or mock, I use an interface. If several implementations share real code, I use an abstract base class. Since C# 8 interfaces can have default methods, but I still keep them mostly as pure contracts.
+
+A real example is our SFTP integration. All three providers, ComponentPro, SSH.NET and Rebex, implement one ISftpClient interface, so the business code and the unit tests depend only on the interface, and the DI container or a factory picks the provider. And then they inherit from an abstract base class that holds the shared retry, timeout and logging logic, so I didn't repeat it three times.
+
+So it's not really either-or, they work well together. I can explain how that helped with testing.
+
+@p1-7
+SOLID is five design principles that keep code easy to change and test. Let me go through each with an example from my work.
+
+S is single responsibility, a class should have one reason to change. In our CSV import, the parser, the validator and the importer are separate classes. O is open-closed, open for extension, closed for modification. When we added Rebex as a new SFTP provider, I added a new class, I didn't touch the callers. L is Liskov substitution, any ISftpClient implementation can replace another without breaking the caller, so they all behave the same way for errors and timeouts. I is interface segregation, small, focused interfaces, so a class that only reads files doesn't depend on write methods. And D is dependency inversion, high-level services depend on abstractions, which ASP.NET Core injects through DI, so I can mock them in unit tests.
+
+I treat SOLID as guidance though, not hard rules. Too many tiny interfaces can make code harder to follow. Happy to go deeper into any one of them.
+
+@p1-8
+I use patterns only when they solve a real problem, and honestly I've used a few in production.
+
+The one I use most is Strategy, together with Adapter. In our SFTP integration, three different libraries sit behind one ISftpClient interface, and each adapter hides its library's quirks. A Factory then picks the right provider for each vendor from configuration. I've used Decorator to add retry and logging around a client without changing the client itself, which is also how Polly handlers work in HttpClient.
+
+For messaging, I've used the transactional Outbox pattern, so events aren't lost when the database save succeeds but the publish fails, and publish-subscribe with Kafka and RabbitMQ. In some services we use Repository and Unit of Work over EF Core. And for configuration and shared clients we use the Options pattern and singletons, but through dependency injection, not a static Singleton class.
+
+For me the value of a pattern is the shared vocabulary and a proven solution. I can walk through the SFTP design in detail if you'd like.
+
+@p1-9
+Garbage collection in .NET automatically frees memory for objects nothing references anymore, so we don't free memory by hand.
+
+It's generational, based on the idea that most objects die young. New objects go into generation 0, which is collected often and cheaply. Objects that survive move to generation 1, and long-lived ones move to generation 2, which is collected less often because it's more expensive. Objects bigger than about 85 KB go to the Large Object Heap, which gets collected with gen 2. ASP.NET Core uses server GC by default, with a heap per core, for throughput.
+
+One thing people miss is that the GC only handles managed memory. Files, sockets, database connections and SFTP sessions are unmanaged resources, so they need IDisposable and a using statement.
+
+In practice I don't tune the GC much, but I do watch for leaks. I once looked into a .NET service whose memory kept growing, and the cause was event handlers that were never unsubscribed, which kept objects alive. I can walk through how I diagnosed that.
+
+@p1-10
+A delegate is a type-safe reference to a method. You can store it in a variable, pass it to another method, and call it later.
+
+Func and Action are built-in generic delegates, so we rarely declare our own. Func returns a value, so a Func of int, string takes an int and returns a string. Action returns nothing. There's also Predicate, which returns a bool. A lambda is just a short inline way to write the method, like x goes to x dot IsActive. And an event is a delegate with restricted access. Other classes can subscribe and unsubscribe, but only the owning class can raise it.
+
+One thing to be careful about, lambdas can capture variables, which creates a closure. That's really useful, but it can keep objects alive longer than you'd expect, and event handlers that never get unsubscribed are a common memory leak.
+
+I use these every day, you know, lambdas in LINQ queries, Func in minimal API endpoints, and Action delegates for options configuration, like services dot AddOptions with a configure lambda. I can explain closures in more depth if that's useful.
+
+@p1-11
+Deferred execution means a LINQ query doesn't run when you write it. It only runs when you actually enumerate it, like in a foreach loop, or when you call ToList, Count, First or Any.
+
+That's useful, because you can build a query step by step, adding filters and sorting based on conditions, and with EF Core it all becomes one SQL statement at the end. But it has two risks. Every enumeration runs the query again, so if you loop over an IQueryable twice, you hit the database twice. And the data can change between when you define the query and when it runs, because it reads the data at execution time.
+
+So my rule is, if I need the results more than once, I materialise them once with ToList or ToArray and reuse that list. Operators like ToList, Count, Sum and First run immediately anyway.
+
+In our search APIs we build the query conditionally on IQueryable, and only call ToListAsync after paging, so SQL Server returns just one page. I can show the double-enumeration bug in code if you like.
+
+@p1-12
+Code is thread-safe when it still behaves correctly even if lots of threads run it at the same time.
+
+My starting approach is to avoid shared mutable state altogether. I keep services stateless and use immutable objects, so there's nothing to protect. When I do need shared state, I pick the right tool. For simple counters, Interlocked. For shared caches, ConcurrentDictionary. For a short critical section, the lock statement, and for async code, SemaphoreSlim, because you can't await inside a lock. SemaphoreSlim is also handy to limit concurrency, like deploying to only a few nodes in parallel. And for lazy initialisation I use Lazy of T instead of hand-written double-checked locking.
+
+I'm also careful with singletons in DI, because a singleton holding mutable state is shared by every request. That one bites people.
+
+And thread safety can cross processes too. In our CSV import, we used a lock row in the database so two users couldn't import into the same study at the same time. I can go into that design if it's helpful.
