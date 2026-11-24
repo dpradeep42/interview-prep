@@ -1,0 +1,107 @@
+@p1-37
+DbContext is basically a unit of work with the database. It tracks entities, holds a connection when it needs one, and saves changes in one transaction. That's why it's meant to be short-lived.
+
+In ASP.NET Core, it's registered as scoped, so each HTTP request gets its own DbContext, shared by all services in that request and disposed at the end. And here's the key thing, DbContext isn't thread-safe. If two tasks use the same instance in parallel, like Task dot WhenAll over two queries, EF Core throws an exception about a second operation starting on this context. So for parallel work, each task needs its own context, which you get from IDbContextFactory.
+
+In background services, which are singletons, I create a scope per unit of work, like per message, so each one gets a fresh DbContext with clean change tracking. Keeping one context around for a long time makes the change tracker grow and the data go stale. For really high-throughput APIs, AddDbContextPool reuses context instances to cut allocation cost.
+
+In our RabbitMQ consumers, each message gets its own scope and DbContext. I can explain IDbContextFactory in more detail.
+
+@p1-38
+EF Core lets me run raw SQL when LINQ isn't enough, but I have to do it safely, with parameters.
+
+For queries that return entities, I use FromSql, or FromSqlInterpolated. For commands, ExecuteSql or ExecuteSqlInterpolated. The important bit is that with the interpolated versions, the values in the curly braces aren't pasted into the SQL text. EF Core turns them into proper SQL parameters, so they're safe from SQL injection. What I never do is build SQL by concatenating strings with user input, and I'm careful with FromSqlRaw, which needs explicit parameters. Results can map to entities, or to keyless entity types for custom shapes, and with SqlQuery I can map to unmapped types too. You can even compose LINQ on top of FromSql.
+
+I use raw SQL for things LINQ can't express efficiently, like calling existing stored procedures, using query hints, or complex reporting queries that were tuned by hand.
+
+In our IRT database, some older stored procedures for inventory calculations are called this way, with parameters, so honestly we reused tested logic instead of rewriting it. I can explain how SQL injection works if that's useful.
+
+@p1-39
+By default, each SaveChanges call in EF Core is atomic. All the inserts, updates and deletes it generates run in one database transaction, so either all succeed or none do.
+
+When I need several SaveChanges calls, or a mix of EF operations and raw SQL, to succeed or fail together, I start an explicit transaction with BeginTransactionAsync, do the work, and call CommitAsync. If anything fails, it rolls back. With retrying execution strategies, I wrap the transaction in the strategy's ExecuteAsync, so the whole unit gets retried. I keep transactions short, and never call external services inside them, because long transactions hold locks and cause blocking and deadlocks.
+
+Across microservices, there's no shared database transaction, you know. Distributed transactions are fragile, so we use the outbox pattern. The business change and an outbox message are saved in the same local transaction, and a separate process publishes the message afterwards. For multi-step workflows, a saga coordinates the steps with compensating actions.
+
+In our shipment flow, the shipment update and its outbox event are saved together, so we never update the database without publishing the event, or the other way round. I can explain the outbox in detail.
+
+@p1-40
+WCF, Windows Communication Foundation, is the .NET Framework technology for building service-oriented applications. Mostly SOAP web services, but also TCP and named-pipe communication.
+
+Every WCF endpoint is defined by its ABCs. A is the Address, where the service lives, the URL. B is the Binding, how you talk to it, the transport and encoding, like basicHttpBinding for simple SOAP, wsHttpBinding for WS-Security and reliable messaging, or netTcpBinding for fast binary communication between .NET systems. C is the Contract, what the service offers, ServiceContract on the interface, OperationContract on each method, and DataContract on the data types. WCF also supports message-level security, transactions and reliable messaging, which is why it got so popular in enterprises.
+
+Modern .NET doesn't include the WCF server, only a client. For the server side, there's CoreWCF, a community project Microsoft supports, or you move to REST or gRPC.
+
+In our IRT platform, some older integrations still expose WCF SOAP endpoints for external partners, so I've maintained those contracts, and I've been involved in planning how to modernise them. I can explain the migration options.
+
+@p1-41
+Migrating WCF services is mainly about not breaking existing clients, while getting onto modern, supported .NET.
+
+You've got two main paths. One is CoreWCF, a port of the WCF server to modern .NET. It keeps the same SOAP contracts and most bindings, so existing clients don't change at all. It's the lowest-risk path when external partners depend on the SOAP interface. The other is re-exposing the functionality as REST with ASP.NET Core, or gRPC for internal calls. That's more modern, but clients have to change, so during the transition I'd keep a thin adapter that still serves the old SOAP contract.
+
+Whichever path, I'd go step by step. Move business logic out of the service classes into shared libraries to begin with, so the WCF layer becomes thin. Then migrate endpoint by endpoint, using the strangler fig pattern, routing traffic gradually to the new implementation. Contract tests compare old and new responses for the same inputs, to prove behaviour's identical, which also gives validation evidence in a GxP system.
+
+For our partner-facing SOAP integrations, I'd say CoreWCF is the pragmatic first step, and REST can come later. I can go into the testing approach.
+
+@p1-42
+Okay, so the situation was, in [early 2026], [6] of our IRT services, a mix of ASP.NET Core APIs and background workers, were still on .NET 8. .NET 8 support ends in November 2026, and in a GxP product we have to run on a supported runtime, so we planned the move to .NET 10, the next long-term support release.
+
+I owned the upgrade of [3] of those services end to end. The goal was no change in behaviour, delivered inside [one release cycle].
+
+What I did was build an inventory to start with, every project, target framework, NuGet package, Docker base image and pipeline agent. That showed third-party packages were the real critical path. I upgraded the shared libraries before anything else, because every service used them, and introduced central package management after we hit [a version conflict in Microsoft.Extensions packages]. Then I upgraded each service in its own pull request with a checklist, target framework, SDK on build agents, Dockerfiles moved to the .NET 10 runtime images, and Microsoft's breaking-change list. Like, I checked our workers against the BackgroundService startup change. We ran full regression, scanned images with [Trivy], and measured p95 latency and memory before and after on the same validation environment.
+
+In the end, all [3] services went through FV, UAT and production in [about six weeks] with [no functional defects], and p95 latency dropped about [10 to 15 percent] without touching business logic. The inventory and checklist became the template for the other services. I can go deeper into any step.
+
+@p1-43
+Honestly, not always. EF Core already implements both patterns. DbSet behaves like a repository, a collection of entities you can query and add to, and DbContext is a unit of work, because it tracks changes and saves them in one transaction.
+
+So wrapping EF Core in a generic repository, with GetById, GetAll, Add and Update for every entity, often adds a layer without value. It either hides useful EF features, or it leaks IQueryable everywhere, which means the abstraction isn't really abstracting anything. And mocking a generic repository doesn't test your real queries anyway.
+
+But a thin, specific repository can still help. It gives a name to complex queries, like GetActiveShipmentsForSite. It enforces rules in one place, like soft delete filters or always scoping by study, which is critical for us because data must never cross studies. And it makes the service layer easy to unit test.
+
+So my rule is, add the layer when it removes duplication or protects an invariant, not by default. In our services, we have specific repositories for complex aggregates, while simple lookups use the DbContext directly, and query behaviour is tested against a real SQL Server in integration tests. I can explain how we test that.
+
+@p1-44
+Both are B-tree structures that help SQL Server find rows quickly, but they store data differently.
+
+A clustered index defines the physical order of the table's rows. The leaf level of the clustered index is the actual data, so there can only be one per table, and it's usually on the primary key. A non-clustered index is a separate structure, with its own sorted key columns and a pointer back to the row, which is the clustered key. You can have lots of them. When a query uses a non-clustered index but needs columns that aren't in it, SQL Server does a key lookup back into the clustered index for every row, which gets expensive for large results. A covering index solves that by adding the extra columns with INCLUDE, so the query's answered from the index alone.
+
+The catch is that every index speeds up reads but slows down inserts, updates and deletes, and uses storage. So I index based on real query patterns, not guesses.
+
+My best example is our shipment list fix. A covering index on StudyId, Status and ShipmentDate, with the displayed columns included, took the query from [about 9 seconds to under 300 ms]. I can walk through that story.
+
+@p1-45
+Sure, so in our IRT system, the site shipment list screen started timing out for a large study with [about 300] sites. It was taking [8 to 12 seconds], and support tickets were coming in from study teams.
+
+I was asked to find the cause and fix it, without risking other screens, and with proper release evidence, because it's a GxP system.
+
+I didn't guess. I took the real query, with real parameters, from Query Store, and looked at the actual execution plan with STATISTICS IO turned on. It showed three problems. A clustered index scan over [millions] of rows, expensive key lookups, and a CONVERT to date on the ShipmentDate column, which stopped SQL Server using any index on it. I fixed them one at a time, measuring after each step. The date filter became a range, ShipmentDate greater than or equal to the day and less than the next day, which is free. Then a covering index on StudyId, Status and ShipmentDate, including the displayed columns. Then server-side paging. The index script was reviewed, tested for write impact, and released through FV, UAT and production.
+
+Logical reads dropped from [about 400,000 to 2,000], and response time went from [about 9 seconds to under 300 ms]. The tickets stopped. I also added a latency alert and put that query into our pre-release performance checks. I can show the before and after SQL.
+
+@p1-46
+SARGable means Search ARGument-able. A predicate is SARGable when SQL Server can use an index seek for it, jumping straight to the matching rows instead of scanning everything.
+
+The most common way people break it is wrapping the indexed column in a function or calculation. Like WHERE YEAR of CreatedOn equals 2024, or CONVERT to date on a datetime column, or LEFT of Code, or Column plus 1 equals 5. SQL Server has to compute that for every row before comparing, so it scans. A sneaky one is a data type mismatch, like comparing an NVARCHAR parameter to a VARCHAR column, which causes an implicit conversion on the column. Leading wildcards, like LIKE percent ABC, also prevent seeks.
+
+The fix is to keep the column bare and move the logic to the other side. Instead of YEAR equals 2024, write CreatedOn greater than or equal to January 1st 2024 and less than January 1st 2025. Instead of LEFT, use LIKE 'ABC%'.
+
+This exact issue was one of the causes of our slow shipment list, a CONVERT on the ShipmentDate column. Rewriting it as a date range was the first step in taking that query [from about 9 seconds to under 300 ms]. I can explain how to spot it in an execution plan.
+
+@p1-47
+Joins combine rows from two or more tables based on a related column, and the type of join decides what happens to rows that don't match.
+
+An INNER JOIN returns only rows that match in both tables, like shipments with their site. A LEFT JOIN returns every row from the left table, plus matching rows from the right, with NULLs where there's no match. So "all sites, and their shipments if any". A RIGHT JOIN is the mirror image, and in practice we just rewrite it as a LEFT JOIN. A FULL OUTER JOIN returns all rows from both sides, matched where possible, which is useful for reconciliation. A CROSS JOIN returns every combination of rows, like every site with every kit type, handy for generating grids but dangerous on large tables. And a SELF JOIN joins a table to itself, like an employee table to find each person's manager.
+
+A classic use of LEFT JOIN is finding missing data, you LEFT JOIN and then filter WHERE the right side IS NULL.
+
+In our IRT work, I used exactly that to find sites with no shipments in the last 30 days, for a study team's resupply review. I can explain how joins relate to performance.
+
+@p1-48
+Normalisation organises a relational database to remove duplicate data, so each fact is stored in exactly one place. Denormalisation deliberately duplicates some data to make reads faster.
+
+The normal forms build on each other. In first normal form, each column holds a single, atomic value, with no repeating groups. In second normal form, every non-key column depends on the whole primary key, not part of a composite key. In third normal form, non-key columns depend only on the key, not on other non-key columns. Like, a site's country name belongs in a countries table, not repeated on every shipment row. Normalisation prevents update anomalies, where you change data in one place and forget another.
+
+Denormalisation trades that safety for read speed, fewer joins, precomputed values. It's common in reporting databases, read models in CQRS, and NoSQL stores like DynamoDB, where you design tables around access patterns.
+
+So for me the balance is normalised for writes, denormalised for reads. In our IRT system, the transactional database is normalised, because data integrity is critical in clinical trials. But reporting views, and some read models fed by events, are denormalised for speed. I can explain how we keep them in sync.
