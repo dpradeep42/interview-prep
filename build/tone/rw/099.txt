@@ -1,0 +1,107 @@
+@p2-52
+XSS and CSRF are both browser-based attacks, but they kind of work in opposite directions.
+
+XSS, cross-site scripting, is when an attacker manages to run their own JavaScript inside your site, usually by injecting it through user input that's displayed without proper encoding, like a comment or a name field. That script runs with your site's privileges, so it can read data on the page, steal tokens from localStorage, or act as the user. To prevent it, encode output, which React does by default, sanitise any HTML you have to render, with DOMPurify, use a Content Security Policy to block inline and unknown scripts, and keep session cookies HttpOnly, so scripts can't read them.
+
+CSRF, cross-site request forgery, is when an attacker's website makes the user's browser send a request to your site, and the browser automatically includes the user's cookies, so the request looks legitimate. Like a hidden form that submits a change. To prevent it, SameSite cookies, which stop cookies being sent on cross-site requests, anti-forgery tokens in forms, which ASP.NET Core supports built in, and checking the Origin header.
+
+APIs using bearer tokens in headers, not cookies, aren't vulnerable to CSRF, but they are to XSS if tokens sit in localStorage. People miss that. I can explain how we store tokens.
+
+@p2-53
+My rule for secrets is simple. They never show up in source code, configuration files in git, container images or logs.
+
+Secrets live in a managed store. On AWS, that's Secrets Manager for credentials that should rotate, and Parameter Store SecureString for others, encrypted with KMS. In Azure, Key Vault, and in pipelines, secret variables. Services read them at runtime using their IAM role, so there are no keys to bootstrap the keys. Access follows least privilege, each service can read only its own secrets, per environment, and access is audited through CloudTrail. Secrets get rotated regularly. For RDS, Secrets Manager does it automatically, and apps re-read the secret if a connection fails. For local development, developers use .NET user secrets or a local file that's excluded from git.
+
+Detection matters too. Secret scanning in CI and pre-commit hooks, like gitleaks, so if someone accidentally commits a key, it's caught and rotated straight away. And logs mask sensitive values.
+
+The same thinking goes into tools I've built. In our CIRT MCP server, each user's Azure DevOps personal access token comes from their own environment, never from a file in the repository, and the server acts with that user's own permissions. I can explain how rotation works without downtime.
+
+@p2-54
+The Model Context Protocol, MCP, is an open protocol that standardises how AI applications connect to external tools and data. I like to think of it as USB-C for AI, one standard connector instead of a custom integration for every pair of tools.
+
+There are three roles. The host is the AI application, like Claude, Cursor or GitHub Copilot. Inside it, an MCP client connects to MCP servers. An MCP server exposes capabilities, tools, which are actions the model can call, like "queue a build", resources, which are data the model can read, and prompts, which are reusable templates. The client discovers what the server offers, including each tool's name, description and input schema, and the model decides when to call a tool based on the user's request. Communication uses JSON-RPC, over stdio for local servers, or HTTP for remote ones.
+
+The big win is that you build an integration once, and it works with any MCP-compatible host. Before MCP, every AI tool needed its own plugin format.
+
+I built the CIRT MCP server, with about 77 tools, which lets AI agents run builds, releases and multi-node deployments on our on-premise Azure DevOps Server. It cut deployments from 6 hours to 2, and from 6 people to 1. I can walk through its design.
+
+@p2-55
+So the CIRT MCP server lets AI agents run build, release and multi-node deployment operations on our on-premise Azure DevOps Server. I designed it around one idea, the model should always be able to pick the right tool and use it correctly.
+
+The about 77 tools are grouped by domain, [roughly 15] for builds, [20] for releases and approvals, [25] for multi-node deployments, and [17] for information, like logs, artifacts and environment checks. Names follow a verb-noun convention, like queue build, get release status and deploy release stage, so the model chooses correctly. Each description says when to use the tool and what it returns, and parameters are typed with enums and examples, like the environment names [FV, TechOps, UAT and Prod]. Outputs are short, structured summaries, like status, failing step and a link, not raw JSON dumps, to save the model's context. Long operations return an id, and a separate status tool polls, so nothing blocks for hours. A few composite tools, like deploying to an environment and verifying versions on all nodes, cut down multi-step mistakes.
+
+It's built in C# on .NET 8 with the official MCP SDK, runs locally over stdio, and calls Azure DevOps with each user's own permissions.
+
+Honestly, the payoff was big. Deployments went from 6 hours to 2, and from 6 people to 1. I can explain the safety design.
+
+@p2-56
+An MCP server lets an AI model take real actions, so safety has to be designed in, not bolted on later. I think about it in layers.
+
+Identity and least privilege come before anything. The server acts with the calling user's own credentials and permissions, never a shared admin token. So the AI can never do more than that user could do manually. Then separating risk. Read-only tools, like getting status or logs, are separate from write tools, like queuing a build or deploying. Destructive or production-affecting actions need explicit confirmation, and our existing human approval gates in Azure DevOps stay in place. The AI doesn't bypass the GxP process. Then input validation. Every input is checked against a schema, with allow-lists for things like environment names, so a model can't pass something unexpected. Auditability too, every tool call is logged with who, what, parameters and result. And protection against prompt injection. Content returned from tools, like logs, is treated as data, not instructions, and tools never execute arbitrary commands.
+
+And clear errors, so the model reports a failure instead of guessing.
+
+In our CIRT MCP server, I think these choices were what made teammates comfortable using it on real UAT deployments. I can explain how we rolled it out safely.
+
+@p2-57
+A good tool definition makes it easy for the model to pick the right tool and call it correctly the first time. It's really API design, but the consumer is an AI model.
+
+The name should be specific and verb-first, like queue build or get release status, not something vague like "build" or "helper". The description is the most important part, honestly. It should say what the tool does, when to use it, and when not to, what it returns, and maybe a short example. The model reads it to decide. The input schema should be small and typed, with enums for fixed choices, like environment names, sensible defaults, and only truly required fields marked as required. Fewer, clearer parameters mean fewer mistakes. The output should be compact and structured, like a status, the key fields and a link, instead of huge raw responses that waste the model's context. And errors should be clear and actionable, like "environment UAT2 doesn't exist, valid values are FV, TechOps, UAT, Prod", so the model can correct itself.
+
+Also, avoid overlapping tools that do almost the same thing, because the model will pick the wrong one.
+
+These rules came straight out of building our CIRT MCP server with about 77 tools. I can share examples of descriptions that improved tool selection.
+
+@p2-58
+I use GitHub Copilot and Cursor every day as a productivity tool, but I treat their output like code from a new teammate. Useful, but always reviewed.
+
+Inline completions handle repetitive code really well, DTO mappings, boilerplate, simple tests and LINQ queries. Chat helps me understand unfamiliar code quickly, like an older module or a library I haven't used before. In Cursor, agent mode is great for multi-file changes, refactors and upgrade chores, like updating packages or replacing an API across a solution. We use project rules, so it follows our conventions, like our logging and error handling patterns. And through a RAG service I built in Python, exposed as MCP tools, Copilot and Cursor pull our existing code and coding standards as context, so implementations fit the project and hallucinate less. I also use it to generate unit tests and test data, to draft SQL and pipeline YAML, and to write documentation and pull request descriptions.
+
+What I don't do is accept large changes without reading them, or let it touch security-sensitive code without careful review. Everything still goes through compilation, tests, SonarQube and code review.
+
+For me, the biggest impact was building the CIRT MCP server, where the AI tools sped up writing the tool wrappers, and the server itself now lets those same tools run our deployments. I can explain how I review AI-generated code.
+
+@p2-59
+I review AI-generated code with the same standards as any pull request, and in some areas, more strictly, because it can look very confident while being wrong.
+
+For accuracy, I read the logic carefully, edge cases, null handling, error handling, and async correctness, like missing awaits or blocking calls. I check that it actually does what I asked, not something similar. I check APIs and packages against official documentation, because models sometimes invent methods, use outdated APIs, or suggest packages that don't exist, which can even be a supply-chain risk if someone registers that name. For security, I look for injection risks, missing authorization checks, hard-coded secrets, unsafe deserialisation, and sensitive data in logs.
+
+Then I verify, I don't just trust it. It has to compile without warnings, pass unit tests, which I often write or review myself, pass SonarQube and security scans, and actually run. For important logic, I ask for or write tests for the edge cases up front.
+
+And my last rule is I only commit code I understand well enough to explain in a code review, and maintain later. If I can't explain it, it doesn't go in. I can give an example of a subtle bug I caught in generated code.
+
+@p2-60
+Good prompting is mostly about giving the model the same context and clarity you'd give a new colleague, I think.
+
+Context and goal come before anything, the role, the relevant code or files, the exact outcome I want, and constraints, like ".NET 10, use our existing logging pattern, don't add new packages". Vague prompts get generic answers. Then examples. If I want a particular format or style, I show one or two examples of input and output, which is called few-shot prompting. Then decomposition. For complex tasks, I ask for a plan up front, review it, and then ask for the implementation step by step, instead of one huge request. An explicit output format helps too, like JSON with given fields, or "only the changed method". And iteration with real feedback. I paste the actual compiler error or failing test output back to the model, which works much better than saying "it doesn't work".
+
+For tools and agents, the same ideas apply to system prompts and tool descriptions. Be specific about when to do something and when not to.
+
+When I introduced our MCP server to the team, I wrote [10] example prompts in the README, and good examples were one of the biggest reasons people succeeded on their first try. I can share a few.
+
+@p2-61
+RAG, retrieval-augmented generation, is a way to make a language model answer questions using your own, up-to-date documents, instead of relying only on what it learned during training.
+
+It has two phases. Ingestion, where you take your documents, like wikis, runbooks or specifications, split them into chunks, create an embedding for each chunk, which is a vector that represents its meaning, and store them in a vector index. And querying. When a user asks a question, you embed the question, search the index for the most similar chunks, often combined with keyword search, and put those chunks into the prompt with instructions like "answer using only this context and cite sources". The model then answers grounded in that content.
+
+What you get is answers that use current and private information, without retraining the model, and they can cite sources, so users can verify them, which cuts hallucinations. The quality depends heavily on retrieval, chunk size, good metadata, hybrid search, and re-ranking. And access control matters, users should only retrieve documents they're allowed to see.
+
+In my work, I built a RAG service in Python that gives GitHub Copilot and Cursor the context of our codebase and coding standards, through MCP tools like search codebase, so their code fits our project and hallucinations drop. I can explain how to evaluate retrieval quality.
+
+@p2-62
+An AI agent is basically a language model running in a loop. It plans what to do, calls a tool, looks at the result, and decides the next step, repeating until the goal is reached. Agentic orchestration is how you coordinate that loop, or several agents, safely and reliably.
+
+Orchestration covers a few things. Which agents exist and their roles, say a planner that breaks down the task, an executor that calls tools, and a reviewer that checks the result. Which tools each agent can use. And the limits, a maximum number of steps, cost or time budgets, permissions, and points where a human has to approve. AutoGen, from Microsoft, is a framework for building multi-agent conversations, where agents with different roles talk to each other to solve a task. Claude Code is an agentic coding tool that works in your repository and terminal. It reads files, runs commands, edits code and runs tests, in that same plan-act-observe loop.
+
+The engineering concerns that matter are reliability and safety, clear tool definitions, good error messages so agents can recover, logging every step, and human approval for risky actions.
+
+Our CIRT MCP server is the tool layer that agents like Claude and Cursor use for deployments, with approvals kept for production. I can explain how agents use it end to end.
+
+@p2-63
+Both give you access to powerful language models, but Azure OpenAI wraps them in enterprise controls.
+
+With Azure OpenAI, the models run inside the company's own Azure tenant. You get enterprise security and identity, with Microsoft Entra ID authentication and role-based access, private networking through private endpoints, so traffic doesn't cross the public internet, data residency in chosen regions for compliance, and contractual commitments that your prompts and data aren't used to train models. It also plugs into Azure monitoring, content filtering and governance. Using a model provider's API directly is simpler to start with, might get the newest models and features sooner, and is great for prototypes, but the security, compliance and data agreements depend on that provider's terms and need a separate review.
+
+For a regulated healthcare company, honestly, the enterprise controls usually decide it. Clinical and personal data has to be protected, so private networking, data residency and clear data-use terms are often requirements, not preferences.
+
+My approach would be to prototype quickly, but build production features on the enterprise-approved platform, and keep the code behind an abstraction, so we can switch models without rewriting the application. I can explain how I'd keep sensitive data out of prompts.
