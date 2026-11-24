@@ -9828,181 +9828,146 @@ S: awsx
 D: A
 T: How would you migrate an on-premise SQL Server database to AWS?
 K: migrate sql server to aws, aws dms, rds for sql server, sql server to aurora, database migration aws
-X: I'd start by choosing the target, then the migration method.
-X: Target options.
-X: RDS for SQL Server: managed SQL Server, with backups, patching and Multi-AZ handled by AWS. The least change for applications. Limits: no full sysadmin access, some features restricted, and SQL Server licensing included in the price, which is expensive.
-X: SQL Server on EC2: full control and every feature, for databases that need things RDS doesn't support, but you manage everything.
-X: Aurora PostgreSQL or Babelfish: a bigger change to save licensing costs, requiring code and schema conversion, which is a project in itself.
-X: Migration methods.
-X: Native backup and restore: take a full backup on-premise, upload to S3, and restore into RDS with the native restore procedure. Simple and reliable; for minimal downtime, follow with differential and log backups, then a short cutover.
-X: AWS DMS, Database Migration Service: copies data and keeps replicating changes with change data capture, so the target stays in sync until cutover. Useful for heterogeneous migrations with the Schema Conversion Tool, or to minimise downtime.
-X: Distributed availability groups or log shipping to EC2 for near-zero downtime.
-X: Planning: inventory features in use, like SQL Agent jobs, linked servers, CLR, cross-database queries and SSIS packages, since some don't work the same on RDS; size the instance from current metrics; test performance with production-like load; rehearse the cutover; and plan rollback.
-X: For a setup with many databases, like one per study, automation and wave planning are essential: migrate a few low-risk databases first, learn, then scale up.
+X: So I'd start by picking the target, and then the migration method.
+X: For the target, RDS for SQL Server is managed SQL Server, with backups, patching and Multi-AZ handled by AWS. Least change for the applications. The limits are no full sysadmin access, some features restricted, and SQL Server licensing is included in the price, which is expensive.
+X: SQL Server on EC2 gives full control and every feature, for databases that need things RDS doesn't support, but then you manage everything yourself.
+X: Aurora PostgreSQL or Babelfish is a bigger change to save licensing cost. It needs code and schema conversion, which is honestly a project in itself.
+X: For the method, native backup and restore is the simplest. Take a full backup on-premise, upload it to S3, and restore into RDS with the native restore procedure. Reliable, and for minimal downtime you follow it with differential and log backups, then a short cutover.
+X: AWS DMS, the Database Migration Service, copies the data and keeps replicating changes with change data capture, so the target stays in sync until cutover. Useful for heterogeneous migrations with the Schema Conversion Tool, or to keep downtime small.
+X: Distributed availability groups or log shipping to EC2 if you need near-zero downtime.
+X: Planning, inventory the features in use, SQL Agent jobs, linked servers, CLR, cross-database queries, SSIS packages, since some don't behave the same on RDS. Size the instance from current metrics, test performance with production-like load, rehearse the cutover, and plan the rollback.
+X: And for a setup with many databases, like one per study, automation and wave planning are essential. Migrate a few low-risk databases first, learn from them, then scale up.
 @p17-901
 S: awsx
 D: A
 T: How do you run scheduled and batch jobs on AWS: EventBridge Scheduler with ECS, Lambda or AWS Batch?
 K: scheduled jobs aws, ecs scheduled task, aws batch, cron jobs aws, batch processing aws
-X: Choosing where to run scheduled and batch work depends on duration, resources and complexity.
-X: Lambda with EventBridge Scheduler: for short jobs, under 15 minutes, like nightly cleanups, sending reminders or calling an API. Cheap and simple, with retries and dead-letter queues on the schedule.
-X: ECS scheduled tasks: EventBridge Scheduler starts a Fargate or EC2 task on a cron schedule. Good for longer jobs, jobs needing more memory or CPU, or jobs that already exist as containers, like a .NET console app. No time limit, and you pay only while the task runs.
-X: AWS Batch: for large-scale batch processing with many jobs, queues and priorities, job dependencies and array jobs, like processing thousands of files or heavy computations. Batch manages compute environments, including Spot instances, and schedules jobs efficiently.
-X: Step Functions: to orchestrate multi-step jobs, with retries, branching, parallel steps and error handling, calling Lambda, ECS tasks or Batch jobs, triggered by a schedule.
-X: Design rules for any of them.
-X: Idempotent and restartable: a job that fails halfway must be safe to rerun, with checkpoints for long jobs.
-X: No overlapping runs: ensure only one instance runs at a time if that matters, using locks or Step Functions.
-X: Monitoring: alarms on failures, and on jobs that didn't run, using a heartbeat pattern, because silent non-execution is a common problem.
-X: Timeouts and resource limits so stuck jobs don't run forever.
-X: This is the AWS equivalent of what we do on-premise with Quartz jobs, and what our AlertWatchDog-style checks would look like if they ran in IQVIA's newer AWS services.
+X: Where to run scheduled and batch work really depends on duration, resources and complexity.
+X: Lambda with EventBridge Scheduler is for short jobs, under 15 minutes, like nightly cleanups, sending reminders or calling an API. Cheap and simple, with retries and dead-letter queues on the schedule.
+X: ECS scheduled tasks, where EventBridge Scheduler starts a Fargate or EC2 task on a cron schedule. Good for longer jobs, jobs needing more memory or CPU, or jobs that already exist as containers, like a .NET console app. No time limit, and you only pay while the task runs.
+X: AWS Batch is for large-scale batch processing with lots of jobs, queues and priorities, job dependencies and array jobs, like processing thousands of files or heavy computations. Batch manages the compute environments, Spot instances included, and schedules jobs efficiently.
+X: Step Functions to orchestrate multi-step jobs, with retries, branching, parallel steps and error handling, calling Lambda, ECS tasks or Batch jobs, triggered by a schedule.
+X: Whichever you pick, some design rules apply. Jobs have to be idempotent and restartable, so a job that fails halfway is safe to rerun, with checkpoints for long ones. No overlapping runs, make sure only one instance runs at a time if that matters, using locks or Step Functions. Monitoring, alarms on failures and on jobs that didn't run at all, with a heartbeat pattern, because silent non-execution is a really common problem. And timeouts and resource limits so stuck jobs don't run forever.
+X: It's the AWS version of what we do on-premise with Quartz jobs, and what our AlertWatchDog-style checks would look like if they ran in IQVIA's newer AWS services.
 @p17-902
 S: awsx
 D: A
 T: What is Amazon OpenSearch Service used for?
 K: amazon opensearch, opensearch service, elasticsearch aws, full text search aws, opensearch dashboards
-X: Amazon OpenSearch Service is a managed service for OpenSearch, the open-source fork of Elasticsearch. It's used for two main things.
-X: Search: full-text search with relevance ranking, fuzzy matching, autocomplete, filtering and faceting, for searching products, documents or records much better than SQL LIKE queries. Data is indexed from the main database, often through change events or a sync process, with the database remaining the source of truth.
-X: Log and observability analytics: ingesting application logs, metrics and traces, then searching and visualising them with OpenSearch Dashboards, the Kibana equivalent. It's an alternative to CloudWatch Logs or commercial tools for teams wanting more powerful search over large log volumes.
-X: It also supports vector search with k-nearest-neighbour indexes, used for semantic search and retrieval-augmented generation, combining keyword and vector search in one query.
-X: Operational points.
-X: Sizing: choose instance types and counts, storage, and dedicated master nodes for stability; plan shard counts carefully, since too many small shards wastes resources.
-X: OpenSearch Serverless removes cluster management, scaling automatically, with a different cost model.
-X: High availability: multiple Availability Zones and replicas.
-X: Security: VPC access, fine-grained access control, and encryption.
-X: Index lifecycle: rollover and delete or move older log indexes to cheaper UltraWarm and cold storage tiers, otherwise log clusters grow expensive quickly.
-X: When I wouldn't use it: if search needs are simple, database full-text search may be enough; and if logs are already handled well by CloudWatch, Splunk or Datadog, adding another log platform increases cost and complexity.
+X: Amazon OpenSearch Service is a managed service for OpenSearch, the open-source fork of Elasticsearch. People mainly use it for two things.
+X: Search. Full-text search with relevance ranking, fuzzy matching, autocomplete, filtering and faceting, for products, documents or records, way better than SQL LIKE queries. Data gets indexed from the main database, often through change events or a sync process, and the database stays the source of truth.
+X: Log and observability analytics. Ingesting application logs, metrics and traces, then searching and visualising them with OpenSearch Dashboards, which is the Kibana equivalent. It's an alternative to CloudWatch Logs or commercial tools for teams that want more powerful search over big log volumes.
+X: It also supports vector search with k-nearest-neighbour indexes, used for semantic search and retrieval-augmented generation, and you can combine keyword and vector search in one query.
+X: Operationally, a few things matter. Sizing, pick instance types and counts, storage, and dedicated master nodes for stability, and plan shard counts carefully, because too many small shards just wastes resources. I've seen that hurt clusters badly.
+X: OpenSearch Serverless takes away cluster management and scales automatically, with a different cost model.
+X: High availability with multiple Availability Zones and replicas. Security with VPC access, fine-grained access control and encryption.
+X: Index lifecycle, roll over and delete older log indexes, or move them to the cheaper UltraWarm and cold tiers, otherwise log clusters get expensive fast.
+X: When I wouldn't use it, if search needs are simple, database full-text search might be enough. And if logs are already handled well by CloudWatch, Splunk or Datadog, adding another log platform just adds cost and complexity.
 @p17-903
 S: awsx
 D: A
 T: How do you patch and manage servers at scale with AWS Systems Manager?
 K: systems manager patch manager, ssm run command, aws patching, ssm state manager, fleet management aws
 X: AWS Systems Manager is a set of tools for managing EC2 instances and on-premise servers at scale, through the SSM agent installed on each machine.
-X: The parts I'd use for operations.
-X: Patch Manager: defines patch baselines, which patches to approve, like security updates automatically after seven days, and patch groups by tags, like web servers or database servers. Patches are applied in maintenance windows, with compliance reports showing which servers are missing patches.
-X: Maintenance Windows: schedule patching and other tasks during agreed times, with controlled concurrency and error thresholds, like patching 10 percent of servers at a time and stopping if more than one fails.
-X: Run Command: run scripts or commands across many servers at once, by tag, with output logged, instead of logging in to each one. For example, collecting diagnostics or restarting a service.
-X: State Manager: keep servers in a defined state, like ensuring an agent is installed or a configuration is applied, and reapplying if it drifts.
-X: Session Manager: shell access without SSH keys or open ports, fully audited.
-X: Inventory: collects installed software, updates and configuration from all servers.
-X: Hybrid: the agent can also run on on-premise servers, so the same tools manage both cloud and data centre machines, which helps during a long migration.
-X: For safe patching: patch lower environments first, take snapshots or AMIs before patching critical servers, drain servers from load balancers during patching, and check health afterwards.
-X: In a containerised world, patching moves to rebuilding images with updated base images, but for VM-based and Windows workloads, Systems Manager is the main tool.
+X: The parts I'd actually use for operations. Patch Manager defines patch baselines, which patches to approve, like security updates automatically after seven days, and patch groups by tags, like web servers or database servers. Patches get applied in maintenance windows, and compliance reports show which servers are missing patches.
+X: Maintenance Windows schedule patching and other tasks during agreed times, with controlled concurrency and error thresholds, like patching 10 percent of servers at a time and stopping if more than one fails.
+X: Run Command runs scripts or commands across many servers at once, by tag, with the output logged, instead of logging in to each one. Like collecting diagnostics or restarting a service.
+X: State Manager keeps servers in a defined state, like making sure an agent's installed or a config's applied, and reapplies it if it drifts.
+X: Session Manager gives shell access without SSH keys or open ports, fully audited.
+X: Inventory collects installed software, updates and configuration from every server.
+X: And hybrid, the agent runs on on-premise servers too, so the same tools manage cloud and data centre machines. That really helps during a long migration.
+X: For safe patching, my approach is lower environments first, snapshots or AMIs before patching critical servers, drain servers from load balancers during patching, and check health afterwards.
+X: In a containerised world, patching becomes rebuilding images on updated base images, but for VM-based and Windows workloads, Systems Manager is the main tool.
 @p17-904
 S: azx
 D: A
 T: Azure Functions isolated worker vs in-process model: what is the difference?
 K: azure functions isolated worker, in process vs isolated, dotnet isolated functions, functions worker model, migrate to isolated worker
-X: Azure Functions for .NET historically had two hosting models.
-X: In-process: the function code ran inside the Functions host process, sharing its .NET version and assemblies. It was fast to start and supported some bindings directly, but your app was tied to the host's .NET version, and dependency conflicts with the host's assemblies were common. Microsoft has ended support for the in-process model with .NET 8 as its last version, with support ending in November 2026.
-X: Isolated worker: the function app runs in its own .NET process, separate from the host, communicating over gRPC. Benefits: you choose the .NET version, including newer ones as soon as they're supported; no assembly conflicts; full control over startup with the normal Program.cs, dependency injection and configuration, just like any .NET app; and middleware support, so cross-cutting concerns like logging, correlation and exception handling work like in ASP.NET Core. It's now the only supported model going forward.
-X: Migration steps: change the project to the isolated worker packages, Microsoft.Azure.Functions.Worker and extension packages instead of WebJobs extensions; add a Program.cs with the host builder; update function signatures, since bindings and types differ, like HttpRequestData or ASP.NET Core integration for HTTP functions; replace ILogger injection patterns; update settings, like FUNCTIONS_WORKER_RUNTIME to dotnet-isolated; and test each trigger carefully, especially Durable Functions, which have their own isolated package.
-X: If I were moving our AlertWatchDog-style scheduled checks to Azure Functions, I'd write them on the isolated model from the start, with timer triggers and dependency injection shared with our other .NET code.
+X: Right, Azure Functions for .NET historically had two hosting models.
+X: In-process, the function code ran inside the Functions host process, sharing its .NET version and assemblies. It started fast and supported some bindings directly, but your app was tied to the host's .NET version, and dependency conflicts with the host's assemblies were really common. Microsoft's ended the in-process model with .NET 8 as its last version, and support ends in November 2026.
+X: Isolated worker, the function app runs in its own .NET process, separate from the host, talking over gRPC. You choose the .NET version, including newer ones as soon as they're supported. No assembly conflicts. Full control over startup with a normal Program file, dependency injection and configuration, just like any .NET app. And middleware support, so cross-cutting things like logging, correlation and exception handling work like in ASP.NET Core. It's the only supported model going forward.
+X: Migration steps. Switch the project to the isolated worker packages, the Functions Worker package and the extension packages instead of the WebJobs extensions. Add a Program file with the host builder. Update function signatures, because bindings and types differ, like HttpRequestData, or the ASP.NET Core integration for HTTP functions. Replace ILogger injection patterns. Update settings, like setting the worker runtime to dotnet-isolated. And test each trigger carefully, especially Durable Functions, which have their own isolated package. That's where people usually get stuck.
+X: If I were moving our AlertWatchDog-style scheduled checks to Azure Functions, I'd write them on the isolated model from day one, with timer triggers and dependency injection shared with our other .NET code.
 @p17-905
 S: azx
 D: A
 T: How would you move from RabbitMQ to Azure Service Bus?
 K: rabbitmq to service bus, migrate rabbitmq azure, service bus vs rabbitmq, exchanges to topics, messaging migration azure
 X: The concepts map reasonably well, but not one to one, so I'd plan the mapping first.
-X: Mapping: a RabbitMQ queue with a single consumer group maps to a Service Bus queue. A fanout or topic exchange with several queues bound to it maps to a Service Bus topic with subscriptions; routing keys and binding patterns map to subscription filters, SQL or correlation filters. Dead-letter exchanges map to the built-in dead-letter sub-queue on every queue and subscription. Retry queues with TTLs, which we build manually in RabbitMQ, can be replaced with Service Bus's delivery count and max delivery count, plus scheduled messages for delayed retries. Consumer acks map to peek-lock with Complete, Abandon or DeadLetter. Message ordering per key maps to sessions.
-X: Differences to handle: Service Bus has message size limits per tier, 256 KB on Standard and up to 100 MB on Premium; lock durations need renewing for long processing; and duplicate detection is built in, based on message id.
-X: Migration approach.
-X: Abstract messaging behind an interface, or use a library like MassTransit, which supports both brokers, so switching transport is mostly configuration.
-X: Run both in parallel: bridge messages from RabbitMQ to Service Bus for a period, or move one flow at a time, starting with low-risk ones.
-X: Make consumers idempotent, since a migration increases the chance of duplicates.
-X: Monitor dead-letter counts and queue lengths on both sides during cutover.
-X: Connectivity matters for on-premise apps: they need reliable outbound access to Azure, ideally through private endpoints over ExpressRoute or VPN, and managed identity is only available to Azure-hosted workloads.
+X: The mapping. A RabbitMQ queue with a single consumer group maps to a Service Bus queue. A fanout or topic exchange with several queues bound to it maps to a Service Bus topic with subscriptions, and routing keys and binding patterns become subscription filters, SQL or correlation filters. Dead-letter exchanges map to the built-in dead-letter sub-queue that every queue and subscription has. The retry queues with TTLs, which we build by hand in RabbitMQ, can be replaced with Service Bus's delivery count and max delivery count, plus scheduled messages for delayed retries. Consumer acks map to peek-lock with Complete, Abandon or DeadLetter. Ordering per key maps to sessions.
+X: Differences to handle. Message size limits per tier, 256 KB on Standard and up to 100 MB on Premium. Lock durations need renewing for long processing, which can catch people out. And duplicate detection's built in, based on message id.
+X: How I'd migrate. Abstract messaging behind an interface, or use a library like MassTransit that supports both brokers, so switching transport is mostly configuration.
+X: Run both in parallel. Bridge messages from RabbitMQ to Service Bus for a period, or move one flow at a time, starting with low-risk ones.
+X: Make consumers idempotent, because a migration raises the chance of duplicates. And watch dead-letter counts and queue lengths on both sides during cutover.
+X: Connectivity matters for on-premise apps. They need reliable outbound access to Azure, ideally through private endpoints over ExpressRoute or VPN, and managed identity's only available to Azure-hosted workloads.
 @p17-906
 S: azx
 D: A
 T: What is Dapr, and how does it help microservices on Azure Container Apps or Kubernetes?
 K: dapr, distributed application runtime, dapr sidecar, dapr pub sub, dapr building blocks
-X: Dapr, the Distributed Application Runtime, is an open-source project that runs as a sidecar next to each service and provides common microservice capabilities through simple HTTP or gRPC APIs, so application code doesn't depend on specific infrastructure SDKs.
-X: Building blocks.
-X: Service invocation: call another service by its app id, with service discovery, retries, mTLS and tracing handled by the sidecars.
-X: Pub/sub: publish and subscribe to events, with the broker, like Service Bus, RabbitMQ, Kafka or Redis, chosen through configuration components.
-X: State management: key-value state with pluggable stores, like Redis or Cosmos DB, with concurrency control.
-X: Bindings: input and output connectors to external systems, like queues, storage or cron schedules.
-X: Secrets and configuration: read from Key Vault or other stores through one API.
-X: Workflows and actors for stateful patterns.
-X: Resiliency policies: timeouts, retries and circuit breakers defined in configuration.
-X: Why teams use it: services in different languages, like .NET, Node and Python, get the same capabilities consistently; switching infrastructure, like from RabbitMQ in one environment to Service Bus in another, is a configuration change; and observability is built in.
-X: Azure Container Apps has Dapr integration built in, enabled per app with a setting, which makes it easy to try. On Kubernetes, it's installed in the cluster.
-X: Trade-offs: an extra sidecar per service adds latency, resource use and another moving part to operate and upgrade; abstractions hide broker-specific features; and teams must learn its concepts. For a small number of .NET-only services, native SDKs with a library like MassTransit may be simpler.
+X: Dapr, the Distributed Application Runtime, is an open-source project that runs as a sidecar next to each service and gives you common microservice capabilities through simple HTTP or gRPC APIs. So your code doesn't depend on specific infrastructure SDKs.
+X: The building blocks. Service invocation, call another service by its app id, with discovery, retries, mTLS and tracing handled by the sidecars. Pub-sub, publish and subscribe to events, with the broker, Service Bus, RabbitMQ, Kafka or Redis, picked through configuration components. State management, key-value state with pluggable stores like Redis or Cosmos DB, with concurrency control. Bindings, input and output connectors to external systems, queues, storage, cron schedules. Secrets and configuration, read from Key Vault or other stores through one API. Workflows and actors for stateful patterns. And resiliency policies, timeouts, retries and circuit breakers defined in configuration.
+X: Why teams use it, services in different languages, .NET, Node, Python, get the same capabilities consistently. Switching infrastructure, like RabbitMQ in one environment and Service Bus in another, is just a configuration change. And observability is built in.
+X: Azure Container Apps has Dapr built in, switched on per app with a setting, so it's easy to try. On Kubernetes you install it in the cluster.
+X: The costs, though. An extra sidecar per service adds latency, resource use and another moving part to run and upgrade. The abstractions hide broker-specific features. And teams have to learn its concepts. For a handful of .NET-only services, I'd say native SDKs with something like MassTransit are probably simpler.
 @p17-907
 S: azx
 D: A
 T: How would you migrate from on-premise Azure DevOps Server to Azure DevOps Services?
 K: azure devops server migration, tfs to azure devops services, data migration tool azure devops, on premise azure devops to cloud, tfs migration
-X: Many organisations run Azure DevOps Server, formerly TFS, on-premise, like our setup, and consider moving to the cloud service. There are two main approaches.
-X: High-fidelity migration with Microsoft's data migration tool: it imports a whole collection, including work item history, Git and TFVC repositories, pipelines, test plans and artifacts, into Azure DevOps Services. It requires the server to be on a recent supported version, identities to be synchronised with Entra ID, and a validation step that reports issues to fix first. There's a dry run, then a production run with downtime for the collection.
-X: Selective migration: create new projects in the cloud and move only what's needed: Git repositories with full history, which is easy; recent work items with tools or scripts; and pipelines rebuilt as YAML. Simpler and a chance to clean up, but loses some history and links.
-X: Things to plan for.
-X: TFVC repositories: still supported in the cloud, but it's a good time to migrate to Git.
-X: Classic release pipelines: work in the cloud, but YAML multi-stage pipelines are the modern direction.
-X: Build agents: on-premise deployments still need self-hosted agents inside the network, since cloud-hosted agents can't reach internal servers. Agents connect outbound to the cloud service.
-X: Secrets and service connections: recreate them, preferably using workload identity federation for Azure.
-X: Compliance: regulated environments must confirm data residency, retention, audit logs and validation requirements.
-X: Integrations: tools connected to the old server, like reporting or custom extensions.
-X: This is part of why our MCP server talks to on-premise Azure DevOps: with work items and pipelines still on-premise, automation had to work there, not only in the cloud.
+X: Lots of organisations run Azure DevOps Server, which used to be TFS, on-premise, like our setup, and think about moving to the cloud service. You can basically go two ways.
+X: High-fidelity migration with Microsoft's data migration tool. It imports a whole collection, work item history, Git and TFVC repositories, pipelines, test plans and artifacts, into Azure DevOps Services. The server has to be on a recent supported version, identities have to be synced with Entra ID, and there's a validation step that reports issues to fix first. You do a dry run, then a production run with downtime for that collection.
+X: Selective migration. Create new projects in the cloud and move only what you need. Git repositories with full history, recent work items with tools or scripts, and pipelines rebuilt as YAML. Simpler, and a chance to clean up, but you lose some history and links.
+X: Things to plan for. TFVC repositories are still supported in the cloud, but it's a good moment to move to Git. Classic release pipelines work in the cloud, but YAML multi-stage pipelines are where things are going.
+X: Build agents, and this is the one people forget. On-premise deployments still need self-hosted agents inside the network, because cloud-hosted agents can't reach internal servers. The agents connect outbound to the cloud service.
+X: Secrets and service connections need recreating, preferably with workload identity federation for Azure. Compliance, regulated environments have to confirm data residency, retention, audit logs and validation requirements. And integrations, any tools hooked to the old server.
+X: That's partly why our MCP server talks to on-premise Azure DevOps. With work items and pipelines still on-premise, the automation had to work there, not only in the cloud.
 @p17-908
 S: azx
 D: A
 T: What is Azure Arc, and how does it help with on-premise servers?
 K: azure arc, hybrid cloud azure, arc enabled servers, manage on premise servers azure, azure arc kubernetes
-X: Azure Arc extends Azure's management plane to resources outside Azure: on-premise servers, servers in other clouds, Kubernetes clusters and SQL Server instances. Once connected, these resources appear in Azure as if they were Azure resources, with a resource id, tags and RBAC.
-X: What you can do with Arc-enabled servers.
-X: Azure Policy and guest configuration: audit and enforce settings, like required security configurations, across on-premise machines.
-X: Update Manager: assess and schedule operating system patching for on-premise Windows and Linux servers from Azure.
-X: Azure Monitor: collect logs and metrics with the Azure Monitor agent into Log Analytics, so on-premise and cloud monitoring use the same queries and alerts.
-X: Microsoft Defender for Cloud: security posture and threat protection for on-premise servers.
-X: Managed identity for on-premise servers: apps on Arc-enabled servers can get Entra ID tokens to access Azure services, like Key Vault, without storing secrets, which is a big improvement for hybrid apps.
-X: Arc-enabled SQL Server: inventory, best-practice assessments, and licensing management for on-premise SQL Server.
-X: Arc-enabled Kubernetes: GitOps configuration and policy for clusters running anywhere.
-X: Why it's relevant for a mostly on-premise system: it gives cloud-style governance, patching, monitoring and identity without moving the workloads, which can be a stepping stone for a future migration, and helps when some services already run in the cloud while the core stays in the data centre.
-X: Requirements: the Connected Machine agent on each server, with outbound connectivity to Azure endpoints, possibly through a proxy or private link.
+X: Azure Arc extends Azure's management plane to things outside Azure, on-premise servers, servers in other clouds, Kubernetes clusters and SQL Server instances. Once connected, they show up in Azure as if they were Azure resources, with a resource id, tags and RBAC.
+X: What you can do with Arc-enabled servers. Azure Policy and guest configuration, to audit and enforce settings, like required security configurations, across on-premise machines. Update Manager, to assess and schedule OS patching for on-premise Windows and Linux servers from Azure. Azure Monitor, collecting logs and metrics with the Azure Monitor agent into Log Analytics, so on-premise and cloud monitoring use the same queries and alerts. And Microsoft Defender for Cloud, for security posture and threat protection on those servers.
+X: Managed identity for on-premise servers is honestly the one I find most interesting. Apps on Arc-enabled servers can get Entra ID tokens to reach Azure services like Key Vault without storing secrets, which is a big improvement for hybrid apps.
+X: Arc-enabled SQL Server gives inventory, best-practice assessments and licensing management for on-premise SQL Server. Arc-enabled Kubernetes gives GitOps configuration and policy for clusters running anywhere.
+X: Why it's relevant for a mostly on-premise system, it gives cloud-style governance, patching, monitoring and identity without moving the workloads. That can be a stepping stone towards a future migration, and it helps when some services already run in the cloud while the core stays in the data centre.
+X: You need the Connected Machine agent on each server, with outbound connectivity to Azure endpoints, maybe through a proxy or private link.
 @p17-909
 S: azx
 D: A
 T: What is Azure Bastion, and how do you access private VMs securely?
 K: azure bastion, rdp ssh without public ip, secure vm access azure, jump box azure, just in time vm access
-X: Exposing RDP or SSH ports to the internet is one of the most common causes of compromised VMs, because attackers scan constantly for them. Azure Bastion provides secure access without public IPs on the VMs.
-X: How it works: Bastion is a managed service deployed into a dedicated subnet, AzureBastionSubnet, in the virtual network. Users connect through the Azure portal over HTTPS, or with the native RDP or SSH client using the Azure CLI on the Standard tier, and Bastion opens the RDP or SSH session to the private IP of the VM. The VMs need no public IP, and their network security groups can allow RDP and SSH only from the Bastion subnet.
-X: Benefits: no exposed management ports; authentication through Entra ID for portal access, so MFA and Conditional Access apply; session recording on the Premium tier for audit; and with peering, one Bastion can serve VMs across peered networks.
-X: Complementary controls.
-X: Just-in-time VM access in Defender for Cloud opens management ports only when requested, for a limited time and specific source IP.
-X: Entra ID login for VMs, so users sign in with their corporate identity rather than local accounts.
-X: Run commands and automation, instead of interactive logins, for routine tasks.
-X: Compared to AWS: the equivalent is Systems Manager Session Manager, which needs no network entry point at all, since it uses an agent connecting outbound.
-X: My principle is the same in any environment: interactive server access should be rare, audited and time-limited, and routine work should go through automation and pipelines.
+X: Exposing RDP or SSH ports to the internet is one of the most common ways VMs get compromised, because attackers scan for them constantly. Azure Bastion gives you secure access without public IPs on the VMs.
+X: How it works, Bastion is a managed service deployed into a dedicated subnet, the AzureBastionSubnet, in the virtual network. Users connect through the Azure portal over HTTPS, or with their native RDP or SSH client through the Azure CLI on the Standard tier, and Bastion opens the session to the VM's private IP. The VMs need no public IP, and their network security groups can allow RDP and SSH only from the Bastion subnet.
+X: What you get, no exposed management ports, authentication through Entra ID for portal access, so MFA and Conditional Access apply, session recording on the Premium tier for audit, and with peering, one Bastion can serve VMs across peered networks.
+X: Some controls that go well with it. Just-in-time VM access in Defender for Cloud opens management ports only when someone asks, for a limited time and a specific source IP. Entra ID login for VMs, so people sign in with their corporate identity instead of local accounts. And run commands or automation instead of interactive logins for routine tasks.
+X: On AWS, the equivalent's Systems Manager Session Manager, which needs no network entry point at all, since the agent connects outbound.
+X: My rule's the same anywhere. Interactive server access should be rare, audited and time-limited, and routine work should go through automation and pipelines.
 @p17-910
 S: azx
 D: A
 T: Azure Storage queues vs Service Bus queues: how do you choose?
 K: storage queue vs service bus, azure storage queues, azure queue options, simple queue azure, service bus features
-X: Both provide queues on Azure, but they're aimed at different needs.
-X: Azure Storage queues are part of a storage account. They're simple and cheap, can hold very large numbers of messages, up to the storage account's capacity, and are accessed over HTTP. Messages are up to 64 KB. Features are basic: at-least-once delivery with a visibility timeout, a dequeue count, and that's mostly it. No ordering guarantee, no topics, no built-in dead-lettering; you implement poison message handling yourself, though Azure Functions moves messages to a poison queue after several failures.
-X: Service Bus queues are an enterprise message broker: larger messages, up to 256 KB on Standard or 100 MB on Premium; FIFO ordering with sessions; built-in dead-letter queues; duplicate detection; scheduled and deferred messages; transactions across operations; topics and subscriptions with filters for publish-subscribe; and AMQP protocol support.
-X: How I choose.
-X: Storage queues: simple background work distribution, like resizing images or sending notifications, where order doesn't matter, high volume is expected and cost should be minimal, or when the app already uses a storage account.
-X: Service Bus: business messaging between services, where losing, duplicating or misordering messages matters, like order processing or integration events; when you need publish-subscribe, dead-lettering, sessions or transactions.
-X: Event Grid and Event Hubs are different again: event notification and high-throughput streaming, rather than command queues.
-X: For business integration flows, like the ones we run on RabbitMQ with retries and dead-letter handling, Service Bus is the natural Azure equivalent.
+X: Both give you queues on Azure, but they're aimed at pretty different needs.
+X: Azure Storage queues are part of a storage account. Simple and cheap, they can hold a huge number of messages, up to the storage account's capacity, and you access them over HTTP. Messages go up to 64 KB. Features are basic, at-least-once delivery with a visibility timeout, a dequeue count, and that's mostly it. No ordering guarantee, no topics, no built-in dead-lettering, so you handle poison messages yourself, though Azure Functions moves messages to a poison queue after several failures.
+X: Service Bus queues are an enterprise message broker. Bigger messages, up to 256 KB on Standard or 100 MB on Premium, FIFO ordering with sessions, built-in dead-letter queues, duplicate detection, scheduled and deferred messages, transactions across operations, topics and subscriptions with filters for publish-subscribe, and AMQP support.
+X: How I choose. Storage queues for simple background work distribution, like resizing images or sending notifications, where order doesn't matter, volume's high and cost should be minimal, or when the app already uses a storage account anyway.
+X: Service Bus for business messaging between services, where losing, duplicating or misordering messages actually matters, like order processing or integration events, and whenever you need publish-subscribe, dead-lettering, sessions or transactions.
+X: Event Grid and Event Hubs are different again, event notification and high-throughput streaming rather than command queues.
+X: For business integration flows like the ones we run on RabbitMQ with retries and dead-letter handling, I'd go with Service Bus as the natural Azure equivalent.
 @p17-911
 S: azx
 D: A
 T: What is Azure Data Factory, and when would you use it?
 K: azure data factory, adf pipelines, etl azure, data integration azure, self hosted integration runtime
-X: Azure Data Factory is Azure's managed data integration service for ETL and ELT: moving and transforming data between many sources and destinations on a schedule or trigger.
-X: Main concepts.
-X: Pipelines contain activities, like Copy data, run a stored procedure, call a web endpoint, run a notebook, or control flow like loops and conditions.
-X: Linked services hold connection information to sources and destinations, ideally using managed identity and Key Vault for secrets.
-X: Datasets describe the data structure in those sources.
-X: Integration runtimes provide the compute. The Azure integration runtime works for cloud sources; the self-hosted integration runtime is installed on a machine inside the corporate network, letting Data Factory reach on-premise databases, file shares and SFTP servers securely through outbound connections.
-X: Mapping data flows offer visual, Spark-based transformations without writing code.
-X: Triggers run pipelines on schedules, tumbling windows or storage events.
-X: Where it fits: loading data from operational databases into a data warehouse or lake, moving files between systems, scheduled data exports to partners, and migrating data. It has many built-in connectors and monitoring of every run.
-X: Where I'd be careful: complex business logic in visual pipelines becomes hard to test and review; for that, code in Functions or a service is better, with Data Factory orchestrating. Version control through Git integration and deployment through ARM templates or pipelines is essential. Microsoft is also moving many of these capabilities into Microsoft Fabric.
-X: Compared to our integration world, it overlaps with what an integration platform like MuleSoft does for file and data transfers, but is aimed more at data movement than API-led integration.
+X: Okay, Azure Data Factory is Azure's managed data integration service for ETL and ELT, moving and transforming data between lots of sources and destinations on a schedule or a trigger.
+X: The main concepts. Pipelines contain activities, like copy data, run a stored procedure, call a web endpoint, run a notebook, or control flow like loops and conditions. Linked services hold the connection info for sources and destinations, ideally using managed identity and Key Vault for secrets. Datasets describe the data structure in those sources.
+X: Integration runtimes provide the compute. The Azure integration runtime works for cloud sources, and the self-hosted one is installed on a machine inside the corporate network, which lets Data Factory reach on-premise databases, file shares and SFTP servers securely through outbound connections. I'd say that's the key piece for an on-premise shop.
+X: Mapping data flows give visual, Spark-based transformations without writing code. Triggers run pipelines on schedules, tumbling windows or storage events.
+X: Where it fits, loading data from operational databases into a warehouse or lake, moving files between systems, scheduled exports to partners, and data migrations. It has loads of built-in connectors and monitoring for every run.
+X: Where I'd be careful, complex business logic in visual pipelines gets hard to test and review. For that, code in Functions or a service is better, with Data Factory just orchestrating. Version control through Git integration and deployment through ARM templates or pipelines is essential. And Microsoft's moving a lot of this into Microsoft Fabric.
+X: Compared to our integration world, it overlaps with what an integration platform like MuleSoft does for file and data transfers, but it's aimed more at data movement than API-led integration.
 @p17-912
 S: azx
 D: A
