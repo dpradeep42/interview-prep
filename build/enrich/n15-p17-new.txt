@@ -599,7 +599,7 @@ K: long running request api, async request reply, 202 accepted, background job a
 X: I don't keep the HTTP request open for minutes. It ties up resources, and you'll hit gateway and load balancer timeouts anyway, usually somewhere between 30 and 120 seconds.
 X: What I do instead is the asynchronous request-reply pattern. The client sends the request, the API validates it, saves a job record, puts the work on a queue, and straight away returns 202 Accepted with a Location header pointing to a status endpoint, like jobs slash 123. A background worker picks up the job and keeps updating status and progress. The client polls that status endpoint, and gets pending, running, completed with a link to the result, or failed with the error. If you don't want polling, you can push a notification with SignalR or a webhook when it's done.
 X: The worker has to be idempotent and able to resume, because it might crash halfway. For really big jobs, I split the work into chunks and track progress per chunk.
-X: And I put an idempotency key on the submit request, so a double click doesn't start two jobs. That one bites people a lot.
+X: And I put an idempotency key on the submit request, so a double click doesn't start two jobs. That one can bite people.
 X: This is actually how our study data transfer works. A transfer gets submitted, a worker moves the data in steps, and the UI shows the progress. [It took a transfer from around 40 minutes of manual steps to under 10 minutes, with clear status for the user.] So users stopped calling us to ask if it was still running.
 @p17-61
 S: msa
@@ -10279,160 +10279,152 @@ S: dkx
 D: A
 T: Should you run databases inside Kubernetes?
 K: database in kubernetes, stateful workloads kubernetes, postgres on kubernetes, managed database vs kubernetes, run sql in k8s
-X: It's possible and increasingly common, but it isn't always the right choice.
-X: What makes it possible: StatefulSets give stable identities and persistent volumes per replica; storage classes provide durable disks; and operators, like CloudNativePG for Postgres, or operators for MySQL, Redis and others, automate replication, failover, backups, upgrades and monitoring, which used to require a skilled DBA.
-X: Arguments for running databases in Kubernetes: one platform and toolset for everything, with GitOps; good for development, testing and ephemeral environments, where databases spin up and down with the app; portability across clouds and on-premise; and potentially lower cost than managed services at large scale.
-X: Arguments for managed databases, like RDS, Aurora, Azure SQL or Cloud SQL: the provider handles high availability, backups, point-in-time restore, patching, encryption and performance insights, with SLAs. Databases are the most critical and hardest-to-recover part of a system, and running them well requires deep expertise in storage, failover behaviour and tuning. Kubernetes adds layers, like node failures, volume attachment delays and evictions, that need careful handling.
-X: My default: managed database services for production business data, especially in regulated domains like clinical systems, where proven backup, restore and audit capabilities matter. Databases in Kubernetes for development, test and preview environments, caches like Redis where data is reproducible, and specialised cases where the team has strong operator experience.
-X: If running a production database in Kubernetes, I'd insist on a mature operator, dedicated nodes, PodDisruptionBudgets, tested backups and restores, and monitoring of replication and storage.
+X: Honestly, it's possible and getting more common, but it isn't always the right call.
+X: What makes it possible is StatefulSets, which give stable identities and a persistent volume per replica, storage classes for durable disks, and operators, like CloudNativePG for Postgres, or the ones for MySQL, Redis and others. Those automate replication, failover, backups, upgrades and monitoring, which used to need a skilled DBA.
+X: The case for it is one platform and toolset for everything, with GitOps. It's great for dev, test and ephemeral environments, where databases spin up and down with the app. You get portability across clouds and on-premise, and maybe lower cost than managed services at large scale.
+X: The case for managed databases, RDS, Aurora, Azure SQL, Cloud SQL, is that the provider handles high availability, backups, point-in-time restore, patching, encryption and performance insights, with SLAs. Databases are the most critical and hardest-to-recover part of a system, and running them well takes deep expertise in storage, failover and tuning. Kubernetes adds layers, node failures, volume attachment delays, evictions, that need careful handling.
+X: My default is managed database services for production business data, especially in regulated domains like clinical systems, where proven backup, restore and audit really matter. Databases in Kubernetes for dev, test and preview environments, caches like Redis where data's reproducible, and special cases where the team has strong operator experience.
+X: And if I did run a production database in Kubernetes, I'd insist on a mature operator, dedicated nodes, PodDisruptionBudgets, tested backups and restores, and monitoring of replication and storage.
 @p17-937
 S: scx
 D: A
 T: An SQS dead-letter queue suddenly starts filling up. What do you do?
 K: sqs dlq filling, dead letter queue alarm, messages going to dlq, sqs maxreceivecount, dlq investigation
-X: A filling dead-letter queue means consumers are repeatedly failing on messages, so I treat it as an incident, because business work is not being done.
-X: First, contain and understand the scale: how many messages, since when, and is it all messages or some? I check whether the main queue is still being processed, and whether the timing matches a deployment, a configuration change or a downstream outage.
-X: Then I find the reason for failures. I look at consumer logs and traces for the failing message ids, and sample a few messages from the DLQ to inspect their bodies and attributes, without deleting them. Typical causes: a new message format from a producer that the consumer can't parse; a downstream dependency, like a database or API, being down or throttling; a bug in the latest consumer release; a visibility timeout shorter than processing time, so messages are received again while still being processed, counting extra receives until they hit maxReceiveCount; or permissions changed, like KMS key access.
-X: Fix the cause: roll back the consumer or producer change, increase the visibility timeout, or wait for the dependency to recover, with backoff so we don't hammer it.
-X: Then redrive: once fixed, use SQS DLQ redrive to move messages back to the source queue, ideally gradually, and make sure processing is idempotent so redelivered messages don't create duplicates. Messages that are truly invalid get archived with a record of why.
-X: Afterwards: alarms on DLQ depth above zero and on the age of the oldest message, contract tests between producer and consumer, and a runbook for redrive.
+X: A filling dead-letter queue means consumers keep failing on messages, so I treat it as an incident, because business work isn't getting done.
+X: I start by understanding the scale. How many messages, since when, is it all messages or just some? I check whether the main queue's still being processed, and whether the timing lines up with a deployment, a config change or a downstream outage.
+X: Then I find the reason. I look at consumer logs and traces for the failing message ids, and sample a few messages from the DLQ to look at their bodies and attributes, without deleting them. Typical causes, a new message format from a producer that the consumer can't parse. A downstream dependency, a database or API, down or throttling. A bug in the latest consumer release. A visibility timeout shorter than processing time, so messages get received again while still being processed, and those extra receives count up until they hit the max receive count. That one can bite people. Or permissions changed, like KMS key access.
+X: Fix the cause. Roll back the consumer or producer change, raise the visibility timeout, or wait for the dependency to recover, with backoff so we don't hammer it.
+X: Then redrive. Once it's fixed, use SQS DLQ redrive to move messages back to the source queue, ideally gradually, and make sure processing is idempotent so redelivered messages don't create duplicates. Messages that are truly invalid get archived with a note on why.
+X: Afterwards, alarms on DLQ depth above zero and on the age of the oldest message, contract tests between producer and consumer, and a runbook for redrive.
 @p17-938
 S: scx
 D: A
 T: An ECS deployment is stuck and never finishes. How do you troubleshoot it?
 K: ecs deployment stuck, ecs service not stabilizing, ecs tasks keep restarting deployment, deployment circuit breaker, ecs rollout hang
-X: When an ECS deployment hangs, it usually means new tasks never become healthy, so ECS keeps trying to replace them.
-X: First, I look at the service events in the console or with describe-services. They often say exactly what's happening: tasks failing to start, failing ALB health checks, or capacity problems like no container instances with enough memory.
-X: Then I look at stopped tasks: their stopped reason and container exit codes. Common findings: CannotPullContainerError, from a wrong image tag, missing ECR permissions on the execution role, or no route to ECR from private subnets; essential container exited, meaning the app crashed at startup, so I read its CloudWatch logs for the real error, like a missing configuration value, a secret it can't read, or a database it can't reach; or OutOfMemory, meaning the memory limit is too low.
-X: If tasks run but the deployment doesn't finish, it's usually health checks: the ALB target group health check path or port is wrong, the app takes longer to start than the health check grace period allows, or security groups block the load balancer from reaching the task.
-X: Capacity: on EC2-backed clusters, there may be no space for extra tasks during a rolling deployment with maximum percent at 200.
-X: To stop the bleeding, I roll back to the previous task definition revision. Going forward, I enable the deployment circuit breaker with automatic rollback, so ECS stops and rolls back a failing deployment on its own, and add CloudWatch alarms on deployment failures.
+X: So when an ECS deployment hangs, it usually means the new tasks never become healthy, and ECS just keeps trying to replace them.
+X: I start with the service events, in the console or with describe-services. They often tell you exactly what's going on, tasks failing to start, failing ALB health checks, or capacity problems like no container instances with enough memory.
+X: Then I look at the stopped tasks, their stopped reason and container exit codes. Common findings. CannotPullContainerError, from a wrong image tag, missing ECR permissions on the execution role, or no route to ECR from private subnets. Essential container exited, which means the app crashed at startup, so I read its CloudWatch logs for the real error, like a missing config value, a secret it can't read, or a database it can't reach. Or OutOfMemory, meaning the memory limit's too low.
+X: If tasks run but the deployment doesn't finish, it's usually health checks. The target group health check path or port is wrong, the app takes longer to start than the health check grace period allows, or security groups block the load balancer from reaching the task. I've seen the grace period one quite a few times with .NET apps that warm up slowly.
+X: Capacity, on EC2-backed clusters there might be no room for extra tasks during a rolling deployment with maximum percent at 200.
+X: To stop the bleeding, I roll back to the previous task definition revision. Going forward, I turn on the deployment circuit breaker with automatic rollback, so ECS stops and rolls back a failing deployment by itself, and add CloudWatch alarms on deployment failures.
 @p17-939
 S: scx
 D: A
 T: Lambda scaling has exhausted the database's connections. How do you fix it?
 K: lambda too many connections, rds connections maxed, lambda database connection exhaustion, rds proxy fix, serverless database connections
-X: This is a classic serverless problem: each Lambda execution environment opens its own database connections, and during a traffic burst Lambda scales to hundreds of concurrent environments, quickly exceeding the database's max connections. Then everything, including other applications using the same database, starts failing.
-X: Immediate actions: limit the damage by setting reserved concurrency on the function, capping how many instances can run at once, so the database recovers. If the trigger is a queue, the messages just wait, which is fine. Check that other critical applications can connect again.
-X: Root fixes.
-X: RDS Proxy: put it between Lambda and the database. It pools and shares connections, so thousands of Lambda invocations use a small number of database connections. It also handles failover faster and supports IAM authentication.
-X: Connection handling in code: create the connection or pool outside the handler for reuse across invocations, with a pool size of one or two per execution environment, and don't open new connections per request.
-X: Control concurrency: reserved concurrency on the function, and for SQS triggers, the maximum concurrency setting on the event source mapping, sized to what the database can handle.
-X: Reduce database work: caching for reads, batching writes, and moving heavy queries off the hot path.
-X: Consider the architecture: if traffic is steady and high, a container service with a normal connection pool might be a better fit than Lambda for this workload.
-X: Monitoring: alarms on database connections, Lambda concurrency and throttles, so we see the trend before it becomes an outage.
+X: Yeah, this is a classic serverless problem. Each Lambda execution environment opens its own database connections, and in a traffic burst Lambda scales to hundreds of concurrent environments, which blows past the database's max connections pretty fast. Then everything, including other apps on the same database, starts failing.
+X: Immediate actions, limit the damage by setting reserved concurrency on the function, capping how many instances run at once, so the database can recover. If the trigger's a queue, the messages just wait, which is fine. Then check other critical apps can connect again.
+X: Root fixes. RDS Proxy, put it between Lambda and the database. It pools and shares connections, so thousands of invocations use a small number of database connections. It also handles failover faster and supports IAM authentication.
+X: Connection handling in code. Create the connection or pool outside the handler so it's reused across invocations, with a pool size of one or two per execution environment, and don't open new connections per request.
+X: Control concurrency, reserved concurrency on the function, and for SQS triggers, the maximum concurrency setting on the event source mapping, sized to what the database can take.
+X: Reduce database work, caching for reads, batching writes, and moving heavy queries off the hot path.
+X: Think about the architecture too. If traffic's steady and high, a container service with a normal connection pool might honestly fit this workload better than Lambda.
+X: Monitoring, alarms on database connections, Lambda concurrency and throttles, so we see the trend before it turns into an outage.
 @p17-940
 S: scx
 D: A
 T: A Kubernetes rollout completed, but users still see the old version. Why?
 K: users see old version kubernetes, deployment not updated, image tag latest not pulled, kubernetes caching old version, rollout no effect
-X: Several layers can serve old content, so I check them in order.
-X: The pods themselves: kubectl get pods with the image shown, and describe the Deployment, to confirm new pods are running the new image. A frequent cause is reusing the same tag, like latest or a version tag pushed twice, with imagePullPolicy IfNotPresent, so nodes keep using the cached old image. Fix: immutable tags, like the commit SHA or build number, or pin by digest. Also check that the manifest really changed; if GitOps is used, check that Argo CD or Flux synced the right commit, and that the image updater wrote the new tag.
-X: Old pods still serving: another Deployment or ReplicaSet with the same labels, so the Service selects both old and new pods; or a canary or blue-green tool still routing to the old version.
-X: Ingress and service routing: the ingress may point to a different Service than expected, or there are two environments behind similar hostnames.
-X: Caching: CDN or browser caching of front-end files, especially index.html cached for a long time, so users load old JavaScript; or an API gateway or reverse proxy caching responses.
-X: Configuration rather than code: the code is new, but a feature flag or configuration value still disables the feature.
-X: To confirm what's running, I expose a version endpoint or response header with the build number and commit, so anyone can check which version they're actually hitting. That turns a confusing investigation into a quick check, and I add it to post-deployment smoke tests.
+X: There are several layers that can serve old content, so I just go through them in order.
+X: The pods themselves. kubectl get pods showing the image, and describe the Deployment, to confirm new pods are running the new image. A really common cause is reusing the same tag, like latest, or a version tag pushed twice, with the pull policy IfNotPresent, so nodes keep using the cached old image. The fix is immutable tags, like the commit SHA or build number, or pinning by digest. Also check the manifest really changed. With GitOps, check that Argo CD or Flux synced the right commit, and that the image updater wrote the new tag.
+X: Old pods still serving. Another Deployment or ReplicaSet with the same labels, so the Service picks both old and new pods. Or a canary or blue-green tool still routing to the old version.
+X: Ingress and routing. The ingress might point to a different Service than you think, or there are two environments behind similar hostnames.
+X: Caching. CDN or browser caching of front-end files, especially index dot html cached for a long time, so users load old JavaScript. Or an API gateway or reverse proxy caching responses.
+X: Configuration, not code. The code's new, but a feature flag or config value still has the feature switched off.
+X: To confirm what's running, what I do is expose a version endpoint or response header with the build number and commit, so anyone can check which version they're actually hitting. That turns a confusing investigation into a quick check, and I add it to post-deployment smoke tests as well.
 @p17-941
 S: scx
 D: A
 T: Pods restart every few hours under load, but the logs show no errors. What is happening?
 K: pods restarting no errors, liveness probe failing under load, kubernetes restart count, container killed no logs, probe timeout restart
-X: Restarts without application errors usually mean something outside the app is killing the container. I start with kubectl describe pod, which shows the last state, the reason and exit code, and events.
-X: Common causes.
-X: Liveness probe failures: under load, the health endpoint responds slowly, exceeds the probe timeout, which defaults to one second, and after a few failures the kubelet kills the container. The app wasn't broken, just busy, and the restart makes things worse by removing capacity. Fix: make liveness checks very cheap, checking only that the process is responsive, never calling databases or downstream services; increase timeoutSeconds and failureThreshold; use readiness probes for dependency health, which take pods out of traffic without restarting them; and add a startup probe for slow starts.
-X: OOMKilled with exit code 137: the container hit its memory limit. It may only happen under load because of larger request buffers or caches. Fix memory limits, investigate memory usage, and in .NET check GC settings in containers.
-X: Node pressure evictions: the node ran low on memory or disk, and the kubelet evicted pods; these show as Evicted, not restarts, but are worth checking.
-X: The app exiting cleanly: exit code 0 or a deliberate shutdown, like a worker that stops after an unhandled background exception, and logs written only to a file, not stdout.
-X: To see logs from the previous container instance, I use kubectl logs with --previous, which often reveals the last messages before the kill.
-X: Then I correlate restarts with load metrics and response times, which usually confirms the probe theory.
+X: Restarts without application errors usually mean something outside the app is killing the container. I start with kubectl describe pod, which shows the last state, the reason, the exit code, and events.
+X: Common causes. Liveness probe failures, honestly that's the big one. Under load, the health endpoint responds slowly, goes past the probe timeout, which is one second by default, and after a few failures the kubelet kills the container. The app wasn't broken, just busy, and the restart makes things worse by removing capacity. The fix is to make liveness checks really cheap, only checking the process is responsive, never calling databases or downstream services. Bump up the timeout and failure threshold. Use readiness probes for dependency health, which take pods out of traffic without restarting them, and add a startup probe for slow starts.
+X: OOMKilled with exit code 137, the container hit its memory limit. It might only happen under load because of bigger request buffers or caches. Fix the memory limits, look into memory usage, and in .NET check the GC settings for containers.
+X: Node pressure evictions, the node ran low on memory or disk and the kubelet evicted pods. These show as Evicted, not restarts, but they're worth checking.
+X: The app exiting cleanly, exit code 0 or a deliberate shutdown, like a worker that stops after an unhandled background exception, with logs written only to a file and not stdout.
+X: To see logs from the previous container instance, I use kubectl logs with the previous flag, which often shows the last messages before the kill.
+X: Then I line up restarts against load metrics and response times, and that usually confirms the probe theory.
 @p17-942
 S: scx
 D: A
 T: Celery tasks are running twice or getting lost. How do you fix it?
 K: celery duplicate tasks, celery task lost, celery acks late, celery visibility timeout, celery reliability
-X: Both problems come from how Celery acknowledges tasks and how the broker redelivers them.
-X: Tasks running twice.
-X: Redis broker visibility timeout: with Redis, if a task isn't acknowledged within the visibility timeout, default one hour, it's redelivered to another worker. Long-running or ETA and countdown tasks scheduled further than the timeout get executed again. Fix: increase the visibility timeout above the longest task duration or delay, or use RabbitMQ.
-X: acks_late with crashes: with acks_late enabled, a task is acknowledged only after it finishes, so if a worker dies midway, it runs again. That's intended, but means tasks must be idempotent.
-X: Multiple beat schedulers: running celery beat on more than one instance schedules periodic tasks twice. Run exactly one beat, or use a scheduler with locking.
-X: Retries after partial success: a task that did some work, then failed and retried, repeats the first part.
-X: Tasks getting lost.
-X: Default early acknowledgement: tasks are acknowledged when received, so if the worker crashes or is killed during deployment, the task is gone. Fix: acks_late with reject_on_worker_lost for important tasks.
-X: Prefetch: workers reserve several tasks; if killed, prefetched tasks may be lost or delayed. Lower worker_prefetch_multiplier to one for long tasks.
-X: Results expiring or the result backend misconfigured, so it looks lost.
-X: The real safety net is idempotency: tasks take ids, check whether work was already done, and use database constraints or upserts. Plus monitoring with Flower or metrics for queue length, failures and retries, and graceful worker shutdown during deployments.
+X: Both problems basically come from how Celery acknowledges tasks and how the broker redelivers them.
+X: Tasks running twice. Redis broker visibility timeout, with Redis, if a task isn't acknowledged within the visibility timeout, one hour by default, it's redelivered to another worker. Long-running tasks, or ETA and countdown tasks scheduled further out than the timeout, get run again. Fix, raise the visibility timeout above the longest task duration or delay, or use RabbitMQ.
+X: acks late with crashes. With acks late turned on, a task is acknowledged only after it finishes, so if a worker dies midway, it runs again. That's intended, but it means tasks must be idempotent.
+X: Multiple beat schedulers. Running celery beat on more than one instance schedules periodic tasks twice. Run exactly one beat, or use a scheduler with locking. People miss this one when they scale out.
+X: Retries after partial success. A task that did some work, then failed and retried, repeats the first part.
+X: Tasks getting lost. Default early acknowledgement, tasks are acknowledged when received, so if the worker crashes or gets killed during a deployment, the task's gone. Fix, acks late with reject on worker lost for important tasks.
+X: Prefetch, workers reserve several tasks, and if killed, prefetched tasks can be lost or delayed. Lower the prefetch multiplier to one for long tasks.
+X: Results expiring, or the result backend misconfigured, so it only looks lost.
+X: The real safety net is idempotency. Tasks take ids, check whether the work was already done, and use database constraints or upserts. Plus monitoring with Flower or metrics for queue length, failures and retries, and graceful worker shutdown during deployments.
 @p17-943
 S: scx
 D: A
 T: After an App Service slot swap, the app throws errors for a few minutes. Why?
 K: slot swap errors, app service swap cold start, deployment slot settings, swap warm up, sticky settings
-X: A slot swap should be seamless, so errors right after it usually come from warm-up or configuration.
-X: Cold start after swap: if the staging slot wasn't warmed up, the first requests after the swap hit a cold app, causing timeouts. App Service does warm up the source slot by sending requests to the root path, but if the root path doesn't initialise the app, or the app takes longer, it isn't enough. Fix: configure applicationInitialization with warm-up paths in web.config, or the WEBSITE_SWAP_WARMUP_PING_PATH and status code settings, pointing to an endpoint that initialises dependencies; and use swap with preview, which applies production settings to staging, lets you verify, then completes the swap.
-X: Slot-specific settings: settings marked as deployment slot settings stay with the slot, while others move with the code. If a connection string or feature flag is marked incorrectly, the app in production starts with staging's values, or the swap restarts the app to apply changed settings, losing the warm-up benefit.
-X: In-flight state: in-memory sessions or caches are lost, and users get logged out or see errors if the app relies on them. Use a distributed cache and shared Data Protection keys, so authentication cookies work across slots and instances.
-X: Background jobs: both slots may run scheduled jobs or consume queues at the same time; disable them in staging with slot settings.
-X: Database migrations: if the new code needs a schema change that wasn't applied first, or the old code can't handle the new schema, errors appear. Use backward-compatible, expand-and-contract migrations.
+X: A slot swap should be smooth, so errors right after it usually come from warm-up or configuration.
+X: Cold start after the swap. If the staging slot wasn't warmed up, the first requests after the swap hit a cold app and time out. App Service does warm up the source slot by hitting the root path, but if the root path doesn't initialise the app, or the app takes longer, it isn't enough. The fix is application initialization with warm-up paths in web config, or the swap warm-up ping path and status code settings, pointing to an endpoint that initialises dependencies. And use swap with preview, which applies production settings to staging, lets you verify, then completes the swap.
+X: Slot-specific settings. Settings marked as deployment slot settings stay with the slot, others move with the code. If a connection string or feature flag is marked wrong, the app in production starts with staging's values, or the swap restarts the app to apply changed settings and you lose the warm-up benefit. I'd say that's the one that trips most teams.
+X: In-flight state. In-memory sessions or caches are lost, so users get logged out or see errors if the app relies on them. Use a distributed cache and shared Data Protection keys, so auth cookies work across slots and instances.
+X: Background jobs. Both slots might run scheduled jobs or consume queues at the same time, so disable them in staging with slot settings.
+X: Database migrations. If the new code needs a schema change that wasn't applied first, or the old code can't handle the new schema, you get errors. Use backward-compatible, expand-and-contract migrations.
 X: Monitoring the swap with availability tests confirms the fix.
 @p17-944
 S: scx
 D: A
 T: Service Bus messages keep going to the dead-letter queue with MaxDeliveryCountExceeded. What do you check?
 K: service bus dead letter maxdeliverycountexceeded, service bus lock lost, messages dead lettered, service bus retries, lock duration
-X: MaxDeliveryCountExceeded means a message was delivered the maximum number of times, 10 by default, without being completed. So the consumer either kept failing, or kept losing the lock.
-X: Steps.
-X: Read the dead-lettered messages, including the dead-letter reason, description and delivery count, using Service Bus Explorer in the portal or a tool, without deleting them.
-X: Check consumer logs for exceptions on those message ids. If there's a consistent exception, like deserialisation failure or a validation error, it's a poison message problem: the consumer should dead-letter such messages immediately with a clear reason, instead of retrying ten times.
-X: If there are no errors, suspect lock expiry. The default lock duration is 60 seconds on queues, configurable up to 5 minutes. If processing takes longer and the lock isn't renewed, the lock is lost, completion fails with MessageLockLost, and the message is delivered again, counting toward the maximum. Fixes: configure MaxAutoLockRenewalDuration on the processor, reduce processing time, or move long work to a separate step.
-X: Prefetch: a high PrefetchCount with slow processing means prefetched messages' locks expire before they're even processed.
-X: Concurrency and throttling: downstream dependencies failing under load, causing repeated failures; add backoff instead of immediate retries.
-X: Abandoning by mistake: code that abandons messages on every exception, including non-transient ones.
-X: After fixing, resubmit dead-lettered messages with a tool or small script, idempotently, and set alerts on dead-letter message counts per queue and subscription.
+X: MaxDeliveryCountExceeded means a message was delivered the max number of times, 10 by default, without being completed. So the consumer either kept failing, or kept losing the lock.
+X: What I do. Read the dead-lettered messages, including the dead-letter reason, description and delivery count, using Service Bus Explorer in the portal or a tool, without deleting them.
+X: Check consumer logs for exceptions on those message ids. If there's a consistent exception, like a deserialisation failure or a validation error, it's a poison message problem. The consumer should dead-letter those straight away with a clear reason, instead of retrying ten times.
+X: If there are no errors, I suspect lock expiry. The default lock duration is 60 seconds on queues, configurable up to 5 minutes. If processing takes longer and the lock isn't renewed, the lock's lost, completion fails with MessageLockLost, and the message comes back again, counting toward the max. Fixes, set the max auto lock renewal duration on the processor, cut processing time, or move long work to a separate step.
+X: Prefetch, a high prefetch count with slow processing means prefetched messages' locks expire before they're even processed.
+X: Concurrency and throttling, downstream dependencies failing under load and causing repeated failures, so add backoff instead of immediate retries.
+X: Abandoning by mistake, code that abandons messages on every exception, including non-transient ones.
+X: After fixing, resubmit the dead-lettered messages with a tool or a small script, idempotently, and set alerts on dead-letter counts per queue and subscription.
 @p17-945
 S: scx
 D: A
 T: An app fails at startup because Key Vault is throttling requests. What do you do?
 K: key vault throttling, key vault 429, key vault rate limit, startup secrets failure, cache key vault secrets
-X: Key Vault has service limits, a certain number of transactions per vault per few seconds. Apps that read secrets too often, or many instances starting at once, can hit 429 Too Many Requests, and if secrets are loaded at startup, the app fails to start, which can turn a scale-out or deployment into an outage.
-X: Immediate mitigation: stagger restarts, reduce the number of instances starting at the same time, or temporarily scale back, so requests to Key Vault drop below the limits.
-X: Root causes I look for.
-X: Reading secrets per request: code that calls Key Vault on every request or every operation, instead of caching. Fix: load secrets once at startup into configuration, or cache them in memory with a refresh interval.
-X: Configuration provider reload too frequent: the Key Vault configuration provider with a very short ReloadInterval across many instances generates constant traffic. Use a longer interval, or reload only when needed.
-X: Many apps sharing one vault: separate vaults per application and environment spread load and also improve security.
-X: Retries without backoff: the SDK has retry policies with exponential backoff; make sure they're enabled and that custom code doesn't retry aggressively.
-X: Key operations: using Key Vault for frequent cryptographic operations, like encrypting every record, should use envelope encryption with locally cached data keys instead.
-X: Alternatives: Key Vault references in App Service or App Configuration, which cache values in the platform, reduce direct calls from code.
-X: Monitoring: Key Vault metrics for request counts and throttled requests, with alerts, so we notice rising usage before failures.
+X: Okay, so Key Vault has service limits, a certain number of transactions per vault every few seconds. Apps that read secrets too often, or lots of instances starting at once, can hit 429 Too Many Requests. And if secrets load at startup, the app just fails to start, which can turn a scale-out or deployment into an outage.
+X: Immediate mitigation, stagger restarts, reduce how many instances start at the same time, or scale back for a bit, so Key Vault requests drop below the limits.
+X: Root causes I look for. Reading secrets per request, code that calls Key Vault on every request or operation instead of caching. Fix, load secrets once at startup into configuration, or cache them in memory with a refresh interval.
+X: Config provider reloading too often. The Key Vault configuration provider with a really short reload interval across many instances generates constant traffic. Use a longer interval, or reload only when needed.
+X: Many apps sharing one vault. Separate vaults per application and environment spread the load and improve security too.
+X: Retries without backoff. The SDK has retry policies with exponential backoff, so make sure they're on and custom code isn't retrying aggressively.
+X: Key operations. If you're using Key Vault for frequent crypto, like encrypting every record, switch to envelope encryption with locally cached data keys.
+X: Alternatives, Key Vault references in App Service or App Configuration, which cache values in the platform, reduce direct calls from code.
+X: Monitoring, Key Vault metrics for request counts and throttled requests, with alerts, so we notice rising usage before things fail.
 @p17-946
 S: scx
 D: A
 T: DefaultAzureCredential works locally but fails in Azure. How do you debug it?
 K: defaultazurecredential fails in azure, managed identity not working, credentialunavailableexception, azure identity troubleshooting, 403 managed identity
-X: DefaultAzureCredential tries several credential sources in order: environment variables, workload identity, managed identity, then developer tools like Visual Studio, Azure CLI and PowerShell. Locally it usually succeeds through the developer's own login, which often has broad permissions. In Azure, it must use the managed identity, so differences show up there.
-X: Things I check.
-X: Is a managed identity enabled on the resource? System-assigned or user-assigned, on the App Service, Function, Container App or VM.
-X: If it's user-assigned, did we tell the credential which one? With a user-assigned identity, you must set the client id, through ManagedIdentityClientId in the options or the AZURE_CLIENT_ID setting, otherwise it can't pick it.
-X: Does the identity have the right role on the target resource, like Key Vault Secrets User, Storage Blob Data Reader or Service Bus Data Receiver, at the right scope? Locally, the developer may have Owner on the subscription, which hides missing data-plane roles. Role assignments can take a few minutes to apply.
-X: Is it authentication or authorisation? A CredentialUnavailableException or authentication failure means no identity could be used; a 403 from the service means the identity worked but lacks permission.
-X: Network: private endpoints, firewalls or DNS may block the target service; the error looks different but is often confused with identity issues.
-X: Leftover environment variables: if AZURE_CLIENT_SECRET or similar variables are set in Azure, the environment credential is tried first and may use a wrong service principal.
-X: Logging: enable Azure SDK logging to see which credential was tried and why each failed.
-X: In production, I often use ManagedIdentityCredential directly, which removes the ambiguity.
+X: DefaultAzureCredential tries several credential sources in order. Environment variables, workload identity, managed identity, then developer tools like Visual Studio, Azure CLI and PowerShell. Locally it usually works through the developer's own login, which often has broad permissions. In Azure it has to use the managed identity, so that's where differences show up.
+X: Things I check. Is a managed identity actually enabled on the resource? System-assigned or user-assigned, on the App Service, Function, Container App or VM.
+X: If it's user-assigned, did we tell the credential which one? With a user-assigned identity you have to set the client id, through the managed identity client id option or the Azure client id setting, otherwise it can't pick it. I've seen that one waste a whole afternoon.
+X: Does the identity have the right role on the target resource, like Key Vault Secrets User, Storage Blob Data Reader or Service Bus Data Receiver, at the right scope? Locally, the developer might have Owner on the subscription, which hides missing data-plane roles. And role assignments can take a few minutes to apply.
+X: Is it authentication or authorisation? A credential unavailable exception or an authentication failure means no identity could be used. A 403 from the service means the identity worked but lacks permission.
+X: Network, private endpoints, firewalls or DNS might block the target service. The error looks different but often gets confused with identity issues.
+X: Leftover environment variables. If a client secret or similar variable is set in Azure, the environment credential is tried first and might use the wrong service principal.
+X: Turn on Azure SDK logging to see which credential was tried and why each failed.
+X: In production, I often just use ManagedIdentityCredential directly, which removes the ambiguity.
 @p17-947
 S: scx
 D: A
 T: A Docker build works locally but fails in CI. How do you troubleshoot it?
 K: docker build fails in ci, works locally not in pipeline, docker build context ci, ci build differences, buildkit ci failure
-X: "Works on my machine" with Docker usually means something about the environment differs, even though Docker is supposed to remove those differences.
-X: What I compare.
-X: Build context: locally, files that are gitignored or generated, like a local NuGet.Config, an .env file or built front-end assets, exist on disk and get copied into the build. In CI, the checkout is clean, so they're missing. A .dockerignore difference can have the same effect. I check what the Dockerfile copies and whether those files exist in a clean clone.
-X: Credentials: private package feeds, like NuGet, npm or pip, work locally through cached credentials, but CI needs tokens passed securely as BuildKit secrets.
-X: Base image and cache: locally, an older cached base image is used; CI pulls a newer one, with changes in the OS or SDK. Pinning base image versions or digests makes builds reproducible.
-X: Architecture: building on an Apple Silicon Mac produces ARM images, and CI on x86 builds a different variant, where a native dependency might fail.
-X: Network: CI agents may be behind a proxy, firewall, or have DNS that can't reach certain registries or package sources, or hit Docker Hub rate limits.
-X: Docker or BuildKit version and features: secret mounts, heredocs or cache mounts need BuildKit enabled in CI.
-X: Resources: CI agents may have less memory or disk, causing out-of-memory during builds or "no space left on device", especially on self-hosted agents that never prune old images.
-X: To reproduce, I build locally from a fresh clone with --no-cache and the same base image versions, or run the CI agent image locally.
+X: "Works on my machine" with Docker usually means something in the environment is different, even though Docker's supposed to remove those differences.
+X: What I compare. Build context. Locally, files that are gitignored or generated, a local NuGet config, an env file, built front-end assets, exist on disk and get copied into the build. In CI the checkout's clean, so they're missing. A dockerignore difference can do the same thing. I check what the Dockerfile copies and whether those files exist in a clean clone. Nine times out of ten, I'd say it's this.
+X: Credentials. Private package feeds, NuGet, npm or pip, work locally through cached credentials, but CI needs tokens passed securely as BuildKit secrets.
+X: Base image and cache. Locally an older cached base image gets used, CI pulls a newer one with changes in the OS or SDK. Pinning base image versions or digests makes builds reproducible.
+X: Architecture. Building on an Apple Silicon Mac produces ARM images, and CI on x86 builds a different variant, where a native dependency might fail.
+X: Network. CI agents might be behind a proxy or firewall, or have DNS that can't reach certain registries or package sources, or they hit Docker Hub rate limits.
+X: Docker or BuildKit version and features. Secret mounts, heredocs or cache mounts need BuildKit turned on in CI.
+X: Resources. CI agents might have less memory or disk, so you get out-of-memory during builds or "no space left on device", especially on self-hosted agents that never prune old images.
+X: To reproduce it, I build locally from a fresh clone with no cache and the same base image versions, or run the CI agent image locally.
 @p17-948
 S: scx
 D: A
