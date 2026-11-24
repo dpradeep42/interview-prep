@@ -1,0 +1,135 @@
+@p17-36
+Both are ways to coordinate a business process that runs across several services. The difference is who's in charge.
+
+In orchestration, there's one central component, the orchestrator, telling each service what to do and in what order. Like an order orchestrator calls payment, then inventory, then shipping, and it handles failures. The nice part is you can see the whole flow in one place, change it in one place, monitor it in one place. The risk is the orchestrator becoming a bottleneck, or a sort of god service that knows too much.
+
+In choreography, nobody's in charge. Each service listens for events and reacts. Payment publishes PaymentCompleted, inventory hears it, reserves stock, publishes StockReserved, and so on. Services stay loosely coupled, which is good. But honestly the overall flow is scattered across many services, so it's harder to understand, debug and change, and you can end up with hidden cyclic dependencies.
+
+So the way I decide, choreography for simple flows with a few steps, where services just react to facts. Orchestration for long, complex processes with many steps, compensation and timeouts, usually with a workflow engine like Step Functions, Durable Functions or a saga orchestrator.
+
+In our IRT, actually we have both. Notifications are choreography, services publish events to RabbitMQ and the notification consumers react. But the study transfer is a clearly orchestrated sequence of steps. So it depends on the flow.
+
+@p17-37
+Okay, so a saga is how you keep data consistent across microservices without a distributed transaction. Each service has its own database, so you can't wrap everything in one ACID transaction. Instead it's a sequence of local transactions, and each step publishes an event or message that kicks off the next one.
+
+The important part is what happens on failure. If a step fails in the middle, the saga runs compensating transactions for the steps that already went through, in reverse order. So in this case, the order got created, payment was taken, but stock reservation failed. The saga refunds the payment and cancels the order. And see, a compensation is a business undo, not a database rollback. You have to design it explicitly, and it has to be idempotent, because it might run more than once.
+
+Sagas can be coordinated by choreography, where services react to events, or by an orchestrator that tracks state and decides the next step. For a money flow like this I'd lean towards an orchestrator, it's easier to reason about.
+
+I also design for the in-between states, because users actually see them, like "payment pending". Steps get retries for temporary errors, timeouts for stuck steps, and an outbox so the local change and its event are always saved together. And every saga carries a correlation id, so I can trace it end to end when someone asks what happened to their order.
+
+@p17-38
+So this is the classic dual-write problem. The service saves data to its database, then publishes an event to the broker. Those are two separate systems. If the save works but the publish fails, or the service crashes in between, other services just never hear about the change. And if you publish first and the save fails, you've announced something that never happened.
+
+The outbox fixes it like this. The service writes the business change and the event into an outbox table, in the same database transaction. So either both get saved or neither does. Then a separate background publisher, or a change-data-capture tool like Debezium, picks up unsent rows from the outbox, publishes them to the broker, and marks them sent.
+
+What you get is at-least-once delivery. The publisher might send the same event twice, say it crashes after publishing but before marking it. So consumers have to be idempotent, usually by storing processed message ids.
+
+In .NET, MassTransit and NServiceBus have a built-in outbox. Or honestly you can build a simple one with EF Core and a BackgroundService, it's not much code. I also turn on publisher confirms in RabbitMQ, so the publisher knows the broker really accepted the message before marking it as sent. That's the last gap closed.
+
+@p17-39
+An API gateway is basically a single entry point in front of your microservices. Clients call the gateway, it routes each request to the right service, so clients don't need to know how many services there are or where they run.
+
+What should go in? Cross-cutting stuff that you want in one place. Authentication, so tokens get validated before requests even reach services. Rate limiting and throttling, per client or per API key. TLS termination. Some request and response transformation. Caching common responses. CORS. And logging and metrics for all traffic, usually adding a correlation id there.
+
+It can also do aggregation, where one client call fans out to a few services and the results get combined. That helps mobile apps that would otherwise make lots of chatty calls.
+
+What shouldn't go in is business logic. That's the trap. Slowly people start adding rules in the gateway, and then it becomes a mini monolith. I keep it thin, routing and cross-cutting concerns only. And since it's a single point of failure, it has to be highly available and scaled properly.
+
+Examples are AWS API Gateway, Azure API Management, Kong, and in .NET, YARP or Ocelot. Each service still validates tokens itself, for defence in depth.
+
+In IQVIA's newer AWS services, partner-facing APIs go through API Gateway with per-partner keys and throttling. So that's where we use it.
+
+@p17-40
+BFF is Backend for Frontend. Basically, instead of one general-purpose API for everybody, you build a separate thin backend for each type of client, like one for the web app and one for the mobile app.
+
+Why? Because different clients want different things. A mobile screen wants a small, combined response in one call, the network is slow. The web dashboard wants richer data. One generic API either over-fetches for mobile or forces lots of calls. With a BFF, each frontend team owns a backend shaped exactly for its screens. It calls the downstream microservices, aggregates and trims the data, and returns just what the screen needs.
+
+Now the security part, which is why it's recommended for SPAs these days. The BFF does the OpenID Connect login, keeps the tokens on the server side, and the browser only gets a secure, HttpOnly cookie. So no access token sits in browser JavaScript, which really cuts down the risk from cross-site scripting. If some script gets injected, there's no token for it to steal.
+
+The downside is more services to maintain and some duplicated logic between BFFs. So I keep business rules in the core services, and the BFF only does composition and client-specific shaping.
+
+In .NET, a BFF is often just an ASP.NET Core app with YARP for proxying, plus the Duende BFF library for the security part. That's the usual setup.
+
+@p17-41
+So in microservices, instances keep starting, stopping and moving, especially with autoscaling and containers. You can't call another service on a fixed IP. Service discovery is just how a service finds the current healthy instances of another one.
+
+There are two styles. Client-side discovery, the caller asks a registry like Consul or Eureka for the healthy instances and does the load balancing itself. Server-side discovery, the caller just calls a stable name or a load balancer, and the platform routes it to a healthy instance.
+
+The registry stays up to date through registration. Instances register when they start, and get removed when health checks fail.
+
+Honestly, today most platforms make this pretty invisible. In Kubernetes, every Service gets a stable DNS name, like orders dot default dot svc dot cluster dot local, and kube-proxy routes to healthy pods. In ECS, Cloud Map and Service Connect give you DNS names, or you use an internal load balancer. In .NET, Aspire's service discovery lets HttpClient use logical names that get resolved from config or the platform.
+
+Health checks are the part you can't skip, otherwise traffic goes to a dead instance. In our on-premise CIRT platform, it's simpler, services use stable DNS names behind internal load balancers, and health checks take unhealthy nodes out. So that's how it works for us.
+
+@p17-42
+Eventual consistency means that after a change, different parts of the system might show different data for a short while, but if nothing else changes, they all catch up. It's just the normal result of microservices owning separate databases and talking through events.
+
+Let me take an example. A shipment gets marked as dispatched. The shipment service updates its own database immediately and publishes an event. Inventory and reporting update maybe a few hundred milliseconds later, when they process that event. In between, a report might still show the old status.
+
+So how do I make it okay for users? I show honest states in the UI, like "Requested" or "Processing", instead of pretending something finished instantly. Where it matters, I support read-your-own-writes, so the person who made the change sees it straight away, like returning the updated data from the command, or reading from the owning service. The delay has to stay small and monitored, so we alert on queue lag. And consumers are idempotent with replay, so nothing gets lost.
+
+When I explain it to users, I keep it simple, "it's saved, the report will update in a few seconds".
+
+But where strong consistency is really required, like assigning a unique randomisation slot, I keep it inside one service and one database transaction. In our IRT, the randomisation assignment and the kit allocation get written together in one transaction. No eventual consistency there.
+
+@p17-43
+So the strangler fig pattern is about replacing a legacy system bit by bit, instead of a big-bang rewrite. The name comes from a fig tree that grows around an old tree until it can stand on its own.
+
+How it works, you put a routing layer in front of the old system, could be a proxy, a gateway, or honestly just links in the UI. Then you build new functionality one piece at a time in the new system, and route only that piece to it. Over time more and more routes move across, and legacy parts get switched off once nothing uses them.
+
+Why I like it, each step is small and can be rolled back, you keep delivering value, and there's no long feature freeze where the business waits a year for a rewrite.
+
+The hard parts are running two systems side by side, keeping data in sync, and not duplicating business rules. I try to make sure each rule has exactly one owner at any time.
+
+This is actually how our IRT is being modernised. It started as CIRT, Cenduit's IRT, on a .NET Framework 4.8 core with an ASP.NET MVC and Angular portal. New .NET APIs wrap the legacy transaction engine through an API, and the UI is moving to a React shell one module at a time. Drug accountability is the one being migrated right now. So I've seen this pattern in real life.
+
+@p17-44
+I prefer database per service. Each microservice owns its data, and nobody else reads or writes its tables directly. Others get data through its API or its events.
+
+The reason is mainly independence. A service can change its schema without breaking other teams. It can pick the right database, like SQL Server for transactions and DynamoDB for simple high-volume lookups. It can scale on its own. And there's one clear owner for each piece of data and its rules.
+
+A shared database looks easier in the beginning, honestly. But it couples everyone together. One team changes a column and another service breaks, deployments need coordination, and nobody really owns the data.
+
+Database per service isn't free though. Queries across services need API composition or a read model built from events. Transactions across services need sagas. And there are more databases to run.
+
+So it's a trade-off. During a migration, I'm okay with a shared database for a while, as long as each table has a clear owner, and then we separate it step by step.
+
+Our IRT actually has an interesting variation, database per study, which is basically per tenant. Each clinical trial gets its own SQL Server database from a common model schema of [about 560] tables. That gives really strong isolation between sponsors' trials. So in a way we went even further than per service.
+
+@p17-45
+See, since each service owns its own database, I can't just write a SQL join across services. So there are mainly two approaches.
+
+One is API composition. Some composer, could be the API gateway, a BFF, or one of the services, calls each service's API, mostly in parallel, and combines the results in memory. It's simple and the data is fresh. But it's slower, it fails if one service is down, and it's really bad for large result sets or filtering and sorting across services.
+
+The other is a read model, the CQRS way. A dedicated query service listens to events from all the relevant services and keeps its own denormalised view, shaped exactly for that query, like a table or a search index. Then queries are fast and simple. You pay with eventual consistency, because the view is a little behind, and with more infrastructure.
+
+For reporting and analytics there's a third option, stream the data into a warehouse or a lake and run the reports there.
+
+So my choice depends on the need. API composition for small on-screen lookups. Read model for frequent, complex queries or search. Warehouse for heavy reporting.
+
+In IQVIA's newer AWS services, shipment status events feed a reporting view, so reports don't hit the shipment service live. That worked out nicely for us.
+
+@p17-46
+CQRS is Command Query Responsibility Segregation. In simple words, you separate the model that changes data, the commands, from the model that reads data, the queries.
+
+At the simple level it's just how you organise code. Commands like CreateShipment go through handlers with validation and business rules. Queries like GetShipments use simple, optimised reads, mostly projecting straight to DTOs. In .NET, MediatR makes this clean, one handler per command and per query, and pipeline behaviours for validation and logging. Honestly this level is useful in most services.
+
+Then there's the advanced level, where the read side has its own separate data store, updated from events published by the write side. Now you can scale reads independently and shape read models exactly for each screen or search, like a denormalised table or an Elasticsearch index. But you get eventual consistency, more infrastructure, more complexity.
+
+So I use the simple form a lot, and the separate-store form only where reads and writes really have very different needs, like heavy reporting or search sitting on top of a transactional system.
+
+People often pair it with event sourcing, but you don't need event sourcing to do CQRS.
+
+Our newer IRT APIs follow clean architecture with MediatR commands and queries, and FluentValidation runs as a pipeline behaviour before every command. So that's the flavour we use.
+
+@p17-47
+In event sourcing, instead of storing just the current state of something, you store every change as an immutable event. Like ShipmentCreated, ShipmentDispatched, ShipmentDelivered. The current state is rebuilt by replaying those events in order, usually with snapshots so you're not replaying thousands of events every time.
+
+The pros are pretty strong. You get a complete audit trail built in, what happened and when, which is very attractive in regulated domains like ours. You can rebuild state at any point in time, which really helps debugging. You can create new read models later just by replaying history. And events naturally feed other services.
+
+But the cons are real. It's a different way of thinking, and the learning curve is steep. To query current state you need separate read models, so it usually comes with CQRS and eventual consistency. Event schemas have to evolve carefully, because old events stay forever. And if an event is wrong, you can't just edit it, you fix it with new correcting events.
+
+So I'd use it where history and audit are core to the business and the team is actually ready for it. Not as a default.
+
+In our IRT, we get audit through history tables and an audit trail for every change, without going full event sourcing. That keeps the model simpler, and honestly it's been enough for the compliance needs.

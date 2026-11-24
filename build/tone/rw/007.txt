@@ -1,0 +1,153 @@
+@p17-72
+I'd do it step by step, so every step is small and I can roll it back.
+
+To begin with, inside the monolith itself, I clean up the feature's boundary. Its code should depend on the rest only through an interface, and only its own code should touch its tables. Honestly, this refactoring alone takes out a lot of risk.
+
+Then I build the new service with the same behaviour, its own API, its own database. Initially it can read data that's replicated or synced from the monolith.
+
+Then I run both in parallel. Usually shadow traffic or parallel runs, requests still go to the old code, the new service gets called in the background, and I compare results and log the differences. Users aren't affected at all, and you catch logic differences safely.
+
+After that I switch traffic gradually, behind a feature flag or at the routing layer. Start with a small group of users or tenants, watch errors, latency, data consistency. Rollback is just flipping the flag back.
+
+Then the data ownership moves. The new service becomes the source of truth, and the monolith reads from it, through its API or events.
+
+And only at the end, I delete the old code and tables.
+
+This is pretty much how we're moving modules from the old MVC and Angular portal to the React shell, one module at a time. Drug accountability is the one in progress right now.
+
+@p17-73
+Both describe something that happened, but the scope and purpose are different.
+
+A domain event is raised inside a service, inside its domain model, so other parts of the same service can react. Let me take an example. A kit's status changes to damaged, the Kit aggregate raises KitDamaged, and a handler in the same service updates the inventory count or writes an audit entry. These are in-process, often dispatched with MediatR notifications, usually in the same transaction or right after saving. And they can use rich internal types, because nobody outside ever sees them.
+
+An integration event goes outside the service, through a broker, so other services can react. So KitDamaged might also become an integration event that reporting or the notification service consumes. Since it's a public contract between services, it uses simple, stable, versioned DTOs, carries only the data others need, and it's published reliably, ideally through the outbox, so it doesn't get lost if the broker is down.
+
+The common flow is like this. Domain event gets raised, a handler converts it to an integration event, writes it to the outbox in the same transaction, and a publisher sends it later.
+
+Why keep them separate? Because then internal refactoring doesn't break other services. You can change your domain model freely, and the contract stays the same.
+
+@p17-74
+I'd push updates to the browser, instead of making it poll every few seconds.
+
+The flow would be like this. When something changes, the owning service publishes an event. A dashboard service consumes these events, updates a small read model or some aggregate counters, like shipments by status, in Redis or a database, and pushes a change notification to the connected browsers.
+
+For the push part, in .NET I'd use SignalR. It uses WebSockets and falls back to other transports automatically. Clients join groups, like a study or a site, so they only get relevant updates, and authorisation is checked when they join a group. With several server instances, you need a Redis backplane, or a managed service like Azure SignalR Service, so a message reaches clients on any instance. On AWS, API Gateway WebSocket APIs are an option.
+
+On the client side, when the page loads, it gets the full current state through a normal API call, and then applies live updates on top. If the connection drops, it reconnects and reloads the state, so it never misses anything.
+
+To avoid flooding the browser, I'd batch or throttle updates, maybe at most once a second per widget.
+
+And honestly, if the dashboard is fine with a bit of delay, just polling every 30 seconds is simpler, and that's a perfectly valid choice too. I wouldn't over-engineer it.
+
+@p17-75
+So access tokens are short-lived, like 5 to 15 minutes, so a stolen one isn't useful for long. A refresh token is a longer-lived credential the client uses to get a new access token from the identity provider, without making the user log in again.
+
+Since refresh tokens are powerful, I protect them carefully. That's where rotation comes in. Every time a refresh token is used, the provider issues a new one and invalidates the old one. If an old one ever gets used again, that smells like theft, and the provider revokes the whole token family. They also have an absolute lifetime and an idle timeout, and get revoked on logout or password change.
+
+Now storage, that's the tricky part for single-page apps. Local storage is readable by any JavaScript, so one XSS bug and your tokens are gone. The safer options, best first, a BFF that keeps tokens on the server and gives the browser an HttpOnly, Secure, SameSite cookie. Or keep tokens only in memory, with rotation, and silent re-authentication when the page reloads.
+
+Mobile apps are different, they use the platform's secure storage, like Keychain or Keystore.
+
+In our React shell, the Keycloak adapter keeps tokens in memory and refreshes them before expiry. And there's an idle timer that logs the user out after inactivity, which is actually a Part 11 requirement for us.
+
+@p17-76
+Role checks answer "is this user a site user?". But they can't answer "can this user see this particular subject?", because that depends on the resource itself, like which site or study it belongs to.
+
+If an API only checks roles, a user at site A can just change the id in the URL, from subject 101 to subject 202, and see site B's subject. That's IDOR, insecure direct object reference, or BOLA, broken object level authorization. It's actually number one in the OWASP API Security Top 10.
+
+Resource-based authorization fixes that. After loading the resource, I check the relationship between the user and that resource. Does this subject's site belong to the user's assigned sites? In ASP.NET Core, I inject IAuthorizationService and call AuthorizeAsync with the user, the subject and a requirement, and a handler compares the subject's site with the user's sites. If it fails, 403, or 404 if I don't even want to reveal the resource exists.
+
+Even better, I filter at the query level, so a site user's queries only ever return their own sites' data, using a global filter. Then you can't forget the check.
+
+I also write tests that deliberately try to access another user's resources, because honestly this bug is very easy to miss in review.
+
+In our IRT, site users only see their own site's subjects and kits, enforced in queries and in checks.
+
+@p17-77
+CSRF, cross-site request forgery, is when some malicious website makes the user's browser send a request to our application, and the browser automatically attaches our cookies. So the request runs as the logged-in user. Like a hidden form on a bad site posting to our "change email" endpoint.
+
+It's mainly a risk when authentication is cookie-based, because browsers send cookies automatically. APIs that use bearer tokens in the Authorization header aren't vulnerable the same way, because the attacker's page can't add that header.
+
+For defences, SameSite cookies are the first layer. Lax or Strict means the browser won't send the cookie on most cross-site requests. Lax is the default in modern browsers now, and it's a strong first layer. Then anti-forgery tokens. The server issues a secret token, it's included in forms or a header, and the server validates it on every state-changing request. The attacker's site can't read it, so it can't fake it. In ASP.NET Core MVC and Razor Pages, this is built in, ValidateAntiForgeryToken and the form tag helper do the work. And a couple of basics, never change state with GET requests, and check the Origin header for sensitive actions.
+
+In our case, the legacy MVC portal uses anti-forgery tokens on its forms, and the React shell calls APIs with bearer tokens. So we're covered on both sides.
+
+@p17-78
+XSS, cross-site scripting, is when an attacker manages to get their JavaScript running in another user's browser, inside our site. Then it can steal tokens, read whatever's on the page, or do actions as that user. Mostly it comes from showing user-supplied data without escaping it, like a comment with a script tag in it.
+
+Honestly, modern frameworks help a lot by default. React escapes all values in JSX, so text shows as text, not HTML. Angular sanitises values bound in the template, and strips dangerous stuff from innerHTML bindings.
+
+The risk comes when you bypass those protections. dangerouslySetInnerHTML in React, bypassSecurityTrustHtml in Angular, direct DOM manipulation, building URLs from user input, like a javascript colon link, or third-party libraries that inject HTML. If I really have to render HTML, I sanitise it first with something like DOMPurify.
+
+And then other layers on top. A Content Security Policy header that only allows scripts from our own origin and blocks inline scripts, so even if markup gets injected, it can't run. HttpOnly cookies, so scripts can't read session cookies. Output encoding on the server for any HTML it generates. And input validation.
+
+In our React screens, we never use dangerouslySetInnerHTML for user data, and email templates are encoded on the server. So that's how we keep it under control.
+
+@p17-79
+SQL injection happens when user input gets concatenated into a SQL string, so the attacker can change the query itself, like adding OR 1 equals 1, or even dropping tables.
+
+The main defence is parameterised queries, always. The SQL text stays fixed, and user values go separately as parameters, so the database treats them as data, never as code.
+
+In EF Core, LINQ queries are parameterised automatically. For raw SQL, FromSql and ExecuteSql with interpolated strings are actually safe, because EF converts the interpolated values into parameters. The dangerous one is FromSqlRaw with string concatenation. So with FromSqlRaw I always pass parameters separately. In Dapper, I pass an anonymous object of parameters, never concatenated values. In plain ADO.NET, SqlParameter.
+
+One catch, parameters can't be used for identifiers, like table names, column names, or sort direction. So for dynamic sorting, I map the user's choice to a whitelist of known column names. I never put it in directly.
+
+Stored procedures are safe too, unless they build dynamic SQL inside with concatenation. Then they have to use sp_executesql with parameters.
+
+And defence in depth, the app's database login has least privilege, and static analysis flags string-built SQL.
+
+In our IRT, data access uses parameterised queries and stored procedures, and code review specifically looks for raw SQL. That's how we keep it out.
+
+@p17-80
+Never plain text, never reversible encryption. And not fast hashes like MD5 or SHA-256 alone either, because attackers can try billions of guesses per second with GPUs.
+
+The right way is a slow, salted, adaptive password hashing algorithm, Argon2id, bcrypt, scrypt, or PBKDF2 with a high iteration count. The salt is a unique random value per password, stored with the hash, so the same password gives different hashes, and precomputed rainbow tables don't work. The work factor makes each guess expensive, and you can increase it over time as hardware gets faster.
+
+In .NET, ASP.NET Core Identity's PasswordHasher uses PBKDF2 with HMAC-SHA512 and a high iteration count, and it can upgrade hashes when the user logs in next time. For Argon2 and bcrypt there are libraries.
+
+But honestly the better approach is not handling passwords at all. Delegate login to an identity provider, Keycloak, Azure AD, Cognito, and let it handle hashing, lockout, MFA and password policies properly.
+
+Then the related controls, lockout or throttling after failed attempts, checking new passwords against known breached lists, and MFA.
+
+In our IRT, Keycloak handles passwords, with password policy and lockout configured. Those are also Part 11 requirements for us, so we had to get them right anyway.
+
+@p17-81
+So the OWASP Top 10 is the well-known list of the most critical web app security risks, updated every few years from real data. The 2025 edition is honestly very similar to 2021, but a couple of things moved. Let me go through the ones I keep in mind.
+
+Broken access control is still number one, users acting outside their permissions, like IDOR, where you change an id and see someone else's data. Security misconfiguration, default settings, verbose errors, open storage, missing headers. Software supply chain failures, that's newer, vulnerable or compromised dependencies, packages and build tools. Cryptographic failures, weak or missing encryption, like plain-text passwords or no TLS. Injection, SQL injection, command injection, XSS. Insecure design, missing security thinking in the architecture, like no rate limiting on password reset. Authentication failures, weak passwords, no MFA, bad session handling. Software or data integrity failures, unsigned updates or insecure deserialisation. Logging and alerting failures, attacks nobody notices. And mishandling of exceptional conditions, like failing open or leaking errors.
+
+There's also a separate OWASP API Security Top 10, where broken object level authorization is number one.
+
+How I turn it into habits, authorization checks per resource, parameterised queries, dependency scanning in pipelines, security headers, central logging with alerts, and some threat modelling for new features. That's what actually makes a difference day to day.
+
+@p17-82
+Security headers basically tell the browser to apply extra protections. These are the ones I add.
+
+HSTS, Strict-Transport-Security, tells browsers to always use HTTPS for the site, so nobody can downgrade the connection. In ASP.NET Core, UseHsts adds it outside development.
+
+Content-Security-Policy controls where scripts, styles, images and frames can load from. Honestly it's the strongest defence against XSS, like a script-src of self blocks inline and third-party scripts. I start in report-only mode to see what breaks, and then enforce it.
+
+X-Content-Type-Options set to nosniff, so the browser doesn't guess content types, because that can turn an uploaded file into a script.
+
+Frame protection, frame-ancestors in the CSP, or X-Frame-Options DENY, to stop clickjacking.
+
+Referrer-Policy, like strict-origin-when-cross-origin, so full URLs with ids don't leak to other sites.
+
+Permissions-Policy, to switch off browser features we don't use, camera, geolocation and so on.
+
+And I remove headers that reveal technology versions, like Server and X-Powered-By.
+
+For APIs, I also set Cache-Control no-store on responses with sensitive data.
+
+I add these with middleware, or a library like NetEscapades.AspNetCore.SecurityHeaders, or at the gateway or reverse proxy. Then a scanner checks them as part of testing, so they don't quietly disappear.
+
+@p17-83
+MFA means you need two or more different kinds of proof. Something you know, like a password. Something you have, like a phone or a security key. Something you are, like a fingerprint. So even if the password is stolen, the attacker still can't log in without the second factor. It blocks the vast majority of account takeover attacks, honestly.
+
+Common second factors are TOTP authenticator apps, which generate a 6-digit code every 30 seconds from a shared secret. Push notifications to an app. SMS codes, better than nothing, but vulnerable to SIM swapping. And the strongest, FIDO2 security keys or passkeys using WebAuthn, which are phishing-resistant because they're tied to the real website's domain.
+
+How would I add it? Through the identity provider, not custom code. Keycloak, Azure AD, Cognito, Okta, all of them support MFA, conditional policies and passkeys with configuration. If I'm using ASP.NET Core Identity directly, it has built-in TOTP support with recovery codes.
+
+A few details matter. Recovery codes for lost devices. Rate limiting on code entry. Asking for MFA again for sensitive actions, which is step-up authentication. And remembering trusted devices only for a limited time.
+
+For our users, all these policies are configured centrally in Keycloak. So no service has to implement any of it itself.

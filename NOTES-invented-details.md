@@ -1006,7 +1006,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p17-71** How do you handle time zones and dates across services?
   - A visit window bug at US sites came from a midnight conversion, and we fixed it by storing the date as a date.
 - **p17-90** What is a threat model, and how do you do one for a new feature?
-  - When we threat-modelled the drug accountability return screens, it showed that the return quantity API needed a site ownership check, which we added before release.
+  - When we threat-modelled the drug accountability return screens, it showed the return quantity API needed a site ownership check, which we added before release.
 - **p17-91** How do you secure webhooks you send and receive?
   - Our vendor status callbacks in the newer data transfer API verify an HMAC signature and timestamp before queuing the message.
 - **p17-108** What is multiple enumeration of IEnumerable, and why is it a problem?

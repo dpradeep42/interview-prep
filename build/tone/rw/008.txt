@@ -1,0 +1,151 @@
+@p17-84
+Least privilege basically means every user, service and process gets only the permissions it needs for its job, nothing extra, and only for as long as it needs them. So if something gets compromised, the damage stays small.
+
+I try to apply it at every layer, not just IAM.
+
+For application users, role-based permissions that match real job functions, plus resource-level checks, so a site user only sees their own site.
+
+For services, each one gets its own identity, like an IAM role or a managed identity, with a policy that allows only specific actions on specific resources. Like s3 GetObject on one bucket, not s3 star on everything. I avoid wildcards, and tools like IAM Access Analyzer help find permissions nobody uses.
+
+For databases, the application logs in with an account that can read and write its own tables or run its procedures, but can't change schema or drop tables. Migrations run with a separate, more privileged identity from the pipeline.
+
+For pipelines, deployment credentials are scoped to one environment, and production deployments need approval.
+
+For developers, no standing production access. If someone needs it, it's temporary and audited.
+
+On the network side, services can only reach what they need, through security groups and network policies.
+
+And regular access reviews, removing permissions that aren't used anymore. In regulated work like ours, honestly, those reviews are an audit requirement anyway.
+
+@p17-85
+People mix these up a lot, but they're for different things.
+
+Encoding just transforms data into another format for compatibility. Like Base64 for binary data inside JSON, or URL encoding. It's not security at all, anyone can decode it, no key needed. I've seen people think Base64 protects a secret, which it doesn't.
+
+Hashing is one-way. It turns data into a fixed-size fingerprint, like SHA-256, and you can't reverse it. Same input always gives the same hash, and a tiny change gives a totally different one. We use it for integrity checks, like verifying a file wasn't changed, and with slow, salted algorithms, for storing passwords.
+
+Encryption is two-way. Data gets scrambled with a key and you can decrypt it with the right key. That's what protects confidentiality. Symmetric encryption, like AES, uses one shared key and it's fast, so it's used for data at rest. Asymmetric, like RSA or elliptic curve, uses a public key to encrypt and a private key to decrypt, or a private key to sign and a public key to verify. That's actually how TLS and JWT signatures work.
+
+In .NET, I stick to the built-in System.Security.Cryptography classes, never write my own algorithms. And for app-level protection of things like cookies, I use the Data Protection API. That covers most cases.
+
+@p17-86
+See, logs get copied to many places and kept for a long time. So sensitive data in logs is a real breach risk. I basically treat logs as if lots of people can read them.
+
+The first rule is, don't log it at all. I log ids and outcomes, not personal data. Like log the subject id and the action, not the subject's date of birth or initials. Request and response bodies aren't logged by default, especially on endpoints that handle personal data.
+
+Then structured logging helps control it. With Serilog, you can use destructuring policies to mask or drop specific properties. And in .NET, Microsoft.Extensions.Compliance redaction lets you classify data as sensitive, and it gets redacted in logs automatically.
+
+Then scrubbing in the pipeline. The log shipper or the logging platform can mask patterns like email addresses or card numbers, as a safety net in case something slips through.
+
+And the logs themselves need protection. Access control, encryption, retention limits.
+
+Couple of sneaky ones to watch. Exception messages, because sometimes they contain data values. And tokens in URLs or headers, those should never be logged.
+
+In clinical systems this matters double, because of patient privacy rules and audit requirements. In our CIRT services, we log subject and kit identifiers, never names or contact details, and Splunk access is restricted. That's how we keep it safe.
+
+@p17-87
+With session cookies, the server creates a session after login, keeps the session data on the server or in a shared store, and gives the browser a cookie with just a session id. The browser sends that cookie automatically on every request. It's simple and pretty secure for traditional web apps, especially with HttpOnly, Secure and SameSite flags, and you can revoke a session instantly by deleting it. The downsides are you need shared session storage when you scale out, it's tied to one domain, and you need CSRF protection.
+
+With tokens, the client gets a signed token, usually a JWT, and sends it in the Authorization header. The server validates it without storing anything, so it scales easily and works across domains, for mobile apps and service-to-service calls too. But revocation is harder, and in browsers, storing the token safely is honestly tricky, because anything JavaScript can read is exposed to XSS.
+
+What people do nowadays for browser apps is kind of combine them. A BFF does the OAuth login on the server, keeps the tokens server-side, and talks to the browser with a secure cookie. And APIs called by other services or mobile apps use bearer tokens.
+
+So I wouldn't say one is always better. It really depends on what kind of client you have.
+
+@p17-88
+File uploads are a very common attack route, so I put several checks in place.
+
+Size limits first. A max request size and max file size, so nobody can fill up the disk or memory. In ASP.NET Core that's RequestSizeLimit, plus Kestrel or form options.
+
+Then type validation. Only allow the types the feature actually needs, with an allow-list. And don't trust the file extension or the Content-Type header, because the client sets both. I check the file's real signature, the magic bytes, and for documents, parse them safely.
+
+File names, never use the user's file name for storage, because of path traversal tricks like dot-dot-slash. I generate a random name and keep the original only as metadata, sanitised.
+
+Storage, keep it outside the web root, ideally in object storage like S3 or blob storage, in a private bucket. Then the web server can never execute an uploaded file. Downloads go through the API with authorization checks, or short-lived signed URLs, with Content-Disposition set to attachment.
+
+Then malware scanning before the file is marked available.
+
+Some content risks too. CSV files can carry formula injection, so exports escape leading equals signs. And images can carry metadata with personal data, so I strip that.
+
+And every upload gets logged for audit. That's pretty much my checklist.
+
+@p17-89
+JWTs can be signed two ways, and for microservices the choice really matters.
+
+Symmetric signing, like HS256, uses one shared secret for both signing and verifying. It's simple and fast. The problem is every service that verifies tokens needs that same secret, and anyone with the secret can also create valid tokens. So if any one service leaks it, an attacker can forge tokens for the whole system. It's only okay when the issuer and the verifier are the same application.
+
+Asymmetric signing, like RS256 with RSA or ES256 with elliptic curves, uses a private key to sign and a public key to verify. Only the identity provider holds the private key. APIs just need the public key, which isn't secret, so even a compromised API can't create tokens. The public keys are published at the JWKS endpoint with a key id, and that makes rotation easy. The provider adds a new key, starts signing with it, and APIs pick it up automatically.
+
+So for distributed systems, asymmetric is the right choice, no question.
+
+One classic attack to know is algorithm confusion. The attacker changes the header's algorithm to "none", or to HS256 and uses the public key as the secret. So validation must only accept the expected algorithms. ASP.NET Core's JWT handler handles this properly when you configure it with the authority. That's how we have it set up.
+
+@p17-90
+A threat model is just a structured way of thinking about what could go wrong with a feature's security before you build it. So security is designed in, not patched on later.
+
+I keep it lightweight, honestly mostly a one-hour session with the team. We start by drawing a simple data-flow diagram, users, services, data stores, external systems, and the trust boundaries between them, like the internet to our API, or our service to a vendor.
+
+Then we go through each element using STRIDE as a checklist. Spoofing, can someone pretend to be another user or service? Tampering, can data be changed in transit or at rest? Repudiation, can someone deny doing something because there's no audit trail? Information disclosure, can data leak through APIs, logs or errors? Denial of service, can someone overload it? Elevation of privilege, can a user do more than they should?
+
+For each real threat, we agree a mitigation, like resource-level authorization, signing a webhook, rate limiting, and track it as a work item with an owner. Anything we decide to accept gets written down.
+
+And we revisit the model when the design changes.
+
+[When we threat-modelled the drug accountability return screens, it showed the return quantity API needed a site ownership check, which we added before release.] So it does catch real things.
+
+@p17-91
+Webhooks are just HTTP calls between systems, so both sides need to be able to trust each other.
+
+When we're receiving, the big risk is someone calling our endpoint pretending to be the provider. So I verify a signature. The provider signs the request body with a shared secret using HMAC-SHA256 and sends it in a header. I recompute the HMAC over the raw body and compare using a constant-time comparison. I also check a timestamp header and reject old requests, say older than five minutes, so nobody can replay them. And I store the event id to ignore duplicates, because providers do retry. The endpoint replies quickly with a 2xx and queues the work, so the provider doesn't time out and send it again.
+
+When we're sending, it's the same thing in reverse. Sign each payload, include a timestamp and unique id, HTTPS only, retry with backoff on failure, and let customers rotate their secrets. And since customers give us the URLs, I protect against SSRF, block internal addresses like localhost, private IP ranges and metadata endpoints.
+
+Payloads carry minimal data, often just an id, and the receiver fetches details through the authenticated API.
+
+[Our vendor status callbacks in the newer data transfer API verify an HMAC signature and timestamp before queuing the message.] That's how we did it.
+
+@p17-92
+SSRF, server-side request forgery, is when an attacker gets our server to send a request to a URL they choose. It's a risk anytime the server fetches a user-provided URL, like importing an image from a link, previewing a URL, or calling a webhook URL a customer gave us.
+
+The danger is our server sits inside the network. So the attacker can reach stuff they normally can't, internal admin APIs, databases with HTTP interfaces, or the cloud metadata endpoint, like 169.254.169.254 on AWS, which can hand out temporary credentials. Honestly, some well-known cloud breaches happened exactly like this.
+
+To prevent it, first I avoid fetching user-supplied URLs if I can. If I really need to, I validate against an allow-list of domains, resolve the host name, and block private, loopback, link-local and metadata IP ranges. I check again after redirects, or just disable redirects, because an allowed URL can redirect to an internal one. DNS rebinding is another trick, so I connect to the exact IP I validated.
+
+At the infrastructure level on AWS, I require IMDSv2, which uses session tokens and blocks simple SSRF access to metadata. And outbound traffic gets restricted with security groups or an egress proxy.
+
+Least-privilege roles then limit the damage if something still gets through. So it's layers, like always.
+
+@p17-93
+First I assess it. Are we actually using the vulnerable package, and is the vulnerable code path even reachable? How severe is it, is there a known exploit? Which apps and environments use it? And transitive dependencies matter, because mostly the vulnerable package is pulled in by some other package.
+
+The tools help here. dotnet list package with the vulnerable flag, NuGet audit warnings during restore, npm audit, and scanners like Dependabot, Snyk or GitHub's dependency graph, which open pull requests with the fixed version.
+
+Then the fix. Normally, upgrade to the patched version, run the full test suite, deploy through the normal pipeline, just faster for critical ones. If the direct package doesn't have a fix yet, I pin the transitive dependency to a fixed version, with a direct reference, or npm overrides. If there's no fix at all, I mitigate, disable the affected feature, add input validation or a WAF rule, and track it.
+
+After that, if the risk was high, I check logs for any signs of exploitation, and document everything.
+
+To avoid surprises next time, the pipeline runs dependency scanning on every build and fails on high or critical findings, and we keep dependencies reasonably current so upgrades stay small.
+
+In a validated environment even a security patch goes through change control, but we fast-track the critical ones. That's how we handle it.
+
+@p17-94
+The Data Protection API is ASP.NET Core's built-in system for encrypting and signing data that the app needs to read back later. The framework itself uses it for authentication cookies, anti-forgery tokens and TempData, and you can use it for things like protecting a token in a URL.
+
+You get an IDataProtector from IDataProtectionProvider with a purpose string, and then call Protect and Unprotect. The purpose string keeps uses isolated, so something protected for "password reset" can't be unprotected as something else. And ToTimeLimitedDataProtector adds expiry.
+
+Now the important production part is the key ring. Keys get generated and rotated automatically, every 90 days by default. By default they're stored locally, which is fine on one machine. But with several instances behind a load balancer, or containers that restart, each instance ends up with different keys. So a cookie issued by one instance can't be read by another, and users randomly get logged out or see anti-forgery errors.
+
+So in production, I persist the keys to a shared location, Redis, a database, blob storage or S3, set the same application name on all instances, and protect the keys at rest with Azure Key Vault, a certificate, or AWS KMS.
+
+Honestly, this is a classic one when you move an app from a single server to a load-balanced or containerised setup.
+
+@p17-95
+So a Content Security Policy is a response header that tells the browser which sources are allowed for scripts, styles, images, fonts, frames and API calls. If an attacker injects a script, the browser refuses to run it because it doesn't match the policy. It's one of the strongest XSS defences.
+
+A strict policy would be something like default-src self, script-src self, object-src none, frame-ancestors none, and connect-src for our API and identity provider. Inline scripts get blocked unless they have a nonce, a random value per response, or a hash.
+
+The thing is, rolling it out on an existing site can break stuff. Inline scripts, inline event handlers, third-party analytics, fonts from CDNs, older libraries that use eval.
+
+So I start with Content-Security-Policy-Report-Only. It doesn't block anything, it just reports violations to an endpoint. I collect reports for a couple of weeks, fix or allow the legitimate sources, move inline code out where possible, and only then switch to enforcing. And I keep reporting on, to catch new issues later.
+
+Modern React and Angular builds with Vite or the Angular CLI work nicely with a strict CSP, because scripts are external files anyway. Angular also supports nonces for its inline styles. So for newer apps it's honestly not that painful.

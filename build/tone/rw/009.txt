@@ -1,0 +1,143 @@
+@p17-96
+Honestly, you can't hide a secret in a browser app. Whatever's in the JavaScript bundle, including environment variables injected at build time, like Vite's VITE prefixed variables or Angular's environment files, anyone can see by opening developer tools.
+
+So my rule is simple, no real secrets in front-end code, ever. Only public values go there. The API base URL, the identity provider's URL, a public client id, or a publishable key that's designed to be public and restricted, like a maps key locked to our domain.
+
+When the front end needs to call some service that requires a secret key, the call goes through our own backend. The browser calls our API with the user's token, our API reads the secret from a vault, adds it, and calls the third-party service. That's also the place where rate limits and authorization get applied.
+
+For our own APIs, the front end doesn't use API keys at all. Users log in with OpenID Connect, and the app just sends a short-lived access token.
+
+I also run secret scanning on the repo and the build output, because developers sometimes drop a key in an env file and it ends up in the bundle without anybody noticing.
+
+In our React shell, the Vite variables contain only URLs and the public Keycloak client id. Nothing sensitive at all.
+
+@p17-97
+So a normal network firewall works at the network and transport layers. It allows or blocks traffic based on IP addresses, ports and protocols. Like "allow HTTPS on 443 from anywhere, block everything else", or "only the app servers can reach the database on 1433". In the cloud, security groups, network ACLs and Azure network security groups do that job.
+
+A WAF, web application firewall, works at layer 7, the application layer. It actually understands HTTP and looks inside the requests, URLs, headers, query strings, bodies. So it can block common attack patterns, SQL injection strings, cross-site scripting payloads, known bad bots, traffic from certain countries, or too many requests from one IP. Examples are AWS WAF on CloudFront, an ALB or API Gateway, Azure's WAF on Front Door or Application Gateway, and Cloudflare.
+
+They work together. The firewall limits who can talk to what, and the WAF filters bad content inside the traffic that's allowed.
+
+But I'd say a WAF is a safety net, not a replacement for secure code. People bypass it with clever encoding, and it gives false positives too. So I start new rules in count mode, review what would've been blocked, and then turn on blocking. And the application still has to validate input and use parameterised queries. The WAF doesn't let you skip that.
+
+@p17-98
+The trick is having two valid credentials during an overlap period, so nothing breaks while you switch.
+
+For database passwords or API keys, it's dual credentials. You create the new secret while the old one still works, and update the secret store. Applications pick up the new value, either by reloading config periodically, or by fetching a fresh secret when authentication fails and retrying. Once every instance is on the new one, you revoke the old one. AWS Secrets Manager actually automates this with rotation Lambdas using alternating users, so one is always valid.
+
+For signing keys, like JWT keys, the identity provider publishes both old and new public keys in its JWKS. It starts signing with the new key, and once old tokens have expired, the old key is removed.
+
+For TLS certificates, I automate renewal well before expiry, with AWS Certificate Manager, Key Vault auto-renewal, or Let's Encrypt with cert-manager, and for anything manual, an alert at 30 days before expiry. Honestly, expired certificates cause a surprising number of outages.
+
+Even better is not having secrets at all where possible. IAM roles and managed identities rotate credentials automatically.
+
+And on the app side, don't cache secrets forever, and don't need a restart to pick up a new one. Otherwise rotation means downtime anyway.
+
+@p17-99
+Sometimes the question isn't can the user see this record, it's which fields of it can they see. In clinical trials this is critical. Blinded users must never see which treatment a subject got, while unblinded roles, like pharmacists or the safety team, can.
+
+And I enforce it on the server, never just by hiding fields in the UI. Because anyone can call the API directly, or just look at the network response in the browser.
+
+The way we do it, the user's permissions from their role decide a data access level. The API builds different DTOs, different projections, for different access levels, so for blinded users the sensitive fields are simply never selected from the database. A blinded user's response doesn't have the treatment arm at all, not even as a null that hints something's there. Reports and exports follow the same rules, and so do logs and error messages.
+
+For extra safety, the database can enforce it too, with views or column permissions, so a reporting tool can't sneak around the application.
+
+Testing is a must here. Automated tests call each endpoint as a blinded user and assert the unblinded fields never show up.
+
+In our IRT, role and field-level blinding is a core feature. Even things like kit numbers that could indirectly reveal the treatment are handled very carefully. One mistake there and the trial's integrity is gone.
+
+@p17-100
+All three support OAuth 2.0 and OpenID Connect, so applications integrate with them pretty much the same way. The difference is hosting, features and ecosystem.
+
+Keycloak is open source and self-hosted. You run it yourself, on-premise or in the cloud. So you get full control, deep customisation of login flows and themes, user federation with LDAP and Active Directory, and no per-user licence cost. But you operate it, upgrades, high availability, database backups, security patching, all on you.
+
+Microsoft Entra ID, what used to be Azure AD, is managed. It's ideal when the organisation already lives in Microsoft 365, corporate single sign-on, conditional access, MFA and B2B guest users are built in. And Entra External ID handles customer-facing identity.
+
+Amazon Cognito is AWS's managed one, with user pools for app users, integration with API Gateway and ALB, and identity pools for temporary AWS credentials. It's cost-effective for customer apps on AWS, though honestly less flexible for complex enterprise cases.
+
+From the .NET API side, it barely matters. AddJwtBearer with the authority and audience works with all of them.
+
+We use Keycloak for our on-premise IRT, because it runs inside our network and supports our compliance needs like password policies and lockout. For a new system, I'd mostly decide based on where it's hosted and who the users are.
+
+@p17-101
+With TLS termination, or SSL offloading, the load balancer or gateway handles the HTTPS connection with the client, decrypts it, and forwards to the backend, often as plain HTTP inside the private network. It's simple and efficient. Certificates live in one place, like AWS Certificate Manager on an ALB, backends don't burn CPU on encryption, and the load balancer can look at the HTTP content to route it and apply a WAF.
+
+The risk is the hop between the load balancer and the backend is unencrypted. In a well-isolated private network, a lot of teams are fine with that. But for sensitive data, compliance requirements, or a zero-trust approach, it's not enough.
+
+End-to-end TLS means it's encrypted all the way. Two ways to do it. Re-encryption, the load balancer terminates TLS, inspects the request, and then opens a fresh TLS connection to the backend. Or TLS passthrough, the load balancer just forwards the encrypted bytes using a layer 4 balancer, and the backend terminates TLS. But then the load balancer can't route by path.
+
+In ASP.NET Core behind a terminating proxy, I set up the forwarded headers middleware, so the app knows the original request was HTTPS and gets the right client IP and scheme. People forget that and then redirects go wrong.
+
+For healthcare data, I'd prefer re-encryption to the backend.
+
+@p17-102
+For reference types, the double equals operator by default compares references, meaning do both variables point to the same object in memory. Equals is a virtual method, and by default it also compares references, but a class can override it to compare values.
+
+The difference shows when a type overrides them. String is the classic example. Both are overridden to compare the characters, so two different string objects with the same text are equal either way.
+
+But here's the catch. Double equals is resolved at compile time, based on the variable's declared type, while Equals is resolved at runtime, based on the actual object. So if two strings are sitting in variables of type object, double equals compares references and can return false, but Equals still compares the text and returns true. Interviewers love that one, honestly.
+
+For value types like int or a struct, Equals compares values. A struct's default Equals uses reflection, which is slow, so for performance-sensitive structs I implement IEquatable of T.
+
+Records generate value-based Equals and the operator for you.
+
+And if I override Equals, I must also override GetHashCode, and usually the equality and inequality operators too, so they behave the same. If I really want a reference check, I use ReferenceEquals. That's the full picture.
+
+@p17-103
+The rule is, if two objects are equal by Equals, they have to return the same hash code. The other way isn't required, different objects can share a hash code, that's just a collision.
+
+Why it matters, hash-based collections like Dictionary and HashSet first use the hash code to find the bucket, and only then call Equals inside that bucket. So say I override Equals to compare by value but leave the default GetHashCode, which is based on the reference. Two "equal" objects will mostly land in different buckets. Then a dictionary lookup with an equal key just doesn't find the entry, and a HashSet happily stores duplicates. Honestly those bugs are really confusing to debug.
+
+So whenever I override Equals, I override GetHashCode using the same fields. In modern .NET, HashCode.Combine of the fields does it neatly.
+
+One more rule, the hash code shouldn't change while the object is being used as a key. If I change a field that's part of the hash after adding it to a dictionary, it's basically lost in the wrong bucket. That's why keys should be immutable.
+
+Records and value tuples generate correct Equals and GetHashCode automatically. So for value-like keys, like a composite key of study id and site id, I just use a record struct. Saves a lot of trouble.
+
+@p17-104
+In C#, once a string is created, it can't be changed. Anything that looks like it's modifying a string, concatenation, Replace, ToUpper, actually creates a new string and leaves the original alone.
+
+There are good reasons for that. It's thread-safe, nobody can change a string another thread is reading. It's safe as a dictionary key, since its hash never changes. It allows interning, where identical literals share one instance. And it's secure, because something you validated, like a file path, can't be changed afterwards.
+
+The cost shows up with repeated concatenation in a loop. If you build a string from 10,000 pieces with plus-equals, it copies the growing string every time, which is roughly quadratic, and creates tons of garbage for the GC.
+
+StringBuilder fixes that. It keeps a growable internal buffer, appends into it, and only creates the final string when you call ToString.
+
+My rule of thumb, for a few concatenations, or one expression, plain concatenation or interpolation is fine and more readable, the compiler optimises it anyway. In loops, or when building large text like a CSV export or an email body, I use StringBuilder, or string.Join for collections.
+
+For really hot paths, there's also Span-based formatting and string.Create. But honestly I rarely need to go that far.
+
+@p17-105
+Both are about creating objects safely with the object initialiser syntax.
+
+An init-only setter, where you write init instead of set, lets a property be assigned during object initialisation, but not after. So I can create a new Shipment with Id 5 and Status Pending, and after that the object is effectively read-only. You get immutability without writing a long constructor. Records use init properties by default.
+
+The required modifier, from C# 11, goes a step further. The compiler forces the caller to set that property in the initialiser. If someone creates a Shipment without setting a required property, it's a compile error, not a null reference at runtime later. It plays nicely with nullable reference types too, because a required non-nullable string won't give you that "might be null" warning.
+
+If a constructor already sets all the required members, I mark it with SetsRequiredMembers, so callers using that constructor aren't forced to set them again.
+
+I use these a lot for DTOs, options classes and commands. Required plus init gives you objects that are always complete and can't be changed by accident.
+
+One thing to watch, System.Text.Json respects required since .NET 7, so a missing JSON property causes a deserialisation error. For incoming requests, honestly that's usually exactly what I want.
+
+@p17-106
+Primary constructors let you declare constructor parameters right on the class or struct declaration. Like a ShipmentService class that takes an IShipmentRepository and a logger directly in its declaration. Those parameters are in scope throughout the class body, so I can use them in methods without declaring private fields and writing a constructor just to assign them.
+
+Records already had this, but C# 12 brought it to normal classes and structs. It removes a lot of boilerplate, especially for dependency injection in services and controllers.
+
+There are some differences from records worth knowing. In a class, primary constructor parameters don't become public properties, they're just captured parameters. They're not readonly either, so the class could accidentally reassign one. If I care about that, I assign it to a readonly field explicitly. And if the class has other constructors, they have to call the primary one using this.
+
+One subtle trap, if I capture a parameter and also use it to initialise a property, the class ends up with two copies of the state. The compiler does warn about it though.
+
+I find them great for small services and handlers with a few injected dependencies. For classes with complex validation in the constructor, I still go with a regular constructor, because it's just clearer to read.
+
+@p17-107
+yield return lets you write a method that produces a sequence one item at a time, lazily, without building the whole collection in memory.
+
+When a method returns IEnumerable of T and uses yield return, the compiler turns it into a state machine class behind the scenes. Nothing runs when you call the method. Code runs only when someone enumerates the result, like with foreach. Every time the consumer asks for the next item, the method runs until the next yield return, hands that value back, and pauses, remembering where it was. yield break ends the sequence early.
+
+That's useful for reading large files line by line, paging through an API, or generating sequences on demand. Only one item is in memory at a time, and if the consumer stops early, say with Take of 10, the rest never gets produced.
+
+But there are gotchas. Since execution is deferred, argument validation inside an iterator doesn't run until enumeration starts. So I put validation in a non-iterator wrapper method, or use a local function. Enumerating twice runs the whole method twice. And a using block inside an iterator stays open until enumeration finishes or the enumerator gets disposed.
+
+For async sources, like paging through an API, I use async iterators, IAsyncEnumerable with yield return and await foreach. Same idea, just async.

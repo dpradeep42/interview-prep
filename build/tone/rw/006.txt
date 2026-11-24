@@ -1,0 +1,139 @@
+@p17-60
+I don't keep the HTTP request open for minutes. It ties up resources, and you'll hit gateway and load balancer timeouts anyway, usually somewhere between 30 and 120 seconds.
+
+What I do instead is the asynchronous request-reply pattern. The client sends the request, the API validates it, saves a job record, puts the work on a queue, and straight away returns 202 Accepted with a Location header pointing to a status endpoint, like jobs slash 123. A background worker picks up the job and keeps updating status and progress. The client polls that status endpoint, and gets pending, running, completed with a link to the result, or failed with the error. If you don't want polling, you can push a notification with SignalR or a webhook when it's done.
+
+The worker has to be idempotent and able to resume, because it might crash halfway. For really big jobs, I split the work into chunks and track progress per chunk.
+
+And I put an idempotency key on the submit request, so a double click doesn't start two jobs. That one bites people a lot.
+
+This is actually how our study data transfer works. A transfer gets submitted, a worker moves the data in steps, and the UI shows the progress. [It took a transfer from around 40 minutes of manual steps to under 10 minutes, with clear status for the user.] So users stopped calling us to ask if it was still running.
+
+@p17-61
+Backpressure is basically the situation where a producer sends work faster than the consumer can handle it, and also what you do about it. If nothing controls it, queues grow without limit, memory runs out, latency goes crazy and the system can fall over.
+
+There are a few ways I handle it. Buffering, a durable queue absorbs the spikes, which is fine if the consumer catches up later. But you have to monitor that queue, alerts on depth and on the age of the oldest message. Scaling consumers, autoscale the workers on queue depth, like KEDA on Kubernetes or ECS scaling on SQS backlog. Slowing down the producer, with bounded queues or channels, rate limits, or the consumer signalling to slow down. Like a bounded System.Threading.Channels channel just makes the writer wait when it's full. And load shedding, when you're overloaded, reject low-priority work quickly with a 429 or 503 instead of making everything slow.
+
+In RabbitMQ, I set a prefetch count, so each consumer only takes a limited number of unacknowledged messages. That spreads the load and stops one consumer from hoarding work.
+
+The main thing is to decide on purpose what happens under overload, instead of finding out in production.
+
+In our CIRT notification consumers, prefetch limits plus a separate queue for bulk jobs keep the urgent emails flowing even during large imports. Before that, a big import could delay everything.
+
+@p17-62
+Vertical scaling, or scaling up, is giving one machine more resources, more CPU, more memory, faster disks. It's simple and you don't change any code. But there's a ceiling, it gets expensive fast, resizing often needs downtime, and it's still one machine, so still a single point of failure.
+
+Horizontal scaling, scaling out, means adding more instances of the service behind a load balancer. There's almost no ceiling, you get redundancy, and it fits cloud autoscaling nicely, add instances when load goes up, remove them when it drops, which saves money.
+
+But see, horizontal scaling needs the service to be stateless. No in-memory session or cache that other instances depend on, no local files that need sharing, no assumption that one instance handles all requests for a user. State goes to a shared store like Redis or a database, files go to blob storage, and background jobs need a lock or a queue so they don't run twice.
+
+Databases are the tricky part. Relational databases usually scale up first, then you add read replicas, caching, and sometimes sharding.
+
+In our on-premise CIRT, we actually use both. The web tier scales out across load-balanced IIS servers, with Redis for the shared cache. And each study's SQL Server database scales up. So it depends on the layer.
+
+@p17-63
+So when a service runs on several instances, each one runs the same scheduled jobs. A nightly job could easily run three times. There are a few ways to stop that.
+
+One is a distributed lock. Before running, each instance tries to grab a lock in a shared store, like a Redis key with SET NX and an expiry, a SQL Server application lock, or a DynamoDB conditional write. Only whoever gets it runs the job. The expiry is important, otherwise a crashed instance holds the lock forever.
+
+Another is a clustered scheduler. Quartz.NET in clustered mode, or Hangfire, keep the job state in a shared database and make sure each trigger fires on only one node.
+
+Or a separate worker. Take the scheduled jobs out of the web service and put them in one dedicated worker with a single instance. Or use the platform's scheduler, like EventBridge Scheduler or a Kubernetes CronJob, to start exactly one task.
+
+And on top of any of these, I make the job itself idempotent. So even if it somehow runs twice, it doesn't send duplicate emails or process the same data twice, like by recording what it already handled.
+
+In our CIRT platform, AlertWatchDog runs on Quartz, and the jobs are designed to be safe if a run overlaps or repeats. Honestly, the idempotency part is what really saves you.
+
+@p17-64
+When I call several services in parallel, like with Task.WhenAll, some will succeed and some might fail. So I decide up front what partial success means for that feature.
+
+First I classify each dependency, is it required or optional? If a required call fails, the whole operation fails with a clear error. If an optional one fails, like recommendations or some secondary widget, I return the rest with that section empty, plus a flag or warning, so the UI can say "some information is unavailable".
+
+On the technical side, each call gets its own timeout and resilience policy, so one slow service doesn't hold up the whole response. One gotcha with Task.WhenAll, if any task throws, awaiting it rethrows only the first exception. So I look at each task's result individually, or wrap each call in a method that returns a result object with success or error, instead of throwing.
+
+I also set an overall deadline for the whole aggregate request, and cancel whatever's still running with a CancellationToken once it's hit.
+
+For writes it's more serious, because partial failure leaves inconsistent data. There I'd rather use a saga or a queue than parallel calls.
+
+On our IRT dashboard, if the shipment summary call fails, the page still loads subject and inventory data and just shows a small warning on that panel. Users can still do their work.
+
+@p17-65
+So twelve-factor is a set of principles for building cloud-friendly services that are easy to deploy and scale. Let me go through the ones I actually use every day.
+
+One codebase per app, in version control, deployed to many environments. Dependencies declared explicitly, like NuGet or npm packages, never assumed to be on the server. Config lives in the environment, not in the code, so the same build runs everywhere. Backing services, databases, caches, brokers, are attached resources, you swap them by changing a connection setting. Build, release and run are separate, build once, combine with config to make a release, then run it. Processes are stateless, any state goes to a backing service. Port binding, the app is self-contained and exposes itself on a port, like Kestrel does. Concurrency by scaling out processes. Disposability, meaning fast startup and graceful shutdown, handling SIGTERM properly. Dev and prod parity, using containers to keep environments similar. Logs as event streams, just written to standard output and collected by the platform. And admin tasks, like migrations, run as one-off processes.
+
+ASP.NET Core on containers fits all this pretty naturally.
+
+Honestly, our older on-premise CIRT predates some of these, it has config transforms and IIS. But our newer services follow them. So I've seen both sides.
+
+@p17-66
+Adding a new optional field to a response is normally safe, but only if the clients are tolerant readers, meaning they ignore fields they don't recognise. Most JSON clients do that by default. But some strict deserialisers or generated clients can fail on unknown properties, so I actually check how the important clients are built.
+
+On the request side, a new field has to be optional with a sensible default, so old clients that don't send it behave exactly as before. If you make a new field required, that's a breaking change, no way around it.
+
+And there are things that look small but break clients. Renaming a field, changing its type like number to string, removing enum values, changing date formats, changing default sorting or pagination, or changing what an existing value means. Even adding a new enum value can break a client that has a strict switch statement, so I document that enums may grow.
+
+To catch this automatically, I generate the OpenAPI spec during the build and compare it with the previous version using a diff tool like oasdiff, and the build fails on breaking changes. Contract tests with Pact add the consumer's point of view on top.
+
+For events it's the same rules. I treat the event schema as a published contract, just like the API. That's my approach.
+
+@p17-67
+A stateless service doesn't keep any client-specific data in its own memory between requests. Every request carries what it needs, like a token, and anything that has to last goes to a shared backing service, a database, Redis, blob storage. So any instance can handle any request, you can add or remove instances freely, and if one crashes nothing important is lost. That's what makes horizontal scaling, rolling deployments and autoscaling easy.
+
+A stateful service keeps state locally. In-memory sessions, a local cache that has to stay consistent, uploaded files on local disk, WebSocket connections. Then a user has to keep hitting the same instance, so you need sticky sessions, and restarting or scaling an instance loses or moves that state. Load balancing also gets harder.
+
+Some things are just naturally stateful, like databases, brokers, SignalR connections. Those need special handling, StatefulSets in Kubernetes, managed services, or a backplane, like Redis for SignalR, so messages reach users on whichever instance they're connected to.
+
+So my rule is, keep application services stateless and push state into managed, purpose-built stores.
+
+In our CIRT web tier, we moved session data and cache into Redis, so the load balancer can send any request to any IIS server without sticky sessions. That made deployments a lot calmer.
+
+@p17-68
+Chaos engineering is deliberately breaking things in your system, in a controlled way, to find the weak spots before they cause a real outage. The thinking is, systems will fail anyway, so better we learn how they fail on our own schedule, not at 2 AM.
+
+It works like a scientific experiment. You define the steady state, what normal looks like in metrics, like error rate and latency. Then a hypothesis, say "if one instance of the shipment service dies, users won't notice". Then you inject the failure, kill instances, add network latency, make a dependency return errors, fill a disk, take down an availability zone. And you watch whether the steady state holds. Start with a small blast radius, have a clear way to stop the experiment, and grow it gradually.
+
+Tools, there's AWS Fault Injection Service, Azure Chaos Studio, Chaos Mesh for Kubernetes, and in .NET, Polly's chaos strategies, which can inject faults and latency into HttpClient calls in test environments.
+
+Teams also run game days, where everyone practises an incident scenario together. That tests the people and the runbooks too, not only the system.
+
+But honestly, it's only worth it once the basics are there, monitoring, alerts, resilience patterns. Otherwise you're just breaking things without learning much.
+
+@p17-69
+So during a rolling or blue-green deployment, old and new versions of the service run at the same time against the same database. That means every schema change has to work with both. The way I do it is expand and contract, some people call it parallel change.
+
+Expand first. Add new things without removing old ones. New column as nullable, or a new table. Deploy code that writes to both old and new, but still reads from the old. Backfill existing data in batches, so we don't lock big tables.
+
+Then migrate. Deploy code that reads from the new column, and verify everything's fine in production.
+
+Then contract. Only when no running version uses the old column, stop writing to it, and drop it in a later release.
+
+So a column rename turns into add, copy, switch, remove, across a few deployments, instead of one risky rename.
+
+A few other rules I follow. Never make a column required in the same release that starts filling it. Create indexes online on large tables, where the edition supports it. Keep migrations small and reversible.
+
+With EF Core, I generate SQL migration scripts, review them, and apply them in the pipeline before the new code goes out. In our CIRT platform, the SSDT database projects follow the same idea, since hundreds of study databases have to be updated. So we're quite strict about it.
+
+@p17-70
+Multi-tenancy means one application serves many customers, tenants, while keeping each tenant's data separate and secure.
+
+There are three main ways to isolate the data. Database per tenant, each tenant gets its own database. Strongest isolation, easy per-tenant backup, restore and deletion, and you can tune performance per tenant. But it costs more, and schema changes have to roll out to many databases. Schema per tenant, one database with separate schemas, kind of a middle ground. And a shared database with a tenant id column on every table. Cheapest and simplest to run at scale, but every query has to filter by tenant, and one mistake leaks data.
+
+If it's the shared model, I enforce isolation in the platform, I don't just trust every developer to remember. EF Core global query filters on tenant id, SQL Server row-level security as a second layer, and tests that actually try to read across tenants.
+
+The tenant gets resolved from the token or the host name early in the request, and stored in a scoped tenant context that the data layer uses.
+
+Noisy neighbours are the other worry, one big tenant shouldn't slow everyone else, so per-tenant rate limits and monitoring.
+
+Our IRT uses database per study. In clinical trials, sponsor data separation and audit requirements make strong isolation worth the cost. So for us it was an easy decision.
+
+@p17-71
+Time zones cause so many subtle bugs. So I keep one simple rule, store and transfer instants in UTC, and convert to local time only at the edges, for display, or for business rules that really depend on local time.
+
+In .NET, I use DateTimeOffset or UTC DateTime for timestamps, never DateTime.Now in server code. And I inject a TimeProvider, which came in .NET 8, so both code and tests can control the clock. APIs use ISO 8601 with an explicit offset, ending with Z for UTC, so there's no ambiguity at all.
+
+But some values aren't instants, and people miss this. A date of birth or a visit date is a calendar date. So I use DateOnly, not midnight UTC, otherwise it can shift by a day when converted. A recurring local time, like "send at 9 AM site time", needs the IANA time zone id stored, like Asia/Kolkata, and conversion with daylight saving rules. And with daylight saving, some local times happen twice or not at all, so scheduling code has to handle that.
+
+Servers and containers should run in UTC too.
+
+In our IRT, sites in many countries see dates in their own time zone, while everything's stored in UTC. [A visit window bug at US sites came from a midnight conversion, and we fixed it by storing the date as a date.] That's one I won't forget.

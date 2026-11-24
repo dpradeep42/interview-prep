@@ -1,0 +1,137 @@
+@p17-48
+So gRPC is a high-performance remote procedure call framework from Google. You define your services and messages in a proto file using Protocol Buffers, and the tooling generates strongly typed client and server code for lots of languages, C# included.
+
+Compared to REST with JSON, it's faster and the payloads are smaller, because Protocol Buffers is a compact binary format, and it runs over HTTP/2 with multiplexing on one connection. The contract is strict, so if someone makes a breaking change, it's obvious. And it supports streaming both ways, which is really nice for real-time feeds.
+
+But there are downsides. Browsers can't call gRPC directly without gRPC-Web. The messages are binary, so you can't just look at them, and debugging with curl or Postman is more painful. HTTP/2 can be tricky through some proxies and load balancers. And honestly, public APIs and partners mostly expect REST anyway.
+
+So how I decide, gRPC for internal service-to-service calls where performance and strong contracts matter, like high-volume internal lookups or streaming. REST for public APIs, browser clients and partner integrations.
+
+In ASP.NET Core it's built in. You call AddGrpc, map the service, and use the generated client through the HttpClient factory, so it gets the same resilience policies as everything else. You can even expose both from one service with JSON transcoding. So it's not really either-or.
+
+@p17-49
+A distributed monolith is when you've split the system into many services, but they're still so tightly coupled that you get all the problems of a monolith plus all the problems of distributed systems. Kind of the worst of both worlds.
+
+How do you spot it? You can't deploy one service without deploying a few others. One change touches many repos. Services share a database. One user request needs a long chain of synchronous calls. Releases have to be coordinated across teams. There's a shared library with business logic that everybody depends on. And one service going down takes everything down with it.
+
+To avoid it, I start with good boundaries around business capabilities, so most changes stay inside one service. Each service owns its own data, no shared database. For side effects, communication is mostly asynchronous, so services don't need each other to be up. APIs are versioned and backward compatible, with contract tests, so services can deploy on their own. Shared libraries carry only technical stuff, like logging or messaging helpers, never business rules. And each service gets its own pipeline.
+
+And honestly, sometimes the right answer is a modular monolith, until there's a real reason to split, like independent scaling or separate teams. Splitting early just because microservices are fashionable is how most distributed monoliths get born.
+
+@p17-50
+A modular monolith is one deployable application, but inside it's split into well-defined modules. Each module has its own domain logic, its own tables or schema, and a clear public interface. Modules don't reach into each other's internals, they talk through interfaces or in-process events.
+
+What you get is a lot of the design benefits of microservices, clear boundaries, clear ownership, without the operational cost. One deployment, one process, in-process calls instead of network calls, real ACID transactions, simple debugging, way simpler infrastructure.
+
+When is it better? When the team is small. When the domain is still being figured out and boundaries will probably move. When the load doesn't need independent scaling. Or when the organisation doesn't have strong DevOps and observability yet. Splitting too early, honestly, mostly gives you a distributed monolith.
+
+The trick is enforcing the boundaries, otherwise it slowly becomes a big ball of mud. What I do is separate projects per module, internal classes so others can't touch them, architecture tests with something like NetArchTest to block forbidden references, and separate database schemas.
+
+Then later, if a module needs independent scaling, a different technology or its own team, you can pull it out as a microservice with much less pain, because the boundary is already clean. That's why I like starting this way.
+
+@p17-51
+So a dead-letter queue is where messages go when they can't be processed, so one bad message doesn't block the queue or get retried forever.
+
+First thing I do is separate the failure types. Transient failures, like a database timeout, get a few retries with backoff, ideally delayed redelivery so we're not hammering a dependency that's already struggling. Permanent failures, like a message with invalid data, what we call a poison message, go straight to the DLQ, because retrying won't help anyway.
+
+In RabbitMQ, I set a dead-letter exchange on the queue, so rejected or expired messages get routed there. In SQS it's a redrive policy, the message moves to the DLQ after a max receive count, like five.
+
+But see, a DLQ is useless if nobody looks at it. So I put an alarm when its depth goes above zero, and with each message I keep the original headers, the error reason and how many attempts happened. Then there's a clear process. Inspect, fix the bug or the data, and replay the messages back to the main queue with a tool or a script. Since our consumers are idempotent, replaying is safe.
+
+In our CIRT platform, failed vendor messages land in a dead-letter queue with an alert, and the support team replays them once the fix is in. That's how we handle it day to day.
+
+@p17-52
+Ordering across the whole system is really hard to guarantee, so first I ask, ordering of what? Mostly we only need ordering per entity, like all events for one shipment in order, not every event everywhere.
+
+The standard way is partitioning by key. In Kafka, messages with the same key, say the shipment id, go to the same partition, and one consumer in the group reads that partition in order. In SQS FIFO, the message group id does the same job. In RabbitMQ, order holds within one queue with one consumer, but once you have multiple consumers or redeliveries, things can get reordered.
+
+But ordering can still break, through retries, redeliveries, or producers sending from different instances. So I make consumers tolerant as well. Each event carries a version or sequence number for its entity, and the consumer just ignores anything older than what it already applied. Or the consumer re-reads the current state from the source instead of trusting the payload.
+
+I also avoid designs that need ordering across different entities, because that kills parallelism.
+
+In IQVIA's newer AWS services, shipment events on Kafka are keyed by shipment id, and consumers store the last version they applied. So a late, older event can't overwrite newer data. That one check saved us from some really confusing bugs.
+
+@p17-53
+For an hour-long outage, retries and circuit breakers alone won't cut it. You need to decide how the system behaves while that dependency is gone.
+
+First thing, fail fast. The circuit breaker opens, so requests aren't sitting on timeouts and threads aren't piling up. Health checks and alerts tell the team quickly which dependency is down.
+
+Then graceful degradation, and that depends on how important the dependency is. If it's just enrichment, like recommendations or some non-critical widget, I hide that part or return cached or default data, and the main feature keeps working. If the work can wait, I make it asynchronous. Accept the request, put it on a queue, show the user "accepted, processing", and process it when the dependency is back. The queue just absorbs the backlog.
+
+If it's truly critical, like a payment or a safety check, I fail clearly with a helpful message. I won't do something unsafe or half-done just to look available.
+
+When it comes back, I control the recovery. The backlog drains at a limited rate, so we don't flatten the service that's just recovering, and I check the DLQ and replay anything that failed.
+
+In our IRT, if a depot's system is down, shipment requests queue up and site users see "pending", and we clear it when the depot recovers. So users aren't blocked, they just know it's in progress.
+
+@p17-54
+So a sidecar is a helper container that runs next to your main application container, in the same pod, sharing its network and lifecycle. It adds capabilities without touching the app code, like a logging agent, a proxy, or something that fetches secrets.
+
+A service mesh basically takes that idea everywhere. It puts sidecar proxies, usually Envoy, next to every service, plus a control plane, and manages all service-to-service traffic. Tools are Istio, Linkerd, and historically AWS App Mesh. Since every call goes through the proxies, the mesh can give you, in one consistent way, mutual TLS between services, retries, timeouts, circuit breaking, traffic splitting for canary releases, and detailed metrics and tracing for every call. All configured centrally, no code in each service.
+
+The upside is consistency across languages and teams, and strong zero-trust security with mTLS. The downside, honestly, is complexity. Extra latency and memory for every proxy, and a steep learning curve. Newer things like Istio's ambient mode reduce that per-pod sidecar overhead.
+
+When would I go for it? When there are many services in different languages, and strict security or traffic-control needs. For a smaller set of .NET services, Polly, OpenTelemetry and a gateway usually give you enough, with a lot less to operate. I wouldn't add a mesh just because it's cool.
+
+@p17-55
+I don't measure size in lines of code. For me a service is the right size when it maps to one business capability, one team can own it, and most of the time it can be changed and deployed on its own.
+
+How do I know it's too big? Several teams keep changing the same service. Deployments feel risky because unrelated features ship together. Or parts of it have very different scaling needs.
+
+Too small, the nano-service problem, looks different. Almost every feature needs changes in several services. Services call each other constantly in long chains. You need sagas for things that should've been simple. And the operational overhead, pipelines, monitoring, on-call, is more than the benefit.
+
+So I start from the domain, domain-driven design and bounded contexts, and I keep together things that change together and need strong consistency. If data has to be updated in one transaction, that's a strong hint it belongs in one service.
+
+And honestly, it's fine to start a bit bigger and split later when there's a real reason, like independent scaling, a different release cadence or a separate team. Merging services back is much harder than splitting a clean module.
+
+In our IRT, for example, inventory and shipments stay together, because kit allocation and the shipment request have to be consistent. Splitting them would just create a saga for no good reason.
+
+@p17-56
+An anti-corruption layer is basically a translation layer between your domain and some external or legacy system, so their model doesn't leak into your code.
+
+See, legacy systems and third-party APIs usually have confusing names, odd formats, magic codes, different concepts. If your new service uses all that directly, its model gets "corrupted" by it, and every change on their side ripples through your code.
+
+So I put an adapter in between. My domain code only talks to an interface in my own language, like an IShipmentGateway with a CreateShipment method taking my own Shipment type. The implementation behind it calls the external system, maps my types to theirs and back, converts the codes, handles their error formats and retries. If the external system changes or gets replaced, only the adapter changes, nothing else.
+
+It's really useful during a strangler migration, where new services have to live with an old system for a long time.
+
+In our IRT modernisation, that's exactly what we did. The new .NET APIs talk to the legacy transaction engine through a translation layer. So the new code uses clean names and DTOs, and the old procedures and formats stay hidden behind it. And when parts of the legacy side get replaced, the new code doesn't change at all. That's the whole point.
+
+@p17-57
+I'm quite careful here, because shared libraries can couple services just as badly as a shared database.
+
+What I'm happy to share is technical, cross-cutting code. Logging and OpenTelemetry setup, a messaging wrapper, standard health checks, auth setup, error-handling middleware, maybe a result type. I publish these as versioned NuGet packages on a private feed, like Azure Artifacts or GitHub Packages, with semantic versioning. So each service upgrades when it's ready, nobody's forced to move all at once.
+
+What I don't share is business logic and domain models. If two services share a domain library, a change for one forces a change and redeploy of the other, and you're back to monolith coupling. Honestly, a little duplication is better than the wrong coupling.
+
+For contracts, like message schemas or API clients, I prefer generating them from one source, an OpenAPI spec, a protobuf file, or a schema registry, rather than hand-sharing DTO classes. That keeps each side independent and catches breaking changes early.
+
+And shared libraries should stay small, well tested, backward compatible, with very few dependencies of their own.
+
+In our CIRT platform, common logging and messaging helpers ship as internal NuGet packages from Azure DevOps Artifacts, while domain models stay inside each service. That balance has worked well for us.
+
+@p17-58
+Both are messages, but they mean different things, and that changes how I design them.
+
+A command is a request to do something. It goes to one specific receiver that owns that action. It's named like an instruction, CreateShipment, SendEmail. The sender expects it to be handled, and the receiver can accept it or reject it. Usually it goes to a queue with one consumer.
+
+An event is a statement that something already happened. Past tense, like ShipmentCreated or SubjectRandomised. The publisher doesn't know or care who's listening, could be zero, one or many subscribers. And you can't reject it, it's a fact. Events go to a topic or an exchange.
+
+Why it matters is coupling. With commands, the sender depends on the receiver. With events, the publisher is independent of its subscribers, so you can add new consumers later without touching the publisher.
+
+There's one more split, domain events versus integration events. Domain events are raised inside a service, between parts of its own domain. Integration events go outside to other services, they're part of the public contract, so we version them and keep them stable.
+
+In our IRT, SubjectRandomised is an integration event, and both the notification and the reporting consumers listen to it. The randomisation side doesn't even know they exist.
+
+@p17-59
+Honestly, both styles are valid. It depends on the consumers.
+
+A thin event, or notification event, has just the id and type, like "Shipment 123 changed". Consumers then call the owning service to get the current data. It's small and the data is always fresh. But every consumer calls back, which adds load and coupling, and if the owner is down, consumers are stuck.
+
+A fat event, what's called event-carried state transfer, has the relevant data inside it, like the shipment's status, site, kit count, timestamps. Consumers have everything without calling back, so they're more independent and resilient, and the owner gets less load. The catch is bigger messages, more care when the schema changes, and the risk of putting sensitive data in there that not every consumer should see.
+
+What I usually do is go somewhere in the middle. Include the data most consumers need, plus the id and a version number so they can ignore stale events. I don't include sensitive personal data unless every subscriber really needs it, especially in clinical systems where patient data has to be kept to a minimum.
+
+And event schemas get versioned, with fields added in a backward-compatible way.
+
+In IQVIA's newer AWS services, shipment events carry status, location and a version, so most consumers never need to call back. That's worked well for us.

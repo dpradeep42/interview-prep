@@ -6,3 +6,4 @@ build/p*.mjs
 user-questions.txt
 cursor-answers/
 *.pdf
+tone/orig/
