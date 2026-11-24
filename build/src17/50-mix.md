@@ -36,121 +36,122 @@ For your own long-running functions, check signal aborted in loops, or call thro
 Handle the error properly. An AbortError is usually expected, so log it at a lower level than real failures, and make sure aborted operations don't leave half-written data behind.
 
 ### nodex | npm vs pnpm vs Yarn: how do you choose a package manager? | npm vs pnpm vs yarn, pnpm workspaces, yarn berry, package manager node, corepack, node_modules disk space
-All three install packages from the npm registry and use a lock file, but they differ in speed, disk use and strictness.
+All three install packages from the npm registry and use a lock file, but honestly they differ in speed, disk use and strictness.
 
-npm comes with Node, so it needs no setup and has the widest compatibility. It's improved a lot and supports workspaces for monorepos. Its node_modules layout is flat, which means code can accidentally import packages it never declared, because they were hoisted from another dependency.
+npm comes with Node, so there's no setup and it has the widest compatibility. It's improved a lot and supports workspaces for monorepos. Its node modules layout is flat, which means code can accidentally import packages it never declared, because they got hoisted from another dependency.
 
-pnpm stores every package version once in a global content-addressed store and links it into projects, so installs are fast and disk use is much lower, especially with many projects. Its node_modules is strict: a package can only import what it declares, which catches missing dependency mistakes early. Its workspace support is strong, which makes it popular for monorepos.
+pnpm stores every package version once in a global content-addressed store and links it into projects, so installs are fast and disk use is way lower, especially with lots of projects. Its node modules folder is strict. A package can only import what it declares, which catches missing dependency mistakes early. And its workspace support is strong, which is why it's popular for monorepos.
 
-Yarn version one was the faster alternative years ago and is now in maintenance. Modern Yarn, called Berry, offers Plug'n'Play, which removes node_modules entirely, but some tools still struggle with it.
+Yarn version one was the faster alternative years ago and it's in maintenance now. Modern Yarn, called Berry, offers Plug'n'Play, which removes node modules entirely, but some tools still struggle with it.
 
-Corepack, included with Node, lets a project pin its package manager and version in package.json, so everyone and CI use the same one.
+Corepack, which ships with Node, lets a project pin its package manager and version in package dot json, so everyone and CI use the same one.
 
-My choice: for a single app, npm is fine. For a monorepo with many packages, pnpm is usually the best mix of speed and strictness. Whatever you choose, commit the lock file, use the frozen or ci install mode in pipelines, and configure the private registry, like an Azure Artifacts feed, in a project-level npmrc without credentials in the file.
+My choice, for a single app, npm's fine. For a monorepo with lots of packages, pnpm is usually the best mix of speed and strictness. Whatever you choose, commit the lock file, use the frozen or ci install mode in pipelines, and configure the private registry, like an Azure Artifacts feed, in a project-level npmrc without credentials in the file.
 
 ### nodex | How do you manage Node.js versions and upgrade to a new LTS release? | node lts upgrade, nvmrc, node version manager, node end of life, upgrade node version, volta fnm
-Node releases a new major version every six months. Even-numbered versions become long-term support releases, with about thirty months of support in total, while odd-numbered versions are short-lived. Production should run an active or maintenance LTS version, and teams should plan an upgrade before the version reaches end of life, since security fixes stop then.
+Node releases a new major version every six months. Even-numbered versions become long-term support releases, with about thirty months of support in total, while odd-numbered ones are short-lived. Production should run an active or maintenance LTS version, and teams should plan an upgrade before the version hits end of life, since security fixes stop then.
 
-To keep versions consistent, pin the version per project. An nvmrc file works with nvm or fnm, Volta can pin it in package.json, and the engines field documents the supported range, with engine-strict mode making npm fail on a wrong version. The Docker base image should use the same major version, and CI should read the version from the same file.
+To keep versions consistent, pin the version per project. An nvmrc file works with nvm or fnm, Volta can pin it in package dot json, and the engines field documents the supported range, with engine-strict mode making npm fail on a wrong version. The Docker base image should use the same major version, and CI should read the version from the same file.
 
-For an upgrade, I start with the release notes and the list of breaking changes, check native modules, which must be rebuilt for each version and are the most common source of trouble, and check that key dependencies support the new version. Then I run the full test suite on the new version in CI, often as a matrix with both versions for a while. Deprecation warnings from the current version are a good hint of what will break.
+For an upgrade, I start with the release notes and the list of breaking changes. Then native modules, which have to be rebuilt for each version and are the most common source of trouble, in my experience. And I check key dependencies support the new version. Then I run the full test suite on the new version in CI, often as a matrix with both versions for a while. Deprecation warnings from the current version are a good hint of what'll break.
 
-Then I roll out like any risky change: one service or environment first, watching memory, CPU and error rates, since garbage collection and performance characteristics change between versions.
+Then I roll it out like any risky change. One service or environment first, watching memory, CPU and error rates, since garbage collection and performance characteristics change between versions.
 
-Upgrading regularly, one LTS to the next, is much easier than jumping several versions after years of neglect.
+Upgrading regularly, one LTS to the next, is so much easier than jumping several versions after years of neglect. I've seen that the hard way.
 
 ### pyx | requests vs httpx vs aiohttp: which HTTP client should you use in Python? | requests vs httpx, aiohttp, python http client, async http python, httpx async client, connection pooling python
-requests is the classic synchronous HTTP client. It's simple and very widely used, but it has no async support, no HTTP/2, and you must remember to use a Session for connection pooling and to set a timeout, because by default it can wait forever.
+So requests is the classic synchronous HTTP client. It's simple and really widely used, but it has no async support, no HTTP/2, and you have to remember to use a Session for connection pooling and to set a timeout, because by default it can wait forever.
 
-httpx has an API very similar to requests, but offers both a synchronous Client and an AsyncClient, supports HTTP/2, and has sensible timeouts by default. It can also call an ASGI or WSGI app directly in-process, which makes it the standard choice for testing FastAPI. For new code, especially async code, httpx is my default.
+httpx has an API very similar to requests, but gives you both a synchronous Client and an AsyncClient, supports HTTP/2, and has sensible timeouts by default. It can also call an ASGI or WSGI app directly in-process, which makes it the standard choice for testing FastAPI. For new code, especially async code, httpx is my default.
 
-aiohttp is async only and includes both a client and a web server. It's mature and fast, and was the main async option before httpx, so many existing async projects use it.
+aiohttp is async only and includes both a client and a web server. It's mature and fast, and it was the main async option before httpx, so lots of existing async projects use it.
 
-Whichever client you choose, a few rules matter more than the library. Reuse one client per application, created at startup and closed at shutdown, for example with FastAPI's lifespan, so connections are pooled; creating a client per request is a common performance problem. Always set timeouts. Never use a synchronous client inside an async endpoint, because it blocks the event loop. Add retries with backoff for idempotent calls only, using the transport retry setting or a library like tenacity.
+Whichever client you pick, a few rules matter more than the library. Reuse one client per application, created at startup and closed at shutdown, for example with FastAPI's lifespan, so connections get pooled. Creating a client per request is a really common performance problem. Always set timeouts. Never use a synchronous client inside an async endpoint, because it blocks the event loop. And add retries with backoff for idempotent calls only, using the transport retry setting or a library like tenacity.
 
-In our FastAPI RAG service, one shared httpx AsyncClient calls the embedding and model endpoints with explicit timeouts, which removed connection setup overhead from every request.
+In our FastAPI RAG service, one shared httpx AsyncClient calls the embedding and model endpoints with explicit timeouts, which removed the connection setup overhead from every request.
 
 ### pyx | How do you add retries with backoff in Python using tenacity? | tenacity, python retry, exponential backoff python, retry decorator, retry transient errors python
-tenacity is the most common Python library for retries. You decorate a function with retry and configure when to stop, how long to wait and which errors to retry, and it works with both normal and async functions.
+tenacity is the most common Python library for retries. You decorate a function with retry and configure when to stop, how long to wait, and which errors to retry, and it works with both normal and async functions.
 
-A typical setup stops after a number of attempts or a total time, waits with exponential backoff plus random jitter, so many clients don't retry at the same moment, and retries only on specific exceptions, like connection errors, timeouts or HTTP responses with status 429 or 503. You can also retry based on the result, and add before-sleep logging so each retry is visible.
+A typical setup stops after a number of attempts or a total time, waits with exponential backoff plus random jitter, so lots of clients don't retry at the same moment, and retries only on specific exceptions, like connection errors, timeouts, or HTTP responses with status 429 or 503. You can also retry based on the result, and add before-sleep logging so each retry is visible.
 
-What to retry matters more than how. Retry transient failures, not validation errors or 404s, which will fail the same way every time. Only retry operations that are safe to repeat; for writes, use an idempotency key. Respect a Retry-After header when the server sends one.
+What to retry matters more than how, I'd say. Retry transient failures, not validation errors or 404s, which will fail the same way every time. Only retry operations that are safe to repeat, and for writes, use an idempotency key. Respect a Retry-After header when the server sends one.
 
-Keep the total retry time inside the caller's own timeout, otherwise the caller gives up while you're still retrying. And avoid stacking retries: if the HTTP client retries, tenacity retries, and the message consumer also retries, one failure becomes dozens of calls, which turns a small problem into a retry storm.
+Keep the total retry time inside the caller's own timeout, otherwise the caller gives up while you're still retrying. And avoid stacking retries. If the HTTP client retries, tenacity retries, and the message consumer also retries, one failure becomes dozens of calls, which turns a small problem into a retry storm.
 
-For long outages, retries aren't enough; a circuit breaker stops calling a failing service for a while. Libraries like pybreaker provide that.
+For long outages, retries aren't enough. A circuit breaker stops calling a failing service for a while, and libraries like pybreaker give you that.
 
 In our Python services, model and embedding calls retry a few times with jittered backoff on 429 and 503 responses, with each retry logged, which smoothed out short rate-limit spikes.
 
 ### pyx | How do you debug Python code with pdb, breakpoint and debugpy? | python debugging, pdb, breakpoint function, debugpy, remote debug python container, post mortem debugging
-Python has a built-in debugger, pdb. Calling the built-in breakpoint function anywhere in code pauses execution and opens an interactive prompt where you can print variables, step to the next line, step into functions, continue, and move up and down the call stack. The PYTHONBREAKPOINT environment variable controls what breakpoint does, including disabling it completely, which is a safety net in production.
+Python has a built-in debugger, pdb. Calling the built-in breakpoint function anywhere in the code pauses execution and opens an interactive prompt where you can print variables, step to the next line, step into functions, continue, and move up and down the call stack. The python breakpoint environment variable controls what breakpoint does, including turning it off completely, which is a nice safety net in production.
 
-Post-mortem debugging is very useful: running a script with python -m pdb drops you into the debugger at the point where an unhandled exception happened, and pytest's pdb option does the same for a failing test, so you can inspect the state that caused the failure.
+Post-mortem debugging is really useful. Running a script with python dash m pdb drops you into the debugger at the point where an unhandled exception happened, and pytest's pdb option does the same for a failing test, so you can inspect the state that caused the failure.
 
-For IDE debugging, VS Code and PyCharm use debugpy. You can also attach remotely: the app starts with debugpy listening on a port, and the IDE connects. That works for code running in Docker containers, with the port mapped, which is how I debug a FastAPI service running inside Docker Compose. With uvicorn's reload mode, configure the debugger to follow subprocesses.
+For IDE debugging, VS Code and PyCharm use debugpy. You can also attach remotely. The app starts with debugpy listening on a port, and the IDE connects. That works for code running in Docker containers, with the port mapped, which is how I debug a FastAPI service running inside Docker Compose. With uvicorn's reload mode, configure the debugger to follow subprocesses, otherwise you'll wonder why breakpoints don't hit.
 
-For async code, the debugger works, but stepping across awaits can be confusing; good logging often helps more there.
+For async code, the debugger works, but stepping across awaits can get confusing, and honestly good logging often helps more there.
 
-In production, don't attach interactive debuggers. Use logs, traces and tools that don't stop the process, such as py-spy to see what every thread is doing, which can dump stacks of a running process without restarting it. That's often how you diagnose a hung worker quickly.
+In production, don't attach interactive debuggers. Use logs, traces and tools that don't stop the process, like py-spy, to see what every thread is doing. It can dump stacks of a running process without restarting it, and that's often how you diagnose a hung worker quickly.
 
 ### awsx | What are VPC endpoints, and why use them instead of a NAT gateway? | vpc endpoints, gateway endpoint, interface endpoint, privatelink, s3 gateway endpoint, private access aws services
-Resources in private subnets, like ECS tasks, Lambda functions in a VPC or EC2 instances, have no direct internet access. To reach AWS services such as S3, SQS or Secrets Manager, traffic normally goes through a NAT gateway to the services' public endpoints. VPC endpoints let that traffic stay on AWS's private network instead.
+Resources in private subnets, ECS tasks, Lambda functions in a VPC, EC2 instances, have no direct internet access. To reach AWS services like S3, SQS or Secrets Manager, traffic normally goes through a NAT gateway to the services' public endpoints. VPC endpoints let that traffic stay on AWS's private network instead.
 
-There are two kinds. Gateway endpoints exist only for S3 and DynamoDB. They're added as routes in the route table and are free, so there's almost no reason not to have them. Interface endpoints, powered by PrivateLink, create network interfaces with private IPs in your subnets for most other services, like ECR, CloudWatch Logs, SQS, Secrets Manager and STS. They cost a small hourly amount per availability zone plus data charges.
+You've got two kinds. Gateway endpoints exist only for S3 and DynamoDB. They're added as routes in the route table and they're free, so there's almost no reason not to have them. Interface endpoints, powered by PrivateLink, create network interfaces with private IPs in your subnets for most other services, like ECR, CloudWatch Logs, SQS, Secrets Manager and STS. They cost a small hourly amount per availability zone plus data charges.
 
-The benefits: security, because traffic never crosses the internet and subnets can be fully private with no NAT at all; and cost, because NAT gateway data processing charges can be large when containers pull big images from ECR or write heavy logs.
+Why bother? Security, because traffic never crosses the internet and subnets can be fully private with no NAT at all. And cost, because NAT gateway data processing charges can get big when containers pull large images from ECR or write heavy logs. Honestly, that cost one surprises everyone.
 
-Endpoint policies add control. A policy on the S3 endpoint can allow access only to your organisation's buckets, which helps prevent data being copied out to someone else's bucket. Bucket policies can also require that access comes through a specific endpoint.
+Endpoint policies add control. A policy on the S3 endpoint can allow access only to your organisation's buckets, which helps stop data being copied out to someone else's bucket. Bucket policies can also require that access comes through a specific endpoint.
 
 Private DNS on interface endpoints means the normal service hostnames resolve to the private IPs, so applications need no code change.
 
 For an ECS cluster in private subnets, I'd add the S3 gateway endpoint plus interface endpoints for ECR, CloudWatch Logs and Secrets Manager.
 
 ### awsx | What do GuardDuty and Security Hub do in AWS? | guardduty, security hub, aws threat detection, aws security posture, aws inspector, cloud security monitoring aws
-They're two complementary AWS security services, one for detecting threats and one for collecting findings and checking posture.
+They're two AWS security services that work together, one for detecting threats and one for collecting findings and checking posture.
 
-GuardDuty is threat detection. It analyses CloudTrail events, VPC flow logs and DNS logs, plus optional sources like S3 data events, EKS audit logs and runtime monitoring for EC2, ECS and EKS. It uses threat intelligence and anomaly detection to find things like credentials used from an unusual location, an instance talking to a known malicious IP or mining cryptocurrency, unusual API calls suggesting reconnaissance, or a public bucket being accessed suspiciously. There's no agent to manage for the basic sources; you enable it per account and region, ideally across the organisation.
+GuardDuty is threat detection. It analyses CloudTrail events, VPC flow logs and DNS logs, plus optional sources like S3 data events, EKS audit logs and runtime monitoring for EC2, ECS and EKS. It uses threat intelligence and anomaly detection to find things like credentials used from an unusual location, an instance talking to a known malicious IP or mining cryptocurrency, unusual API calls that suggest reconnaissance, or a public bucket being accessed suspiciously. There's no agent to manage for the basic sources. You turn it on per account and region, ideally across the whole organisation.
 
-Security Hub is the central dashboard. It aggregates findings from GuardDuty, Inspector for vulnerability scanning, Macie for sensitive data in S3, IAM Access Analyzer and third-party tools, and it runs automated checks against standards such as the AWS Foundational Security Best Practices and CIS benchmarks, giving a score and a list of failing controls like unencrypted volumes or overly open security groups.
+Security Hub is the central dashboard. It pulls in findings from GuardDuty, Inspector for vulnerability scanning, Macie for sensitive data in S3, IAM Access Analyzer and third-party tools, and it runs automated checks against standards like the AWS Foundational Security Best Practices and CIS benchmarks, giving a score and a list of failing controls, like unencrypted volumes or overly open security groups.
 
-Making it useful takes process. Send high-severity findings through EventBridge to the on-call channel or ticketing system, automate common fixes where safe, suppress known false positives with documented reasons, and review the posture score regularly. A delegated administrator account in AWS Organizations gives one view across all accounts.
+Making it useful takes process though, I think that's the real work. Send high-severity findings through EventBridge to the on-call channel or ticketing system, automate common fixes where it's safe, suppress known false positives with documented reasons, and review the posture score regularly. A delegated administrator account in AWS Organizations gives one view across all accounts.
 
 Detective can then help investigate a finding by showing related activity over time. Together they turn security from occasional audits into continuous monitoring.
 
 ### scx | How do you run chaos experiments with AWS Fault Injection Service or Azure Chaos Studio? | aws fault injection service, azure chaos studio, fis experiment, managed chaos engineering, fault injection cloud
-Both are managed services for chaos engineering on their clouds. They let you inject real failures, in a controlled and repeatable way, to prove your system handles them.
+Both are managed services for chaos engineering on their clouds. They let you inject real failures, in a controlled and repeatable way, to prove your system actually handles them.
 
-AWS Fault Injection Service runs experiment templates with actions such as stopping or terminating EC2 instances, stopping ECS tasks, injecting CPU or memory stress, adding network latency or packet loss, failing over an Aurora cluster, throttling API calls, or disrupting an entire availability zone's connectivity. Azure Chaos Studio has similar faults: shutting down VMs, killing processes, adding latency, failing a Cosmos DB region, rebooting a Redis cache, and Kubernetes faults for AKS through Chaos Mesh.
+AWS Fault Injection Service runs experiment templates with actions like stopping or terminating EC2 instances, stopping ECS tasks, injecting CPU or memory stress, adding network latency or packet loss, failing over an Aurora cluster, throttling API calls, or disrupting a whole availability zone's connectivity. Azure Chaos Studio has similar faults, shutting down VMs, killing processes, adding latency, failing a Cosmos DB region, rebooting a Redis cache, and Kubernetes faults for AKS through Chaos Mesh.
 
-The safety features matter most. Experiments target resources by tags or explicit lists, so you control the blast radius. Stop conditions, like a CloudWatch alarm or Azure Monitor alert firing, halt the experiment automatically if things go worse than expected. Permissions go through an IAM role or managed identity limited to what the experiment needs.
+The safety features matter most, for me. Experiments target resources by tags or explicit lists, so you control the blast radius. Stop conditions, like a CloudWatch alarm or an Azure Monitor alert firing, halt the experiment automatically if things go worse than expected. Permissions go through an IAM role or managed identity limited to what the experiment needs.
 
-A good experiment starts with a hypothesis: if one ECS task in each service is stopped, the error rate stays below one percent and capacity recovers within two minutes. Run it in a test environment first, watch dashboards, then compare the result with the hypothesis. Findings become fixes, like missing retries, slow health checks or alarms that never fired.
+A good experiment starts with a hypothesis. Like, if one ECS task in each service is stopped, the error rate stays below one percent and capacity recovers within two minutes. Run it in a test environment first, watch the dashboards, then compare the result with the hypothesis. Findings become fixes, like missing retries, slow health checks, or alarms that never fired.
 
-Once trusted, experiments can run in pipelines or game days on a schedule, so resilience is checked continuously rather than assumed.
+Once it's trusted, experiments can run in pipelines or game days on a schedule, so resilience gets checked continuously instead of just assumed.
 
 ### scx | A Lambda function runs out of memory while processing large files from S3. What do you do? | lambda out of memory, lambda large file s3, process big file lambda, lambda memory error, stream s3 object
-First, confirm it's really memory. The function's log ends with a runtime exited error or the REPORT line shows max memory used equal to the configured memory. Then check which files fail; it's usually only the large ones.
+Let me start by confirming it's really memory. The function's log ends with a runtime exited error, or the REPORT line shows max memory used equal to the configured memory. Then check which files fail. It's usually only the large ones.
 
-The root cause is normally reading the whole object into memory: calling read on the S3 body, loading it into a string or data frame, or building a big list of parsed records. A two-gigabyte file can't fit into a function with one gigabyte of memory, and parsing often needs several times the file size.
+The root cause is normally reading the whole object into memory. Calling read on the S3 body, loading it into a string or data frame, or building a big list of parsed records. A two-gigabyte file can't fit into a function with one gigabyte of memory, and parsing often needs several times the file size.
 
-The fix is streaming. Read the S3 body as a stream and process it line by line or in chunks, writing results out in batches rather than collecting everything. For CSV and JSON lines, that's straightforward with streaming readers in Python, Node or .NET. For uploads of output, use multipart upload streams. Temporary data can go to the ephemeral storage under the tmp folder, which can be configured up to ten gigabytes.
+The fix is streaming. Read the S3 body as a stream and process it line by line or in chunks, writing results out in batches instead of collecting everything. For CSV and JSON lines, that's straightforward with streaming readers in Python, Node or .NET. For uploading output, use multipart upload streams. Temporary data can go to the ephemeral storage under the tmp folder, which can be configured up to ten gigabytes.
 
-Increasing memory is a quick fix and also gives more CPU, but it only moves the limit.
+Increasing memory is a quick fix and gives you more CPU too, but it only moves the limit.
 
-Then think about fit. Lambda has a fifteen-minute limit too, so very large files may also time out. Options are splitting work: one function reads byte ranges and sends chunk references to a queue for parallel workers; Step Functions distributed map for processing large datasets in parallel; or moving heavy processing to an ECS task triggered by the upload.
+Then think about fit. Lambda has a fifteen-minute limit as well, so really large files might also time out. Options are splitting the work, where one function reads byte ranges and sends chunk references to a queue for parallel workers, Step Functions distributed map for processing large datasets in parallel, or moving heavy processing to an ECS task triggered by the upload.
 
-Finally, add alerts on errors and max memory used, and test with the largest realistic file.
+And add alerts on errors and max memory used, and test with the largest realistic file.
 
 ### scx | A Node.js service hits 100 percent CPU after a release, and requests time out. What do you check? | node cpu 100 percent, node event loop blocked, regex denial of service, node service hanging high cpu, redos production
-Node runs JavaScript on one main thread, so one piece of CPU-heavy code blocks every request on that instance. When CPU jumps to a hundred percent right after a release and everything times out, I suspect something in the new code that blocks the event loop.
+Node runs JavaScript on one main thread, so one piece of CPU-heavy code blocks every request on that instance. When CPU jumps to a hundred percent right after a release and everything times out, I suspect something in the new code that's blocking the event loop.
 
-First, contain it: roll back if the impact is wide, since the release is the obvious trigger, and then investigate using the bad version in a test environment.
+Contain it before anything else. Roll back if the impact's wide, since the release is the obvious trigger, and then investigate using the bad version in a test environment.
 
-To find the hot code, take a CPU profile. Starting Node with the inspect flag and attaching Chrome DevTools, using the cpu-prof flag, or clinic flame gives a flame graph showing which functions use the time. Event loop delay metrics from perf_hooks confirm the loop is blocked rather than the service simply being busy.
+To find the hot code, take a CPU profile. Starting Node with the inspect flag and attaching Chrome DevTools, using the cpu-prof flag, or clinic flame gives you a flame graph showing which functions use the time. Event loop delay metrics from perf hooks confirm the loop's blocked rather than the service just being busy.
 
-Common causes after a release: a regular expression with nested quantifiers that takes exponential time on certain inputs, called ReDoS; synchronous functions like readFileSync, synchronous crypto or JSON.parse and JSON.stringify on very large payloads; a loop that became quadratic over a growing array; or a new dependency doing heavy work at import or per request.
+Common causes after a release. A regular expression with nested quantifiers that takes exponential time on certain inputs, which is called ReDoS, and it can catch people out. Synchronous functions like readFileSync, synchronous crypto, or JSON parse and stringify on huge payloads. A loop that became quadratic over a growing array. Or a new dependency doing heavy work at import or per request.
 
-Then fix it properly: rewrite the regex or use a linear-time engine like RE2, switch to async APIs, stream large payloads, move CPU-heavy work to worker threads or a separate service, and add input size limits.
+Then fix it properly. Rewrite the regex or use a linear-time engine like RE2, switch to async APIs, stream large payloads, move CPU-heavy work to worker threads or a separate service, and add input size limits.
 
-Afterwards, add an event loop delay alert and a performance test with large and nasty inputs to the pipeline, so the next regression is caught before production.
+Afterwards, add an event loop delay alert and a performance test with large and nasty inputs to the pipeline, so the next regression gets caught before production.
+
