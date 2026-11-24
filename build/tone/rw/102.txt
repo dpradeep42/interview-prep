@@ -1,0 +1,107 @@
+@p3-12
+So IRT exchanges data files with external vendors, like depot and logistics partners, over SFTP. Things like shipment requests, status updates and inventory files. I owned the component that handles those transfers.
+
+The key design is one abstraction over three libraries. The ISftpClient interface defines connect, upload, download, list and delete. Behind it, there are three providers, ComponentPro, SSH.NET and Rebex. A factory reads each vendor's configuration and returns the right provider, using keyed services in DI. So the calling code, like the vendor exchange service, never changes, whichever library is used. A base class holds the shared behaviour, retry with backoff for transient network errors, consistent logging with the vendor and file name, and mapping every library's exceptions into our own SftpTransferException, so callers handle errors the same way.
+
+Each provider passes the same set of contract tests, for things like overwriting existing files, timeouts and error behaviour, so they're truly interchangeable. That's Liskov substitution in practice, honestly.
+
+I added the Rebex provider and released it to production, moving vendors over one at a time by configuration. For me it's a good example of how a small abstraction made a risky change routine. I can explain why we needed three libraries.
+
+@p3-13
+Okay, so the situation was, ComponentPro was our original SFTP library, but its updates had slowed down. In [2024], a depot vendor hardened their server and disabled older algorithms, like ssh-rsa with SHA-1. Our connection to them broke, and shipment files stopped flowing. SSH.NET, which we also supported, is free and good, but for a regulated product we wanted a library with commercial support and guaranteed patching.
+
+I was asked to restore the connection quickly, and pick a sustainable long-term option.
+
+What I did was compare all three libraries in an evaluation matrix. Support for modern algorithms, like rsa-sha2-256 and 512 host keys, curve25519 key exchange and AES-GCM ciphers, the vendor's support and patch history, licence cost, and, most importantly, actual behaviour against each vendor's test server. Rebex came out best. Because we already had the ISftpClient abstraction, I could build a Rebex provider behind the same interface, without changing any caller code. We kept the other providers as fallbacks, and moved vendors over one at a time, purely through configuration.
+
+In the end, the broken vendor connection was restored, and other vendors were migrated safely without a single code change in the business logic. The matrix also made the decision objective and easy for others to review. What I took away was that the abstraction paid for itself. I can explain how we released it safely.
+
+@p3-14
+Right, so the situation was, after choosing Rebex, I had to release the new provider to production. SFTP transfers carry shipment data for clinical trials, so a broken transfer could delay drug supply to sites. The release had to be really safe.
+
+I owned getting Rebex into production with a clear way to prove it worked, and to roll back instantly if it didn't.
+
+What I did was build the provider behind the existing ISftpClient interface, with unit tests, and integration tests in CI against a [containerised OpenSSH server]. Those covered key exchange, host key verification, a [500 MB] file, timeouts and reconnects. It went through our formal FV, TechOps and UAT environments with documented evidence. In production, I used the per-vendor provider setting as a canary. I deployed the code dark, then switched it on for [one low-volume vendor] only, for [two weeks]. During that time, I watched transfer success rates and durations per provider, with alerts on failures. The rollback plan was simple, flip the configuration back, no redeployment. Once it was stable, we moved the remaining vendors in small groups.
+
+In the end, the switch caused no failed transfers, and all vendors moved over without incident. It's the same idea as a feature flag. Deploy dark, enable gradually, measure, and keep rollback instant. I can describe the metrics we watched.
+
+@p3-15
+Okay, so the situation was, when a new clinical study is set up, its sites have to be created in IRT. A study here means one clinical trial set up in our IRT system, with its protocol rules, countries and sites, treatment arms, visit schedule, drug kits and user roles. Study setup teams were typing [300+] site records by hand, which took [two to three days] per large study and caused typos that were found later.
+
+I designed and built a CSV bulk import, working with our BA and QA, and the requirement was that bad data must never get in, and users must see every problem before anything is saved.
+
+What I did was read files up to [5 MB, about 10,000 rows] as a stream with CsvHelper, so memory stays flat. Validation runs in stages. Headers and structure go at the start, which fails fast, then types and mandatory fields, then duplicates, both within the file and against the database, using one set-based query instead of a lookup per row, and then business rules, like the site's country being allowed for the study. The user sees a preview with every error, row, column and reason, and can download it as CSV. When they confirm, everything is saved all-or-nothing, in batches inside one transaction, with an audit entry per record. A file hash blocks re-importing the same file, and there's a limit of [2] concurrent imports per user. I covered each rule with unit tests, and the flow with Playwright.
+
+In the end, it's live in production, and a [300-site] setup now takes [under an hour], with no data-entry errors. I can explain the design choices.
+
+@p3-16
+So the situation was, in [2024], a manual pre-check caught a study transfer, moving study configuration between environments, that was about to overwrite a target study that already had randomised subjects. A study here means one clinical trial set up in our IRT system, with its protocol rules, countries and sites, treatment arms, visit schedule, drug kits and user roles. It was caught by a person following a checklist. If it hadn't been, it could have affected live trial data.
+
+I proposed and built a guard in the backend, so this kind of mistake becomes impossible, rather than relying on someone remembering a checklist.
+
+What I did was make the guard run five checks before any transfer. The target study's status, so block if it's live with subjects or dispensed kits. Version compatibility between source and target. Whether the transfer direction is allowed, like never from a lower environment into production data. That no other transfer is already running for that study, enforced with a database lock, so two transfers can't race. And that the user has the right role and has given a change request reference. It fails closed, so if any check can't be evaluated, the transfer is blocked. Each failure returns a specific reason, so users can fix it themselves, and every attempt, allowed or blocked, is audited.
+
+In the end, it was released in [2025], and in its first months it blocked [a handful of] unsafe attempts that would earlier have depended on a manual check. I can explain the locking design.
+
+@p3-17
+My role in releases is integration and verification. Basically, I make sure what we release is exactly what was tested, and that it works on every node.
+
+It starts with integration. For each release, I merge the features committed for it from [about 5] scrum teams, resolve conflicts, and tag the version consistently across the application, APIs, database scripts and UI. I keep a release checklist per item, its status, validation evidence, configuration changes, and database scripts. Then we build once, producing versioned artifacts. Deployment to each environment uses automated multi-node installs, with Ansible, Python and Shell scripts, and we promote the same artifact through FV, TechOps, UAT and production. We never rebuild between environments.
+
+Verification happens at every step. A version endpoint checked on every node, so no node is left on an old version, health checks, and key business smoke tests. Configuration and database changes get reviewed separately, because in my experience they're the most common cause of release issues. All evidence and approvals are recorded for the regulated process.
+
+Since [2025], the CIRT MCP server runs most of these steps. Humans still approve and make decisions when something fails, but the manual effort dropped from 6 people to 1. I can walk through a release day.
+
+@p3-18
+Okay, so the situation was, in [mid-2024], one RabbitMQ node hit its memory high watermark while processing a [large vendor shipment-status file]. RabbitMQ blocked publishers and dropped connections. Because our services published without confirms, for [about 40 minutes] shipment status updates silently never reached the shipment service. No errors in our logs. Study teams noticed shipments stuck in the wrong status.
+
+I was on support duty, so I owned restoring the data and finding the root cause.
+
+What I did was confirm what happened using Splunk, Grafana and the RabbitMQ management UI, the memory alarm, blocked connections, and a gap in delivered messages. I drained the backlog, then replayed the missed window from the vendor files. That was safe because our consumers upsert, so reprocessing couldn't create duplicates. Then I separated the trigger from the root cause. The big file was the trigger, but publishing without confirms was the real problem. So I enabled publisher confirms with async tracking and retries, tuned memory, added consumer scaling on queue depth, and added alarms on memory, blocked connections, and the incoming rate dropping to zero during business hours. I shared a blameless post-mortem with the team.
+
+In the end, all [about 1,200] updates were recovered that evening. Confirms cost about [5 percent] throughput, and since then there's been no silent message loss. I can show the confirms code.
+
+@p3-19
+In [2024], I delivered three security fixes, each from a real finding, and each with a guard so it couldn't come back.
+
+One was token-based logout. A security review found that tokens in one module kept working for up to [60 minutes] after logout. I shortened access tokens to [15 minutes], revoked refresh tokens on the server at logout, and added a denylist of token ids in Redis, checked on every request in about [1 ms]. A Playwright test replays an old token and expects a 401. Another was the SSO "request header too long" error. Users in many studies had huge SSO cookies, over the server's header limit. I moved the authentication ticket to the server side with ITicketStore, so the cookie went from [about 13 KB to under 1 KB], and [about 30] support tickets stopped. And then reverse tabnabbing. A scan flagged links opening new tabs without rel noopener. I fixed [about 40] links, created a shared link component with safe defaults, and added an ESLint rule.
+
+These map to OWASP risks, broken authentication and session management, security misconfiguration, and client-side risks.
+
+My approach is always the same, honestly. Fix the root cause, add a test or rule, and release it through the regulated process. I can go into any of them.
+
+@p3-20
+At DXC, I worked as a .NET developer on SharePoint-based solutions for enterprise clients.
+
+I built C# and .NET Framework solutions on SharePoint, custom web parts, lists and workflows that automated client business processes. A good example is [an approval workflow for procurement requests], which replaced long email chains with a tracked process, with clear status and history. I also built [web parts that showed data from other systems] inside SharePoint, and integrations between SharePoint and other enterprise applications, using the server object model, CSOM and REST APIs, plus PowerShell for administration.
+
+A big part of the role was production support, incidents, data fixes and change requests, following ITIL-style processes. That taught me to read logs carefully, like SharePoint's ULS logs, reproduce issues before changing anything, and apply data fixes only with approvals and a rollback plan.
+
+Looking back, I think DXC gave me enterprise discipline and careful production debugging. When I moved to IQVIA, I went from .NET Framework to .NET Core, microservices and the cloud, but those habits, like understanding the impact before you change production, have been really useful in a GxP environment. I can share a support incident I handled there.
+
+@p3-21
+Right, so the situation was, most of our services are .NET, but a few needs came up where another language was a clearly better fit, and I didn't want them turning into unmaintainable one-offs.
+
+I wanted to build those services in the right language, while keeping them as operable and consistent as our .NET services.
+
+What I did was pick per job. For I/O-heavy glue, like [a build-log summariser for the MCP platform], which fetches and parses large logs, I used Node.js with TypeScript, because its async I/O suits that work well. For [a vendor file pre-validation service], I used Python with FastAPI, because Pydantic schemas gave us field-level validation, returning clear 422 errors automatically, with very little code. And [a small release-status endpoint] used Flask. The core domain logic stayed in .NET. The key was shared standards. Every service has REST contracts with OpenAPI, the same health endpoints, the same correlation id header and structured log fields going to Splunk, tests in Jest or pytest, Docker images, and the same Azure DevOps pipeline template.
+
+In the end, support and on-call can operate these services exactly like the .NET ones, and a single log query by correlation id works across all of them. I was also careful to avoid polyglot sprawl, a new language only where it's a clear fit. I can explain how I decide.
+
+@p3-22
+Although I'm mainly a backend developer, I do a fair bit of front-end work in IRT, which helps me understand the full request path, from the button click to the database.
+
+Our UI uses both frameworks and is component-based. The legacy ASP.NET MVC portal has Angular sub-applications, and we're moving to React with TypeScript module by module, with new modules calling our newer .NET 9 and 10 APIs. I build responsive, reusable React components with TypeScript, and I also work on the Angular modules. Examples are [the CSV import preview and error grid], which shows every validation error with its row and column, and [a shipment status timeline]. My practices are typed props, hooks, accessibility with proper labels and keyboard support, clear loading, error and empty states, and memoisation only where the profiler shows it's needed. API errors come back as ProblemDetails, and the UI maps them to friendly messages, including field-level validation errors.
+
+On security, I fixed reverse tabnabbing across [about 40] links, with a shared link component and a lint rule. On testing, I write Playwright and Cucumber end-to-end tests for user flows, with stable selectors like roles and data-testid.
+
+Because I build the APIs behind these screens too, I can design both sides together, like shaping a DTO for exactly what a screen needs, which avoids extra calls and over-fetching. For me that's the real benefit. I can walk through the import preview design.
+
+@p3-23
+When an API suddenly gets slow in production, I work in a fixed order. Understand the scope, find the slow step, restore service, and then fix the root cause properly.
+
+Scope and timing come before anything. On the dashboards I check whether it's one endpoint or all of them, since when, and whether anything changed, like a release, a configuration change or a jump in traffic. Then I look at latency by dependency, database, downstream APIs and queues, and use traces and logs filtered by correlation id to find exactly which step got slow. I also rule out the usual .NET suspects, thread pool starvation from sync-over-async code, connection pool exhaustion, and garbage collection pressure.
+
+A real example. In [March 2025], our shipments API p95 jumped from [about 200 milliseconds to about 3 seconds], with no release at all. The traces pointed to one SQL query. Query Store showed its execution plan had changed after a statistics update. It was parameter sniffing, the new plan was built for a small study and was terrible for big ones. To restore service quickly, I forced the previous good plan in Query Store. Then I fixed it properly by improving the index and the query shape, so it no longer depended on a lucky plan.
+
+Afterwards, I added a p95 latency alert per endpoint and a Query Store regression review to our routine, so next time we'd know within minutes, not from users.
