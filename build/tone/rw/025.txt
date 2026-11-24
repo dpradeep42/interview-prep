@@ -1,0 +1,133 @@
+@p17-288
+So Angular has a built-in i18n system. You mark text in templates with the i18n attribute, and in code with the dollar-localize tagged template. The CLI extracts all marked text into a translation file, XLIFF or JSON, which translators fill in for each language. Then the build produces a separate compiled version of the app per locale, with the translations baked in. Locale data also drives the built-in date, number, currency and percent pipes, and plural and select expressions handle the grammar rules.
+
+The good thing about the built-in approach is performance. Translations are compiled in, so no runtime lookup cost. The bad part is a separate build and deployment per language, usually served under a path like slash fr, and switching language means loading a different version of the app, a full page reload.
+
+Runtime libraries, like Transloco or the older ngx-translate, load translation files at runtime and translate with a pipe or directive. One build serves all languages, and users can switch instantly. You pay a small runtime overhead and lose some compile-time checking. Honestly, a lot of business apps choose this for the flexibility.
+
+Either way, I keep dates and numbers in neutral formats in the data, format them in the UI with the user's locale, think about right-to-left layouts if needed, and avoid concatenating translated fragments. Word order differs between languages, so glued-together sentences come out wrong.
+
+@p17-289
+Angular's router gives a component the current route's info through ActivatedRoute. Route parameters, like the id in shipments slash colon id. Query parameters, like status equals pending. The fragment, resolved data, and static data defined on the route.
+
+There are two ways to read them. The snapshot, like route.snapshot.paramMap.get id, gives the value at the moment the component was created. Fine if the component always gets recreated when the parameter changes. But Angular reuses the component when you navigate from shipments 1 to shipments 2 within the same route, so the snapshot goes stale. I've seen that bug in code reviews. The Observables, paramMap and queryParamMap, emit every time the parameters change, so I combine them with switchMap to load the right data, which also cancels the previous request.
+
+Since Angular 16, there's a simpler option, withComponentInputBinding in the router config. Route parameters, query parameters and resolver data get bound directly to component inputs with the same name. So the component just declares an id input, or a signal input, and reacts to changes. No ActivatedRoute dependency, easier to test and reuse, and it works nicely with computed signals and resource for loading data.
+
+To update query parameters, like when the user changes a filter, I navigate with queryParams and queryParamsHandling set to merge. That keeps the URL shareable and the back button works.
+
+@p17-290
+Okay, so with lazy-loaded routes, each feature's code downloads only when the user navigates to it. That keeps the initial bundle small, but the first navigation to a feature waits for its chunk, which feels slow on bad networks.
+
+Preloading downloads lazy-loaded route chunks in the background after the app has loaded and become interactive. So later navigation is instant, and the initial load stays fast.
+
+Angular has built-in strategies. NoPreloading, the default, only loads on demand. PreloadAllModules preloads every lazy route once the app is stable. That's simple and fine for small to medium apps, but in big apps it downloads a lot of code that many users never touch, which wastes bandwidth.
+
+A custom preloading strategy gives you more control. You implement PreloadingStrategy and decide per route. Like preloading only routes marked with data preload true, the ones most users visit. Or only routes the current user's role can access. Or skipping preloading on slow connections using the Network Information API. Libraries like ngx-quicklink preload routes whose links are currently visible on screen, which is a smart middle ground.
+
+You configure it with withPreloading in provideRouter for standalone apps.
+
+Defer blocks and canMatch guards complement this. canMatch stops users from even downloading features they're not allowed to use, which I like.
+
+@p17-291
+This error shows up in development mode when a value bound in a template changes after Angular has already checked it in the same change detection cycle. In dev mode, Angular runs an extra verification pass to make sure the view is stable. If a binding's value is different on the second pass, it throws, because the view would be showing inconsistent data.
+
+What usually causes it? A child component, or a lifecycle hook like ngAfterViewInit, changes a property on the parent that the parent's template already rendered. Like a child emitting an event in ngOnInit that sets the parent's title. Or a getter or method in the template that returns a new value every time, like new Date or a new object or array, so the second check sees something different. Or a service shared between parent and child that gets updated during rendering.
+
+The fix is to correct the data flow, not hide the error. Move the logic earlier, into ngOnInit or the constructor, so the value's set before the view is checked. Don't update parent state from a child's lifecycle hooks. Let the parent compute it, or restructure into a shared service or signal that's set before rendering. And make template expressions stable, with computed signals or pure pipes instead of methods that create new objects.
+
+Workarounds like setTimeout or calling detectChanges again do make the error go away. But honestly they hide a design problem and cause an extra render, so they're my last resort.
+
+@p17-292
+When an Angular screen feels sluggish, the first thing I want to know is whether the time goes to change detection, rendering, or our own code.
+
+Angular DevTools, the browser extension, is my first tool. The component explorer shows the component tree with inputs, outputs and state. The profiler records change detection cycles while I click around. It shows how many cycles ran, what triggered them, and how long each component took. What I usually find is a mousemove or scroll listener, or a setInterval, triggering change detection constantly. Or one expensive component, often with a method call in the template doing heavy work. Or the whole tree getting checked because nothing uses OnPush. Recent versions also show signal graphs and injector trees.
+
+The browser's Performance panel gives the full picture. Scripting versus rendering versus layout, long tasks, memory.
+
+The fixes come from what you find. OnPush on components, so they're only checked when inputs change or events happen inside them. Signals, for more targeted updates. Running noisy events outside the Angular zone with runOutsideAngular, or going zoneless. Pure pipes or computed signals instead of template methods. Proper tracking in for loops. And defer or virtual scrolling for heavy parts.
+
+And I always measure before and after. Guesses about performance are wrong surprisingly often, I've been wrong myself plenty of times.
+
+@p17-293
+Budgets are size limits you configure in angular.json. Like a warning if the initial bundle goes above 500 KB and an error above 1 MB, plus limits for individual component styles. If a build crosses the error budget, it fails. It's a simple guard against bundle size slowly creeping up as dependencies and features get added, which hurts load times bit by bit.
+
+To figure out what's making the bundle big, I build with source maps and analyse with source-map-explorer, or esbuild's metafile with a visualiser. That shows a treemap of which libraries and files take up the space.
+
+Then the usual fixes. Lazy load feature routes, so each feature's code isn't in the initial bundle. Use defer for heavy components inside a page, like charts or editors. Replace heavy libraries or import only what you need. moment.js with all its locales is the classic culprit, replaced by date-fns or the built-in Intl APIs. lodash should be imported per function, or replaced by native methods. Make sure libraries are tree-shakable, ES modules, and don't import whole icon sets. Remove unused dependencies. Use providedIn root services, which are tree-shakable. And check for duplicate packages, two versions of the same library.
+
+Since Angular 17, the default esbuild-based builder is faster and produces efficient output anyway.
+
+For us, smaller bundles matter for users on slow hospital or clinic networks, which is a real thing for site users.
+
+@p17-294
+Angular Elements packages Angular components as standard web components, also called custom elements. With createCustomElement, you turn a component into a custom element class, and register it with the browser's customElements.define under a tag name, like shipment-summary. Then any HTML page can use that tag, whatever the framework. Plain HTML, a server-rendered MVC page, React, or another Angular app. Inputs become attributes and properties, and outputs become DOM custom events.
+
+So they're useful in a few situations. Gradual migration, embedding new Angular components into a legacy app without converting the whole page. Sharing widgets across teams using different frameworks. And micro-frontends, where each team builds and deploys its own piece of the UI independently and a shell composes them.
+
+The challenges are real though. Each element bundle includes Angular's runtime unless you share it carefully, so several separately built elements can mean duplicate framework code and bigger downloads. Global styles and Shadow DOM interactions need thought. Communication between elements should go through attributes, events, or a small shared event bus, not shared internal state. And versioning has to be managed across teams.
+
+For micro-frontends, Module Federation, or Native Federation in the Angular world, is another option that shares dependencies at runtime more efficiently.
+
+In our case, actually, the React shell uses npm feature packages instead of runtime micro-frontends.
+
+@p17-295
+Both are methods on ChangeDetectorRef, and you use them when Angular doesn't automatically notice a change, usually with OnPush components.
+
+markForCheck marks the current component and all its ancestors up to the root as dirty, so they get checked in the next change detection cycle. It doesn't run change detection right away. It's the right tool when an OnPush component's state changed because of something Angular didn't see, like a value pushed from a service subscription, or a callback from a third-party library. The async pipe calls markForCheck internally, that's why it works with OnPush.
+
+detectChanges runs change detection immediately and synchronously, but only for this component and its children. Useful when you need the view updated right now, like before measuring the DOM. Or for a component you've detached from the change detection tree with detach, and then update manually for performance, like something that redraws only on a timer. Calling it at the wrong moment, like during another change detection cycle, can cause errors.
+
+There's also checkNoChanges, used in dev mode for verification.
+
+In modern Angular with signals, you need these much less. When a signal read in a template changes, Angular marks the component for check automatically. Honestly, when I find myself calling them a lot, it usually means the state should be in signals, or Observables with the async pipe.
+
+@p17-296
+I split components into two kinds, and it makes features much easier to test, reuse and change.
+
+Smart components, or containers, know about the application. They inject services or stores, load data, handle routing parameters, call APIs, and decide what happens on user actions. Usually they map to a page or a major section, like ShipmentListPage. Their templates mostly compose presentational components and pass data down.
+
+Presentational components, the dumb ones, only know their inputs and outputs. They get data through inputs, render it, and emit events through outputs when the user does something. Like a ShipmentTable emitting a cancelClicked event with the shipment id. No services, no HTTP, no store. So they're easy to reuse in different places, easy to test with simple inputs, and perfect for OnPush, since they only change when inputs change.
+
+A feature folder usually has the routes, the page-level smart components, the presentational components, the feature's data service or store, and its models. Shared generic UI components, buttons, dialogs, form fields, live in a shared library or the design system.
+
+I don't follow it dogmatically though. A small component with one simple service call doesn't need splitting. But for anything substantial, keeping data logic separate from display pays off, especially when the same table or form shows up in several places. In my project, that's saved us a lot of duplicate code.
+
+@p17-297
+By default, when the user navigates away from a route, Angular destroys its component, and when they come back, it creates a new one. Any state in there, the scroll position, filters, an expanded row, data already loaded, is gone, and the data gets fetched again.
+
+A RouteReuseStrategy lets you customise this. It's a class with methods the router calls during navigation. shouldDetach decides whether to keep a route's component when leaving. store saves the detached component tree. shouldAttach and retrieve decide whether to restore a stored component when coming back. And shouldReuseRoute decides whether to reuse the current component when navigating between two URLs that match the same route config.
+
+A common use is a list-detail flow. The user filters a long list, opens a detail page, and comes back expecting the list exactly as they left it. By detaching and storing the list route, it reappears instantly with its state. Another is a tabbed interface where each tab is a route.
+
+There are pitfalls. Stored components stay in memory with their subscriptions active, so you have to limit what's stored and clear it, like on logout. And lifecycle hooks like ngOnInit don't run again on reattach, so components may need to refresh data explicitly.
+
+Honestly, a simpler solution is often keeping filter state in the URL's query parameters, or in a service or store, so a brand new component can just restore it.
+
+@p17-298
+An attribute directive changes how an existing element looks or behaves, without adding or removing elements. You create a class with the Directive decorator and a selector in square brackets, like appAutofocus or appHighlightOverdue, and apply it as an attribute.
+
+Inside, you can inject ElementRef to get the host element, and Renderer2 to change it in a platform-safe way, which also works with server-side rendering.
+
+HostListener subscribes to events on the host element, or globally on the window or document. Like a directive that listens for paste events on an input and strips spaces from pasted kit numbers. Or one that closes a dropdown on a document click outside it.
+
+HostBinding binds a property of the host element to a directive property. Like adding a CSS class, class.overdue, when an input date is in the past, or setting attr.aria-label.
+
+In modern Angular though, the recommended way is the host property in the Directive decorator. You map class.overdue to isOverdue, and click to onClick with the event, instead of using the decorators. That keeps all host bindings in one place and works well with signal inputs.
+
+Directive composition, with hostDirectives, lets a component include existing directives on its own host, so behaviours like focus handling or tooltips can be reused.
+
+Directives are a great way to package small behaviours once, autofocus, input masks, permission checks, click-outside detection, and use them everywhere. I've got a few of those I reuse all the time.
+
+@p17-299
+So this is a classic bug. A component fetches data in useEffect based on a prop, like the selected site id. The user switches from site A to site B quickly. Both requests are in flight, and if A's response comes back after B's, the component shows site A's data while site B is selected.
+
+The fix is the effect's cleanup function. React runs the cleanup before running the effect again, and when the component unmounts. And you can use it two ways.
+
+One is an ignore flag. Inside the effect, declare let ignore equals false, and in the cleanup, set ignore to true. When the response arrives, only update state if ignore is still false. The stale response just gets thrown away.
+
+The other is AbortController, which I prefer. Create a controller in the effect, pass controller.signal to fetch, or to axios through its signal option, and call abort in the cleanup. Now the outdated request actually gets cancelled, which saves bandwidth, and the aborted promise rejects with an AbortError, which I ignore instead of showing as an error.
+
+The cleanup also stops you setting state after unmount.
+
+Honestly though, in real apps I avoid hand-written fetching in effects. Libraries like TanStack Query or RTK Query handle caching, deduplication, race conditions, retries and loading states for you, keyed by the query parameters. Effects are better kept for syncing with external systems.

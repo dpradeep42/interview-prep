@@ -1,0 +1,135 @@
+@p17-336
+So Storybook is a tool for building, documenting and testing UI components in isolation, outside the main app. For each component you write stories, small examples of it in specific states. Like a StatusBadge in each status, a Button disabled or loading, or a data table that's empty, with data, or in an error state.
+
+It helps in a bunch of ways. For development, I can build a component and see all its states without clicking through the app or setting up data, including edge cases that are hard to reproduce, like very long names or error states. For documentation, Storybook generates docs pages from the stories and the TypeScript props, so other developers and designers can browse the design system, see what already exists and how to use it. That cuts down duplicate components a lot. And for testing, stories double as test cases. Interaction tests simulate clicks and typing, the accessibility addon runs axe checks on every story, and visual regression tools like Chromatic screenshot every story and flag unintended visual changes in pull requests.
+
+Controls let anyone change props live in the browser, which is really nice for design reviews.
+
+You do have to maintain stories alongside components, so I keep them focused on meaningful states.
+
+For a shared design system used by several feature teams, like a shell with many feature packages, Storybook is honestly very valuable for keeping components consistent and discoverable.
+
+@p17-337
+Feature flags let you turn features on or off without deploying new code. So incomplete work can be merged and deployed safely, features can roll out gradually to some users or customers, and if something's causing trouble, you switch it off quickly.
+
+In a React app, flags are usually evaluated per user or tenant. At startup, after login, the app fetches the flags for the current user, from our own API or a service like LaunchDarkly, Unleash, or AWS AppConfig and Azure App Configuration with their feature management bits. They go into a context or the Redux store, and a hook, like useFeatureFlag with the flag name, tells you if it's on. Components render conditionally, and routes can be hidden.
+
+Some practices I stick to. Flags have default values, so the app still works if the flag service is down. The backend enforces the same flags for the APIs behind a feature, because hiding a button isn't security. Flag names are typed constants, not random strings scattered around. Each flag has an owner and a planned removal date, because old flags turn into technical debt and make the code hard to reason about. And tests cover both states of the important flags.
+
+In regulated systems there's one more thing. A flag that changes behaviour in production is basically a configuration change, so its states have to be controlled, documented and validated like any other release.
+
+@p17-338
+Core Web Vitals are Google's main user-experience metrics, measured from real users.
+
+Largest Contentful Paint measures loading, when the largest visible element, like a main image or text block, gets rendered. Good is under 2.5 seconds. Interaction to Next Paint, which replaced First Input Delay in 2024, measures responsiveness, how quickly the page visibly responds to clicks, taps and key presses through the whole visit. Good is under 200 milliseconds. Cumulative Layout Shift measures visual stability, how much content jumps around unexpectedly. Good is under 0.1.
+
+For a React single-page app, improving LCP means a smaller initial bundle through code splitting and lazy routes, compressing and caching assets, serving from a CDN, preloading critical fonts and images, and showing meaningful content quickly. Not a blank page waiting on several API calls one after another.
+
+Improving INP means keeping the main thread free. Avoid long JavaScript tasks, memoise expensive renders, virtualise big lists, use transitions for non-urgent updates, debounce expensive handlers, and move heavy computation to web workers.
+
+Improving CLS means reserving space for images, ads and content that loads later, with width and height or skeleton placeholders of the right size, and not inserting banners above existing content. That one's annoying for users.
+
+I measure with Lighthouse and tools like GTmetrix in the lab, and with the web-vitals library sending real-user data to monitoring. Lab numbers alone can fool you, honestly.
+
+@p17-339
+Debouncing delays an action until some time has passed with no new events. You use it for search inputs, so the API gets called after the user stops typing, for auto-saving forms, and for resize handlers. Throttling is different, it runs the action at most once per time interval, which suits scroll or mousemove handlers.
+
+A simple useDebounce hook debounces a value. It takes the value and a delay, keeps a debounced copy in state, and in a useEffect sets a timeout to update that copy after the delay. The effect's cleanup clears the timeout, so if the value changes again before the delay's up, the previous timer is cancelled and a new one starts. The hook returns the debounced value.
+
+In a search component, the input updates its own state immediately, so typing stays snappy, and the debounced value, maybe 300 milliseconds behind, is what drives the API query. With TanStack Query or RTK Query, putting the debounced value in the query key means only settled terms trigger requests, and stale responses are handled by the library.
+
+Sometimes you need a debounced callback instead of a debounced value, like for auto-save. Then I keep the latest callback in a ref, so the debounced function doesn't capture stale state, and create the debounced function once, cancelling it on unmount. Honestly, libraries like use-debounce give you well-tested versions of both, so I usually just use that.
+
+@p17-340
+Infinite scrolling loads the next page of data automatically when the user scrolls near the bottom of a list.
+
+The modern way to detect that is IntersectionObserver. It tells you when an element enters the viewport, without listening to scroll events, which fire constantly and hurt performance. You place an empty sentinel element after the last item. An observer watches it, with a rootMargin of say 200 pixels, so loading starts a bit before the user actually hits the end. When the sentinel becomes visible, and there's a next page, and no request is already running, you fetch the next page.
+
+In React, I attach the observer to the sentinel with a ref, in a useEffect or a ref callback, and disconnect it in the cleanup. Libraries like react-intersection-observer wrap this in a useInView hook.
+
+For the data, TanStack Query's useInfiniteQuery fits perfectly. It fetches pages with a cursor, gives you fetchNextPage, hasNextPage and isFetchingNextPage, and keeps the pages cached. The API should use cursor-based pagination, so items don't shift or repeat as new data comes in.
+
+Once there are hundreds of loaded items, I add virtualisation so the DOM stays small.
+
+And I think about usability. Infinite scroll makes it hard to reach a footer or get back to a specific position. For business data, lists users work through and come back to, classic pagination or a Load more button is often better. That's what I'd usually push for.
+
+@p17-341
+An optimistic update shows the result of an action immediately, before the server confirms it, and rolls back if the request fails. It makes the app feel instant, which is great for frequent, low-risk actions. Marking a notification as read, toggling a favourite, reordering items.
+
+With TanStack Query, I use the mutation's lifecycle callbacks. In onMutate, cancel any in-flight queries for that data so they don't overwrite the optimistic change, save a snapshot of the current cached data, and update the cache with the expected new state. In onError, restore the snapshot and show an error message. In onSettled, invalidate the query, so the data gets re-fetched from the server and is definitely correct. RTK Query has the same pattern with onQueryStarted, updateQueryData and an undo patch.
+
+React 19's useOptimistic hook gives a simpler version for component state during an action.
+
+A few cautions though. I don't use optimistic updates for important or irreversible operations. Dispensing a kit, randomising a subject, financial transactions. There the user has to see the real, confirmed result, and the server might reject it based on rules the client doesn't even know about. In our domain, that's a hard rule for me. Concurrent changes and server-generated values, like ids and timestamps, need handling. And failures have to be very visible, because the user may have moved on thinking it worked.
+
+@p17-342
+I'd upgrade in steps, 17 to 18 first, then 18 to 19, because 18.3 adds deprecation warnings that prepare you for 19.
+
+For React 18, update react and react-dom, and replace ReactDOM.render with createRoot. That turns on concurrent features and automatic batching. Code that depended on synchronous, unbatched updates in async callbacks might behave differently, so I'd test flows with timeouts and promises. In StrictMode, effects run twice in development, which exposes missing cleanups that need fixing. Types changed too. React.FC doesn't include children implicitly anymore, so components that take children have to declare them.
+
+Honestly, the bigger effort is often the libraries. MUI, Redux, React Router, testing libraries, any design system packages all need to support the new version. In a shell with separate feature packages, every package's peerDependencies range has to allow the new version, and they all need testing together, because everything must share one React instance.
+
+For React 19, run the official codemods, which handle a lot. Removed APIs include propTypes and defaultProps on function components, string refs, legacy context and ReactDOM.render. ref becomes a normal prop, so forwardRef can go over time. Error handling changed slightly.
+
+Testing is critical. Unit tests, the end-to-end suite, and manual checks of key screens. In a regulated product, the upgrade is a validated change with regression testing.
+
+Our shell is on React 17, so for us this is a real roadmap item.
+
+@p17-343
+useSyncExternalStore is a React 18 hook for subscribing to data that lives outside React. Like a state library's store, browser APIs, or any custom event source, in a way that's safe with concurrent rendering.
+
+You give it a subscribe function, which registers a callback and returns an unsubscribe function, a getSnapshot function that returns the current value, and optionally getServerSnapshot for server rendering. React re-renders the component when the snapshot changes.
+
+Why does it exist? Tearing. With concurrent rendering, React can pause rendering in the middle and continue later. If an external store changes during that pause, different components in the same render could read different versions of the data, and you'd show an inconsistent UI. useSyncExternalStore guarantees a consistent snapshot for the whole render.
+
+Library authors are the main users. Redux's useSelector, Zustand and others use it internally. In app code, I use it for browser state. Like a useOnlineStatus hook that subscribes to the online and offline events and reads navigator.onLine. Or a hook that reads from localStorage and listens for storage events from other tabs. Or media queries.
+
+One important rule, getSnapshot has to return the same value, by reference, if nothing changed. Returning a new object every time causes an infinite re-render loop. I learned that one the hard way, so now I return primitives or cached objects.
+
+@p17-344
+React and Redux detect changes by comparing references. If you mutate an object or array in place, like pushing to an array in state, or setting user.address.city directly, the reference doesn't change. So React may not re-render, memoised components and selectors miss the change, and you get bugs that are hard to trace.
+
+So updates have to create new objects for every level that changes. For nested state, that means spreading at each level. A new state object, with a new user object, with a new address object, with the new city. For arrays, use map to replace an item, filter to remove, and spread or concat to add, instead of push, splice or assigning by index. Newer array methods like toSorted and with return copies too.
+
+Honestly, deep nesting gets verbose and error-prone, and that's a hint you should flatten or normalise the state.
+
+Immer fixes the verbosity. Its produce function gives you a draft copy you can "mutate" with normal assignment and push, and Immer records the changes and produces a new immutable object, structurally sharing the unchanged parts. Redux Toolkit uses Immer inside createSlice reducers, which is why reducers there can be written in mutating style. use-immer gives a useImmer hook for component state.
+
+The one rule to remember with Immer in Redux Toolkit is either mutate the draft or return a new value. Not both.
+
+@p17-345
+They all schedule code to run later, but they go into different queues.
+
+Microtasks run as soon as the current operation finishes, before the event loop moves on. In Node, process.nextTick callbacks run first, then promise callbacks, like then handlers and the continuation after await. Both queues get drained completely before anything else happens.
+
+Macrotasks run in the event loop's phases. setTimeout and setInterval callbacks run in the timers phase, once their delay has passed. setTimeout of zero actually means at least about one millisecond. setImmediate callbacks run in the check phase, right after the poll phase, where I/O callbacks are processed.
+
+So within the same synchronous block, nextTick runs first, then promises, then the timers and immediates. Between setTimeout zero and setImmediate, the order from the main module isn't guaranteed, because it depends on how fast the loop starts. But inside an I/O callback, setImmediate always runs before setTimeout zero, since the check phase comes right after poll. That's a classic interview trick, actually.
+
+In browsers there's no nextTick or setImmediate. Promise microtasks run before the next macrotask, like a timer or a rendering step.
+
+The practical lesson is, recursively scheduling nextTick or promise callbacks can starve the event loop, because I/O never gets a turn. When I need to yield so I/O can run, I use setImmediate.
+
+@p17-346
+Node runs JavaScript on a single main thread, so CPU-heavy work blocks everything else, and one process uses only one CPU core for JavaScript. These three deal with that in different ways.
+
+Worker threads run JavaScript in separate threads inside the same process, each with its own event loop and memory. They talk through message passing, and can share memory with SharedArrayBuffer. They're for CPU-intensive tasks, parsing a large file, image processing, encryption, complex calculations, so the main thread stays responsive. A pool of workers, with a library like Piscina, saves the cost of starting threads over and over.
+
+Child processes start separate OS processes with spawn, exec or fork. They're for running external programs, like a command-line tool or a Python script, or isolating risky work, since a crash doesn't take down the parent. More overhead than threads though.
+
+The cluster module starts several copies of the whole Node server, usually one per CPU core, sharing the same port, with the primary process distributing connections. It's for using all cores to handle more HTTP requests. PM2 does this for you.
+
+In containers though, I usually prefer one Node process per container and scaling the number of containers with the orchestrator, like ECS or Kubernetes. That's simpler, and you get better health checks and restarts. Then workers are only for specific CPU-heavy tasks. That's how I'd set it up.
+
+@p17-347
+Streams process data piece by piece, in chunks, instead of loading it all into memory. You've got four types. Readable, like reading a file or an HTTP request. Writable, like writing a file or an HTTP response. Duplex, both, like a TCP socket. And Transform, a duplex that modifies data passing through, like gzip compression or CSV parsing.
+
+With streams, you can process a 5 GB file with a few megabytes of memory, and start sending output before the input is fully read.
+
+Backpressure is what keeps memory under control when the writer is slower than the reader. A writable stream's write method returns false when its internal buffer is full. A well-behaved producer then pauses until the drain event says it can carry on. If code ignores that and keeps writing, data piles up in memory and the process can crash.
+
+The pipe method handles backpressure automatically, but it was bad with errors. An error in one stream didn't destroy the others, so you got leaks. So the recommended way is stream.pipeline, or the promise version from stream/promises. It connects the streams, handles backpressure, forwards errors, and cleans up every stream when any of them fails or finishes.
+
+Readable streams are also async iterable, so for await over a stream is a clean way to process chunks one by one, with backpressure handled naturally.
+
+[I used a pipeline of a file read stream, a CSV parser and a batching transform to load large extract files without memory spikes.]

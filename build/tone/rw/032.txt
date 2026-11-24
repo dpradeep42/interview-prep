@@ -1,0 +1,143 @@
+@p17-372
+So basically I pick based on whether the work is I/O-bound or CPU-bound, and how many concurrent operations there are.
+
+asyncio is for lots of concurrent I/O-bound work. Thousands of HTTP calls, database queries or WebSocket connections, handled on a single thread with an event loop, using async and await. It's very efficient, because waiting tasks don't hold threads. The catch is every library in the chain has to be async-aware, like httpx or aiohttp instead of requests, and asyncpg or async SQLAlchemy. One blocking call stalls everything.
+
+threading is for I/O-bound work with libraries that are synchronous, or a moderate number of concurrent operations. The GIL is released during I/O, so threads overlap their waits. ThreadPoolExecutor from concurrent.futures makes it simple, you submit tasks, get futures, collect results. It's also how async code runs blocking functions, with asyncio.to_thread.
+
+multiprocessing is for CPU-bound work. Data processing, parsing large files, heavy calculations. Each process has its own interpreter and GIL, so it actually uses multiple cores. ProcessPoolExecutor is the convenient interface. What you pay is higher memory, slower start-up, and data passed between processes has to be pickled, which is slow for large objects.
+
+In web services, what I do is FastAPI with async endpoints for the I/O concurrency, and CPU-heavy tasks go to a process pool or a separate worker, like Celery. That's worked fine for us.
+
+@p17-373
+Okay, so the syntax looks almost the same, but the runtime model is quite different.
+
+In Python, async def defines a coroutine function. Calling it doesn't run anything. It returns a coroutine object, which only runs when awaited, or scheduled on the event loop as a task with asyncio.create_task. In C#, calling an async method starts running it immediately, synchronously, until the first incomplete await, and returns a Task that's already in progress.
+
+Python's asyncio runs on a single-threaded event loop. All coroutines share that thread, and concurrency comes from switching at await points. No thread pool involved unless you explicitly use one. C# continuations run on thread pool threads, so async code can also run in parallel on multiple cores.
+
+And because Python's loop is single-threaded, any blocking call, like time.sleep, requests.get or a heavy computation, freezes every coroutine. In C#, blocking is wasteful too, but it blocks one thread, not everything.
+
+The equivalents, asyncio.gather is like Task.WhenAll. asyncio.wait_for or asyncio.timeout is like a timeout with a CancellationToken. And asyncio.TaskGroup, since 3.11, gives structured concurrency, where if one task fails, the others get cancelled. Cancellation in Python shows up as a CancelledError raised at an await point, rather than a token you pass explicitly.
+
+Coming from .NET, honestly the biggest adjustment for me was never mixing blocking libraries into async code. That one bit me early on.
+
+@p17-374
+See, a generator is a function that uses yield to produce values one at a time, lazily. Calling it returns a generator object. Each call to next runs the function until the next yield, returns that value, and pauses, keeping its local state. When the function ends, it raises StopIteration, which for loops handle automatically. It's very similar to yield return in C#.
+
+The big win is memory. Reading a 10 GB log file with a generator that yields one parsed line at a time uses almost no memory, whereas building a list of all lines would load everything. Generators also let you do infinite sequences and pipelines, where each stage is a generator consuming the previous one. Like read lines, filter errors, parse fields, and only the items actually consumed get processed.
+
+Generator expressions are the lazy version of list comprehensions, written with parentheses. Sum of x squared for x in numbers doesn't create an intermediate list.
+
+yield from delegates to another generator, which is handy for recursion, like walking a directory tree.
+
+A few cautions. A generator can only be iterated once. After it's exhausted, it yields nothing. Errors show up when iterating, not when calling the function. And it's lazy, so code that looks like it ran may not have run at all. That last one confuses people.
+
+Async generators, with async def and yield, work with async for, for streaming data from APIs or databases.
+
+@p17-375
+Actually a decorator is just a function that takes a function and returns a new function, usually adding behaviour around the original one. The at-decorator syntax above a function definition is shorthand for replacing the function with decorator of function.
+
+To write one, I define an outer function that takes the original function, and inside, a wrapper function that accepts star args and double-star kwargs, does something before, calls the original, does something after, and returns the result. The outer function returns the wrapper. I always apply functools.wraps to the wrapper, so the decorated function keeps its original name, docstring and signature. That matters for debugging, logging, and frameworks that inspect functions, like FastAPI.
+
+A decorator with arguments, like retry with attempts equals 3, needs one more level. A function that takes the arguments and returns the actual decorator.
+
+For async functions, the wrapper has to be async and await the original.
+
+Where you see them, timing and logging, caching with functools.lru_cache or cache, retries with backoff, which the tenacity library gives you, access checks, and registering functions. Frameworks lean on them heavily. FastAPI's app.get, pytest's fixture and parametrize, and dataclass and property are all decorators.
+
+They're like attributes plus middleware in .NET, a clean way to add cross-cutting behaviour without touching the function body. I just avoid stacking too many, because then control flow gets hard to follow.
+
+@p17-376
+Okay, a context manager sets something up and guarantees cleanup, even if an exception happens. The with statement uses it. With open of the file as f, then the block, and the file gets closed automatically when the block ends, normally or through an error. It's basically Python's version of using in C#.
+
+A class becomes a context manager by implementing two methods. Dunder enter runs at the start and returns the resource, which gets bound by as. Dunder exit runs at the end. It receives the exception type, value and traceback if an error occurred, and does cleanup, like closing, releasing or rolling back. If it returns True, the exception is suppressed, which is rarely what I want.
+
+The easier way is contextlib.contextmanager. A generator function where the code before yield is setup, the yielded value is the resource, and the code after yield, in a finally block, is cleanup.
+
+Where I use them, files and network connections. Database transactions, committing on success and rolling back on exceptions. Acquiring and releasing locks. Temporarily changing settings, like a working directory. And timing a block of code.
+
+Async context managers, with dunder aenter and aexit, or contextlib.asynccontextmanager, are used with async with, for things like database sessions and HTTP clients. FastAPI's lifespan function, which sets up and tears down resources at startup and shutdown, is actually an async context manager.
+
+contextlib.ExitStack manages a dynamic number of context managers, if you ever need that.
+
+@p17-377
+So in Python, default argument values are evaluated once, when the function is defined, not every time it's called. So if the default is a mutable object, like a list or dictionary, the same object gets shared across all calls that use the default.
+
+Let me take an example. def add_item of item, and items equals an empty list, appends the item and returns items. First call returns a list with one item. The second call, which you'd expect to return a new list with one item, returns a list with two, because it's the same list object as before. Data leaks between calls, which causes really confusing bugs, especially in long-running services where state builds up across requests.
+
+The standard fix is to use None as the default and create a new object inside the function. items equals None, then if items is None, items equals an empty list.
+
+Same idea shows up in other places. Class attributes defined with mutable values are shared by all instances, so per-instance lists should be created in the init. Dataclasses protect you here, they raise an error for a mutable default, and I use field with default_factory equals list instead. Pydantic models handle mutable defaults safely by copying them.
+
+Linters like Ruff flag mutable default arguments automatically, which is honestly one reason I always run a linter.
+
+@p17-378
+See, double equals checks equality of values, by calling the dunder eq method. is checks identity, whether two names point to the exact same object in memory. Two separate lists with the same contents are equal with double equals but not identical with is. My rule is use is only for singletons, mainly None, as in if value is None, and use double equals for comparing values. Using is with numbers or strings sometimes seems to work, because Python caches small integers and some strings, but that's an implementation detail and a common bug.
+
+Copying ties into the same idea. Assigning b equals a doesn't copy anything. Both names point to the same object, so changing one changes the other.
+
+A shallow copy, with list of a, a slice, dict.copy or copy.copy, creates a new outer container, but the items inside are the same objects. So with a list of lists, changing an inner list through the copy also changes it in the original.
+
+A deep copy, with copy.deepcopy, recursively copies everything, so the copy is completely independent. It's slower, uses more memory, and can be surprising for objects holding resources, but it's what I need when duplicating nested mutable data, like a configuration template that each job modifies.
+
+Immutable objects, like tuples of immutable items and frozen dataclasses, avoid a lot of these issues. That's one reason I prefer immutable data wherever I can.
+
+@p17-379
+Honestly they all define structured data with typed fields, but they're for different purposes.
+
+A NamedTuple is an immutable tuple with named fields. Lightweight, works anywhere tuples work, good for small simple return values or records. But it can't easily have per-instance computed defaults, and since it's a tuple, it can be compared and unpacked by position, which sometimes surprises people.
+
+A dataclass, from the standard library, generates the init, repr and eq from type-annotated fields. It's a plain Python class, mutable by default, or immutable with frozen equals True, with slots for memory efficiency and default_factory for mutable defaults. Type hints aren't enforced at runtime, so passing a string where an int is declared just works. It's my go-to for internal domain objects and data passed between functions in trusted code.
+
+A Pydantic model validates and converts data at runtime. Passing the string "5" to an int field converts it, and passing "abc" raises a clear validation error. It parses nested structures, serialises to and from JSON, and generates JSON Schema. Pydantic v2's core is written in Rust, so it's fast. It's the right choice at system boundaries. API requests and responses, which is why FastAPI uses it, configuration with pydantic-settings, and data coming from files, queues or external APIs.
+
+So yeah, Pydantic at the edges where data is untrusted, dataclasses inside, and NamedTuple for tiny records.
+
+@p17-380
+Okay, so pydantic-settings gives you BaseSettings, a Pydantic model that reads its values from environment variables, .env files and other sources, and validates them at startup.
+
+I define a Settings class with typed fields. database_url as a PostgresDsn, log_level with a Literal of allowed values and a default, embedding_model as a string, max_chunk_tokens as an int with a default, and secrets as SecretStr, which hides the value when printed or logged. model_config sets options like an environment variable prefix, so fields map to variables like RAG_DATABASE_URL, an env_file for local development, and nested delimiters for grouped settings.
+
+When the app starts and creates Settings, Pydantic reads the environment, converts types, applies defaults and validates everything. If a required variable is missing or invalid, it fails immediately with a clear error listing what's wrong. Way better than failing later on some code path that uses the value.
+
+In FastAPI, I create the settings once, often with a function decorated with lru_cache, and inject it with Depends, which also makes it easy to override in tests.
+
+Secrets in production come from the platform, like AWS Secrets Manager or Parameter Store, injected as environment variables into the container, or fetched with a custom settings source.
+
+It's the same idea as the options pattern with ValidateOnStart in .NET, so it felt natural to me coming from that side.
+
+@p17-381
+So type hints annotate variables, function parameters and return values with types, like def get_kit of kit_id int returning Kit or None. Python itself doesn't enforce them at runtime. They're for tools and humans.
+
+Static type checkers, like mypy or Pyright, analyse the code using the hints and find errors before you run it. Passing the wrong type, forgetting that a function can return None, calling methods that don't exist, or missing cases. Editors use the same information for accurate autocomplete and safe refactoring.
+
+Coming from C# and TypeScript, honestly it brings back a lot of the safety I'm used to. Useful features, Optional or the union-with-None syntax. Generics with TypeVar or the newer bracket syntax in Python 3.12. Protocol for structural typing, so a function can accept anything with the right methods, like an interface without inheritance. TypedDict for dictionaries with known keys, like JSON. Literal for specific allowed values. And Final for constants.
+
+In practice, I add hints to all function signatures and run mypy in strict mode, or at least with disallow-untyped-defs, in the pipeline, and fix issues as they come. For existing untyped code, I turn checking on gradually, module by module.
+
+Pydantic and FastAPI use the same type hints at runtime for validation and documentation, so good hints pay off twice. Our RAG service runs mypy in CI.
+
+@p17-382
+Actually the starting point is each Python project gets its own isolated environment, so different projects can use different package versions without conflicts. venv, built into Python, creates that environment, and pip installs packages into it.
+
+The traditional approach is a requirements.txt file. To make builds reproducible, I pin exact versions, including transitive dependencies, often generated with pip-tools from a smaller list of direct dependencies.
+
+Modern projects use pyproject.toml, the standard file for project metadata, dependencies and tool configuration, like Ruff, mypy and pytest settings.
+
+Poetry manages dependencies through pyproject.toml, resolves versions, creates a lockfile, manages the virtual environment, and builds packages. It's mature and widely used.
+
+uv, from the makers of Ruff, is the newer one, written in Rust and extremely fast. It can replace pip, pip-tools, venv, and even manage Python versions. uv add adds a dependency, uv lock creates a cross-platform lockfile, uv sync installs exactly what's locked, and uv run runs commands in the environment. It's got really popular because installs take seconds instead of minutes, which matters a lot in CI and Docker builds.
+
+Whatever the tool, the principles are the same as npm and NuGet. Declare direct dependencies, commit a lockfile, install exactly from the lockfile in CI and Docker, and keep dependencies updated with automated pull requests and vulnerability scanning.
+
+@p17-383
+Okay, FastAPI's dependency injection is based on functions, not a container. An endpoint declares a parameter with Depends of some function, and FastAPI calls that function for each request and passes the result in. Dependencies can have their own dependencies, forming a tree, and FastAPI resolves it, caching each dependency's result within the same request by default. So two parameters that need the same database session get the same one.
+
+The common ones I write, get_db, which yields a database session. Because it uses yield, the code after yield runs when the request finishes and closes the session, kind of like a scoped service with disposal in .NET. get_current_user, which reads the bearer token, validates it, and returns the user, or raises an HTTP 401. get_settings. Pagination parameters. And permission checks, like a require_role factory that returns a dependency.
+
+Dependencies can be applied to a whole router or app, for things like authentication, so every endpoint is protected without repeating the parameter. Annotated type aliases, like CurrentUser equals Annotated of User and Depends of get_current_user, keep signatures clean.
+
+For testing, app.dependency_overrides lets me swap any dependency with a fake, like an in-memory repository or a fixed test user, without changing endpoint code. Really handy.
+
+The difference from .NET is there are no explicit lifetimes. Per-request caching and yield-based cleanup cover scoped behaviour, and singletons are usually module-level objects or created in the lifespan.

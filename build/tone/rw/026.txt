@@ -1,0 +1,149 @@
+@p17-300
+Okay, so in React 18 and later, when a component is wrapped in StrictMode, React deliberately mounts it, unmounts it, and mounts it again in development. So every effect runs, its cleanup runs, and then it runs again. Render functions get called twice too. This only happens in development. Production builds run effects once.
+
+The point is to surface bugs early. React is moving towards features, like keeping state when components are hidden and shown again, where components might be mounted and unmounted multiple times. If an effect doesn't clean up properly, like a subscription that isn't removed, a timer that isn't cleared, or an event listener added twice, the double run exposes it as duplicate behaviour. And double rendering exposes impure render functions with side effects.
+
+So the right response isn't to disable StrictMode. Honestly, I've seen people do that. The right thing is making effects resilient. Every effect that sets something up should return a cleanup that tears it down, and the effect should work correctly when run twice. For data fetching, the abort or ignore pattern handles it, and the second request is the one that counts. For stuff that truly has to happen once per app, like initialising analytics, I do it outside components, at module level, or guard it with a ref.
+
+The duplicate API call in development looks scary in the network tab, but it's expected, and libraries like TanStack Query deduplicate it anyway.
+
+@p17-301
+Both run after React has updated the DOM, just at different moments.
+
+useEffect runs after the browser has painted the screen. It doesn't block painting, so the user sees the update quickly. That's the right default for most side effects, data fetching, subscriptions, logging, timers, syncing with external systems.
+
+useLayoutEffect runs synchronously after the DOM updates but before the browser paints. The browser waits for it to finish. It's for when you need to read the layout and change something before the user sees it, otherwise there'd be a visible flicker. Typical example is positioning a tooltip or popover. You measure the target element's position and size with getBoundingClientRect, then set the tooltip's position. With useEffect, the tooltip would first show up in the wrong place and then jump.
+
+Since it blocks painting, heavy work in useLayoutEffect makes the UI feel slow. So I keep it small and only use it when there's an actual flicker problem.
+
+During server-side rendering, layout effects don't run, and React used to warn about it, so components using it need some care in SSR apps.
+
+There's also useInsertionEffect, which runs even earlier, before layout effects, and it's really only meant for CSS-in-JS libraries to inject styles.
+
+Honestly, in practice I use useEffect almost always, and useLayoutEffect maybe a few times a year.
+
+@p17-302
+React.memo makes a component skip re-rendering when its props are shallowly equal to the previous props. It's useful for expensive components that re-render often with the same props, like rows in a big list or a heavy chart.
+
+But a lot of the time it doesn't actually help, and here's why.
+
+New object, array or function props on every render. If the parent passes style as an object literal, items as data.filter of something, or onClick as an arrow function, those are new references every time. So the shallow comparison always fails, and memo does nothing except add comparison cost. The fix is useMemo for derived objects and arrays, useCallback for functions, or moving constants outside the component.
+
+Children as props is another one. JSX children are new elements on every render, so a memoised component that receives children re-renders anyway.
+
+Then context. If the component uses a context that changes, it re-renders regardless of memo. And its own state or hooks changing triggers re-renders too. memo only affects re-renders caused by the parent.
+
+And sometimes it's just not needed. If the component is cheap, re-rendering costs less than the memo bookkeeping. React's rendering is fast, and re-rendering isn't the same as touching the DOM.
+
+So I measure first with the React DevTools Profiler, and memoise where it shows a real cost. The React Compiler, which is stable now, does a lot of this memoisation automatically anyway.
+
+@p17-303
+So batching means React groups several state updates into a single re-render, instead of re-rendering after each one. If a click handler calls setLoading, setData and setError, React renders once with all three changes. That's faster, and you don't get intermediate, inconsistent states on screen.
+
+Before React 18, batching only happened inside React event handlers. Updates inside promises, setTimeout, native event listeners or other async callbacks weren't batched. So after an API call, setting three state values caused three separate renders.
+
+React 18 brought automatic batching. With the new createRoot API, all updates are batched, wherever they come from, async callbacks, timeouts, promises. Apps get fewer renders without changing any code. One thing to note, apps still using the old ReactDOM.render, like React 17 apps upgraded without switching to createRoot, keep the old behaviour.
+
+In rare cases you need an update applied immediately. Like reading the updated DOM right after setting state, say scrolling to a newly added item. flushSync forces React to apply the updates inside it synchronously. It hurts performance, so I use it sparingly.
+
+And related to this, because of batching, state isn't updated right after calling the setter. The new value shows up on the next render. So for updates based on the previous value, I use the functional form, setCount with c goes to c plus one. People get bitten by that one a lot.
+
+@p17-304
+These are concurrent features from React 18 that keep the UI responsive when some update triggers expensive rendering.
+
+The idea is to separate urgent updates, like typing in an input, which has to feel instant, from non-urgent ones, like filtering a big list based on that input, which can lag a little. React can interrupt rendering a non-urgent update if something urgent comes in, and work on it in the background.
+
+useTransition gives you a startTransition function and an isPending flag. You wrap the expensive state update in startTransition. The input's own state updates immediately, while the filtered list update becomes a transition. If the user keeps typing, React throws away the outdated render. isPending lets you show a subtle loading indicator. In React 19, transitions can also wrap async functions, called Actions, which track pending state across the whole async operation.
+
+useDeferredValue gives you a deferred version of a value. It lags behind the real value during heavy rendering. You pass the deferred value to the expensive child, ideally memoised, so the input stays responsive while the child catches up. It's handy when you don't control where the state is set, like when the value comes from props.
+
+Honestly, the thing people misunderstand is that neither makes the work faster. They just prioritise it. If filtering 50,000 items is slow, virtualisation or server-side filtering is still the real fix.
+
+@p17-305
+Suspense lets a component "wait" for something before rendering, and shows a fallback, like a spinner or skeleton, from the nearest Suspense boundary above it, until the content's ready.
+
+It started with React.lazy for code splitting. A lazily loaded component suspends while its JavaScript chunk downloads, and the Suspense boundary shows the fallback.
+
+For data, a component suspends when it reads data that isn't ready yet. Under the hood, the data source throws a promise. React catches it, shows the fallback, and retries rendering when the promise resolves. You don't do this manually in app code. Suspense-enabled data libraries do it. TanStack Query's useSuspenseQuery, RTK Query with suspense patterns, Relay, and frameworks like Next.js. React 19's use hook can read a promise passed in, usually created by a framework or a parent, and suspend until it resolves.
+
+What you get is components that can assume data is there, without loading checks everywhere. Loading states get coordinated declaratively by where you place boundaries, so one skeleton can cover a whole section, or you have separate ones per widget. And with server rendering, content can stream in as it becomes ready.
+
+Errors aren't handled by Suspense though. They go to the nearest error boundary, so I always pair the two.
+
+One pitfall, creating promises during render without caching causes infinite suspending. That's exactly why libraries manage it for you.
+
+@p17-306
+React 19 came out in December 2024, and it was mainly about making async data mutations and forms simpler.
+
+Actions are functions that run inside a transition, including async functions. React tracks the pending state, errors and optimistic updates for them automatically. A form element can take a function as its action prop, so submitting calls the function with the FormData, and React handles the pending state and resets the form after success.
+
+useActionState wraps an action and gives you back the current state, like the result or an error message from the last submission, a wrapped action to pass to the form, and an isPending flag. It cuts a lot of boilerplate around loading and error state for submissions.
+
+useFormStatus lets a child component, like a submit button, read whether its parent form is pending, without prop drilling.
+
+useOptimistic shows an optimistic value immediately while an async action runs, like showing a new comment instantly, and automatically reverts to the real state when the action finishes or fails.
+
+And use reads a resource during render. A promise, suspending until it resolves, or a context. Unlike other hooks, you can call it conditionally.
+
+Some other changes too. ref is now a normal prop for function components, so no more forwardRef. Context can be used directly as a provider. Document metadata, like title tags, can be rendered in components. And better error reporting.
+
+Our shell is on React 17 though, so using these would come after an upgrade.
+
+@p17-307
+React Server Components are components that run only on the server. They render to a special serialised format that gets streamed to the browser, and their own code never goes to the client. They can be async functions that hit databases, the file system or internal APIs directly, and secrets stay on the server.
+
+Client components are the familiar kind, marked with the "use client" directive at the top of the file. They're sent to the browser, hydrated, and can use state, effects, event handlers and browser APIs.
+
+The two get combined in one tree. Server components fetch data and render the static parts, and pass data as props into client components for the interactive bits. Server Functions, marked "use server", let client components call server-side functions, like for form submissions, without you writing an API endpoint.
+
+The upside is smaller JavaScript bundles, since server-only code and heavy rendering libraries stay on the server. Faster initial loads, because data fetching happens close to the data. No client-server request waterfalls. And simpler data access.
+
+The cost, they need a framework with a server, most commonly the Next.js App Router. There's a new mental model about which code runs where. And props passed to client components have to be serialisable.
+
+For a single-page app like our React shell, built with Vite and served as static files with .NET APIs, Server Components don't really apply. Honestly, they make most sense for content-heavy, public-facing apps.
+
+@p17-308
+The React Compiler is a build-time tool, a Babel plugin, that memoises components and hooks automatically. It analyses the code, works out which values depend on which props and state, and inserts memoisation so components, calculations and callbacks only get recomputed when their inputs actually change. It hit its stable 1.0 release in October 2025, after being used in production at Meta.
+
+So the result is like wrapping things in React.memo, useMemo and useCallback everywhere it matters, but done correctly and automatically, without cluttering the code or missing dependencies.
+
+In projects using the compiler, most manual useMemo and useCallback calls become unnecessary, and new code can be written more simply. They still work and can stay, like where a memoised value is used as an effect dependency and the exact identity has to be guaranteed, or where you want precise control.
+
+The catch is the compiler relies on the code following the Rules of React. Components and hooks must be pure during render, props and state must not be mutated, and hooks must be called unconditionally. Code that breaks these rules just gets skipped, so the compiler's ESLint plugin is useful for finding violations. In an existing codebase, you usually adopt it gradually, directory by directory, with testing.
+
+It works with React 19 natively, and with React 17 and 18 through a runtime package. So actually even our React 17 shell could adopt it later.
+
+@p17-309
+Create React App used to be the standard way to start a React project. But it's been deprecated since early 2025, and honestly it was slow for big projects, because it bundled everything with webpack, even in development.
+
+Vite works differently in development. It serves source files as native ES modules straight to the browser, and only transforms the files the browser asks for, using esbuild, which is written in Go and extremely fast. So the dev server starts almost instantly, no matter how big the project is, and hot module replacement updates the browser in milliseconds after a change. Dependencies are pre-bundled once.
+
+For production, Vite builds optimised bundles with Rollup, or Rolldown in newer versions, with code splitting, tree shaking, hashed file names and CSS handling. Config is much simpler than webpack's, and there's a big plugin ecosystem. TypeScript, JSX, CSS modules and environment variables work out of the box, and there's library mode for building packages.
+
+webpack is still powerful and very flexible, and plenty of existing projects and tools use it, like Module Federation's original implementation. But it's more complex to configure, and slower.
+
+Vitest, a test runner built on Vite, shares the same config and is really fast.
+
+Our React shell and feature packages use Vite, and developer experience got a lot better compared with the older webpack setups we had. Startup time alone was a big win for the team.
+
+@p17-310
+Vite loads environment variables from .env files. .env for all modes, .env.development and .env.production for specific modes, and .local variants that don't get committed to Git. Only variables prefixed with VITE_ are exposed to client code, as import.meta.env.VITE_API_URL. There are built-ins too, like import.meta.env.MODE, DEV and PROD. For TypeScript, I declare the variables in a vite-env.d.ts file so they're typed.
+
+Now the thing to really understand is these values get replaced at build time. They're baked into the JavaScript bundle as plain strings. And that leads to two pitfalls.
+
+One is secrets. Anything with the VITE_ prefix is visible to anyone who opens browser dev tools. So only public values belong there, API URLs, public client ids. Never API keys or secrets.
+
+The other is build once, deploy many. If the API URL is baked in, you need a different build per environment, which means production isn't running the exact artifact that was tested in UAT. In regulated environments, that's a real concern. The workaround is runtime configuration. The app fetches a config.json at startup, or the server injects a small script that sets window variables, and the deployment pipeline writes the right values per environment.
+
+Our React shell uses Vite environment variables for things like the API and Keycloak URLs.
+
+@p17-311
+A portal renders a component's children into a different DOM node, outside the parent component's DOM hierarchy. You use createPortal with the JSX and a target element, often document.body or a dedicated modal-root element.
+
+The main use is overlays. Modals, dialogs, tooltips, dropdown menus, toasts. If a modal is rendered inside some deeply nested component, CSS can break it. A parent with overflow hidden can clip it, a parent with a transform or a lower z-index stacking context can push it behind other content, and positioning gets messy. Rendering it directly under body avoids all that.
+
+The nice part is a portal still behaves like a normal child in React's tree. It gets props and context from its React parent, like the theme or the current user. And events bubble up through the React tree, not the DOM tree. So a click inside the modal still reaches onClick handlers on React ancestors, which honestly surprises people and sometimes needs stopPropagation.
+
+Accessibility needs care with portals. Focus should move into the modal when it opens, stay trapped inside while it's open, and go back to the triggering element when it closes. The rest of the page should be hidden from screen readers, and Escape should close it.
+
+In practice, component libraries like MUI handle this for you. MUI's Dialog, Popover and Menu use portals and manage focus internally, so I rarely write a raw portal myself.

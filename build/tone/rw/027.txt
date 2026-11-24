@@ -1,0 +1,149 @@
+@p17-312
+So a ref gives you direct access to a DOM element or a component instance, for things like focusing an input, scrolling, measuring, or plugging in non-React libraries.
+
+Before React 19, a function component couldn't receive a ref as a normal prop. If a parent wanted to focus an input inside my custom TextField component, I had to wrap it in forwardRef, which passed the ref as a second argument, and attach it to the inner input. Reusable component libraries had forwardRef literally everywhere.
+
+In React 19, ref is just a regular prop for function components. The component takes ref from its props and passes it to the inner element. forwardRef isn't needed anymore, and it'll be deprecated in a future version.
+
+useImperativeHandle customises what the parent gets through the ref. Instead of exposing the whole DOM node, the component exposes a small controlled API, like an object with focus, clear or scrollToRow methods. A data grid component, say, might expose scrollToRow and resetFilters, and keep its internal DOM private.
+
+But honestly, it's an escape hatch. React's normal flow is props down and events up, and most things that look like "call a method on the child", like opening or closing a dialog, are better as props, like an open prop. I use imperative handles only for genuinely imperative actions, focus, scrolling, playing media, triggering animations.
+
+@p17-313
+All three are ways to reuse logic across components, and they kind of reflect React's history.
+
+A higher-order component is a function that takes a component and returns a new one with extra props or behaviour. Like withAuth wrapping a Dashboard, which checks authentication, or Redux's old connect. They work, but there are problems. Wrapper hell, with lots of nested wrappers in DevTools. It's unclear where a prop came from. Prop name collisions between HOCs. And awkward TypeScript types.
+
+Render props pass a function as a prop, or as children, and the component calls it with its data, like a MouseTracker with a render prop that gets the mouse position. More explicit than HOCs, but you end up with deeply nested JSX, people call them callback pyramids.
+
+Custom hooks, since React 16.8, replaced most uses of both. A hook like useAuth, useDebounce or useShipments wraps up stateful logic, and any component calls it directly and gets the values. No extra component in the tree, it's clear where values come from, they compose easily, and TypeScript types are simple.
+
+So these days I use custom hooks by default. HOCs still have a place for wrapping components with cross-cutting behaviour at the route level, like requiring a permission to render a page. And render props, or children as a function, are still useful for flexible UI components where the consumer controls rendering, like a virtualised list's row renderer.
+
+@p17-314
+Compound components are a set of components that work together to form one UI element. They share state implicitly, but let the consumer arrange them freely. The classic HTML example is select and option. In React, think of Tabs with Tabs.List, Tabs.Tab and Tabs.Panel, or an Accordion with Item, Header and Content.
+
+The parent component holds the shared state, like which tab is active, and provides it through a React context. The child components read the context to know if they're active and to change the state, like a Tab calling setActive on click. So the consumer writes clean, declarative JSX, puts the pieces wherever they want, even adds custom elements between them, without passing state or callbacks around by hand.
+
+What you get is a flexible API without dozens of config props, like those tabsConfig arrays with render functions. The structure is clear right there in the JSX. And the component's internal state stays hidden.
+
+A few details I take care of. The children should throw a helpful error if used outside their parent, by checking for a missing context. The parent can support both uncontrolled use, with internal state, and controlled use, with value and onChange props. And accessibility lives inside, ARIA roles and keyboard navigation for tabs.
+
+MUI and headless libraries like Radix use this pattern a lot, and honestly it's how I build reusable UI pieces in a design system.
+
+@p17-315
+Prop drilling is passing data through several layers of components that don't use it themselves, just so some deeply nested child can get it. Like the current user going from App to Layout to Sidebar to Menu to MenuItem. The middle components get noisy, tightly coupled, and harder to refactor.
+
+There's no single fix, I pick based on the situation.
+
+Composition first. Often the intermediate components can accept children or element props, so the parent renders the deep component directly and passes it down as a ready-made element. Then the data only goes where it's used. Honestly, this is underused and really effective.
+
+Context, for data that lots of components at different levels need and that changes rarely. Current user, theme, locale, permissions, the selected study. It's built in and simple, but every consumer re-renders when the value changes, so I keep contexts small and focused and memoise the value.
+
+A state management library, like Redux Toolkit or Zustand, for app state that's shared widely and updated often, because components subscribe to just the slice they need through selectors.
+
+A server-state library, like TanStack Query or RTK Query, for API data. Any component calls the same query hook and gets cached data, so you don't pass fetched data down at all.
+
+And passing props one or two levels is fine. It's explicit. I don't treat every prop as drilling.
+
+@p17-316
+When a context's value changes, every component that consumes that context re-renders, even if it only uses a tiny part of the value. And React.memo doesn't stop it.
+
+The common pitfalls I see. Passing an object literal as the value, like value equals user and setUser in braces. That's a new object on every render of the provider, so all consumers re-render whenever the provider re-renders, even if nothing changed. Fix is memoising the value with useMemo.
+
+Putting too much in one context, like user, theme, notifications and filters all together. A change to notifications re-renders every component that only uses the theme. Fix is splitting into separate focused contexts, one per concern.
+
+Mixing frequently changing state with stable functions. A common trick is splitting state and dispatch into two contexts. Components that only trigger updates consume the dispatch context, which never changes, so they don't re-render when the state changes.
+
+And using context for high-frequency updates, like form input values or real-time data. Context just isn't designed for that.
+
+If part of the app needs fine-grained subscriptions, a store library like Redux Toolkit or Zustand is better, because components subscribe through selectors and only re-render when their selected value changes. There's also use-context-selector as a library.
+
+So for me, context is for low-frequency, app-wide values, and a store or server-state library handles the rest.
+
+@p17-317
+Both are popular state libraries for React, but with pretty different philosophies.
+
+Redux Toolkit is the official, modern way to use Redux. Single store, slices with reducers and actions from createSlice, Immer for simple immutable updates, createAsyncThunk for async logic, and RTK Query for API caching. It gives you a strict, predictable structure, excellent DevTools with time travel and action history, middleware, and patterns that scale well across big teams. It costs you more concepts and some ceremony, though way less than old Redux.
+
+Zustand is minimal. You create a store with a function that defines state and actions together, and components use a hook with a selector, like useStore picking selectedSite, and re-render only when that selection changes. No providers, very little boilerplate, small bundle, and it works outside React too. It can use the Redux DevTools and middleware like persist and immer. The flip side is less enforced structure, so big teams need their own conventions.
+
+How I choose, for large apps with many developers, complex shared state, and a need for strict patterns and traceable state changes, Redux Toolkit. For small to medium apps, or local feature state, Zustand. Either way, server data belongs in a server-state library like RTK Query or TanStack Query, which removes most of the state that used to go into Redux.
+
+Our React shell uses Redux Toolkit, so that's where most of my experience is.
+
+@p17-318
+Normalised state means storing each type of data like tables in a database. Each entity type in its own collection, keyed by id, with references by id instead of nested copies. So instead of an array of shipments where each shipment has a full site object and an array of kit objects, I store shipments, sites and kits separately, as objects mapping id to entity, plus an array of ids for ordering.
+
+Why bother? Each item exists in exactly one place, so updating a site updates it everywhere it's referenced, no inconsistent copies. Lookups by id are O(1) instead of searching arrays. And updates are simpler and cheaper, which cuts unnecessary re-renders, because components can select single items.
+
+Redux Toolkit's createEntityAdapter makes this easy. It creates the standard shape, ids and entities, and gives you reducer helpers like addOne, addMany, setAll, updateOne, upsertMany and removeOne, which you use inside a slice's reducers. It also generates memoised selectors, selectAll, selectById, selectIds and selectTotal. You can set a sortComparer to keep ids sorted, and a custom selectId if the id field isn't called id.
+
+When API responses are nested, I flatten them when storing, either by hand or with a library like normalizr.
+
+With RTK Query though, a lot of server data is cached per query instead. So honestly I normalise mainly for client-side state with lots of cross-references or frequent individual updates.
+
+@p17-319
+A selector is a function that reads data from the Redux store, like state.shipments.items. With useSelector, a component re-renders whenever the selector's result changes, compared by reference.
+
+The problem comes with derived data. A selector like "pending shipments", which filters the array, returns a new array every single time it runs, even if the shipments haven't changed. useSelector runs selectors after every dispatched action, sees a new reference, and re-renders the component on every action in the whole app. And the filtering re-runs every time, which is wasteful for big lists.
+
+createSelector, from Reselect and re-exported by Redux Toolkit, creates memoised selectors. You give it input selectors, like selectShipments and selectStatusFilter, and a result function that combines them. It only recomputes when an input's result changes by reference. Otherwise it returns the cached previous result, same reference, so the component doesn't re-render.
+
+There are some subtleties. The cache size used to be one by default, so a selector used with different arguments in several components, like selectShipmentsBySite with a site id, kept recalculating. Newer Reselect versions use weakMapMemoize by default, which handles multiple arguments better, or you create a selector instance per component with useMemo. And input selectors themselves must be simple and not create new objects.
+
+Redux Toolkit's dev checks actually warn when a selector returns a new reference for the same inputs, which catches a lot of these.
+
+@p17-320
+React Hook Form is a form library that manages form state with uncontrolled inputs and refs by default, so typing in one field doesn't re-render the whole form. That makes it fast even for big forms, with very little code.
+
+You call useForm, which gives you register to connect native inputs, handleSubmit to validate and submit, and formState with errors, isSubmitting and isDirty. For controlled components, like MUI inputs or date pickers, you use the Controller component or useController. useFieldArray handles dynamic lists of fields, like adding multiple kit lines to a return.
+
+Zod is a TypeScript-first schema library. I define the form's schema once. Like quantity is a number, at least 1, at most the dispensed quantity. Reason is a string with a minimum length, required when the status is Damaged, using refine or superRefine for cross-field rules. Then z.infer gives me the TypeScript type from the schema, so the type and the validation rules can never drift apart. I really like that part.
+
+zodResolver connects them. useForm with the resolver set to zodResolver of the schema. Validation runs on submit, or on blur or change if you configure it, and errors show up in formState.errors with messages from the schema.
+
+When the server sends back validation errors, I map them onto fields with setError.
+
+The same Zod schema can even be shared with a Node backend. With a .NET backend though, the server has its own FluentValidation rules.
+
+@p17-321
+See, TypeScript types only exist at compile time. When I write data equals await response.json as Shipment, TypeScript just trusts me. If the API returns something different, like a renamed field, a null where I expected a string, a date as a number, or an error object instead of data, nothing catches it at runtime. Then the app fails somewhere far from the cause, like "cannot read property of undefined" deep in a component, and that's painful to debug.
+
+Runtime validation closes that gap. You define a Zod schema for the response and parse the JSON with it. If the data matches, you get a correctly typed object. If not, you get a clear error saying exactly which field is wrong, right at the API boundary. safeParse returns a success flag instead of throwing, so you can log the problem and show a friendly error.
+
+Zod can also transform data while parsing, like converting ISO date strings into Date objects, or applying defaults.
+
+It's most valuable for data from external or less trusted sources. Third-party APIs, local storage, URL parameters, messages from other windows. For our own APIs, where types are generated from the backend's OpenAPI spec, the contract is already strong. So I use runtime validation selectively, for critical screens and during API changes.
+
+It costs a little bundle size and CPU, which is usually nothing to worry about.
+
+@p17-322
+Utility types transform existing types, so you don't repeat definitions. Honestly, a handful of them I use almost daily.
+
+Partial of T makes all properties optional, perfect for update payloads or patch functions, like updateShipment taking a Partial of Shipment. Required of T does the opposite.
+
+Pick of T with some keys creates a type with only those properties, like Pick of Shipment with id and status, for a summary component. Omit of T removes properties, like Omit of Shipment and id for a create form, where the server generates the id.
+
+Record of K and V describes an object with keys of type K and values of type V, like Record of ShipmentStatus to string for status labels. With a union of string literals as K, TypeScript makes sure every status has a label. So adding a new status shows errors wherever a mapping is missing, which is really handy.
+
+Readonly of T makes properties read-only, useful for state and props that mustn't be mutated.
+
+ReturnType and Parameters pull types out of functions, like getting the type of what a hook returns without exporting it separately. Awaited unwraps promise types.
+
+NonNullable removes null and undefined, and Extract and Exclude filter union types.
+
+The point is these keep types derived from one source. When the base type changes, everything derived from it updates automatically, and I don't chase copies around.
+
+@p17-323
+A discriminated union is a union of object types that share a common literal property, the discriminant, which TypeScript uses to narrow the type.
+
+The classic UI use is request state. Instead of separate isLoading, error and data fields, which allow impossible combinations, like loading true with data and an error at the same time, I define one type. Either status idle, or status loading, or status success with data as a Shipment array, or status error with an error message. Each state carries exactly the data it needs, nothing more.
+
+When I check that status equals success, TypeScript narrows the type, so state.data is available and typed. In the error branch, state.error is available. In other branches, touching data is a compile error. Impossible states just become unrepresentable.
+
+For exhaustiveness, in a switch over the status, the default case assigns the value to a variable of type never. If someone adds a new status, like cancelled, without handling it, the compiler errors in every switch that misses it.
+
+The same pattern fits loads of domain concepts. Redux actions with a type property, form steps, permission results, or events like KitDispensed versus KitReturned, each with different fields.
+
+For me, it's one of the most valuable TypeScript features for front-end correctness, because it moves bugs from runtime to compile time.

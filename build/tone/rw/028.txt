@@ -1,0 +1,149 @@
+@p17-324
+Okay, so as const is a const assertion. It tells TypeScript to infer the narrowest, most specific type and make everything read-only. Without it, an object with status pending gets inferred as status string. With as const, it's the literal pending, and arrays become read-only tuples. A common use is defining a list of values once, like statuses as pending, shipped, delivered, as const, and then deriving a union type from it with typeof statuses indexed by number. So the runtime array and the type stay in sync.
+
+satisfies came in TypeScript 4.9. It checks that a value matches a type without changing the value's inferred type. With a normal type annotation, like config typed as a Record of string to Route, TypeScript checks the value but then forgets the specific keys. config.shipments isn't known, and any string key is allowed. With satisfies Record of string to Route instead, TypeScript validates every entry against Route, catching typos and missing properties, but still remembers the exact keys and literal values. So autocomplete and narrowing keep working.
+
+And they combine nicely. as const satisfies some type gives you an immutable, precisely typed object that's also validated against a contract. Like a route table, a permission map, or a config object.
+
+I use satisfies a lot for configuration objects, and as const for lists of literal values and lookup tables. Honestly they've cleaned up a lot of our typing.
+
+@p17-325
+These are the building blocks of TypeScript's type-level programming, and actually the built-in utility types are made from them.
+
+keyof T gives a union of T's property names. For Shipment, keyof Shipment is id or status or site. It's useful for type-safe functions, like a sortBy function whose key parameter has to be a real property of the item type.
+
+typeof in a type position gets the type of a value, like typeof defaultConfig, so you derive types from constants instead of writing them twice. Put together, keyof typeof some object gives you the keys of an object value.
+
+Indexed access types, like Shipment indexed by status, give the type of one property.
+
+Mapped types build a new type by transforming each property of another. For each K in keyof T, map to some new type. That's how Partial and Readonly are built. You can also remap keys, like turning status into an onStatusChange handler.
+
+Conditional types pick a type based on a condition, like if T extends string then A, otherwise B. With infer, they can pull out parts of types, like the element type of an array, or the resolved type of a promise. That's how Awaited and ReturnType work.
+
+In everyday app code, I mostly use keyof, typeof and indexed access. Mapped and conditional types matter more when you're writing shared libraries, generic hooks, or typed API clients, where one generic definition gives precise types for lots of cases.
+
+@p17-326
+So type narrowing is how TypeScript refines a broad type to a more specific one inside a code block. The built-in checks narrow automatically. typeof x equals string, instanceof, the in operator, equality checks, and checking a discriminant property.
+
+A user-defined type guard is a function whose return type is a type predicate, like value is Shipment. Inside, you write the runtime check, say it's an object with a numeric id and a string status. When the function returns true, TypeScript narrows the variable to Shipment in that branch. It's useful for unknown data. JSON from local storage, errors in catch blocks, which are unknown, or filtering arrays. items.filter with isShipment gives a Shipment array, and newer TypeScript versions can even infer simple predicates automatically.
+
+An assertion function has a return type like asserts value is Shipment, or asserts condition. Instead of returning a boolean, it throws if the check fails, and after the call, TypeScript treats the value as narrowed for the rest of the scope. Handy for invariants, like an assertDefined on the current user at the start of a function.
+
+The important caution, TypeScript trusts these functions completely. If your runtime check is wrong or incomplete, the types lie, and bugs show up later. So for complex shapes, I'd rather use a schema library like Zod, which generates both the check and the type from one definition.
+
+@p17-327
+TypeScript enums, like an enum ShipmentStatus with Pending and Shipped, look familiar to C# developers, but they've got some quirks.
+
+Numeric enums let you assign any number, and they have reverse mappings, so they're less type-safe than they look. Regular enums generate runtime JavaScript objects, so extra code. const enums get inlined, but they cause problems with isolated module compilation, which tools like Vite, esbuild and Babel use. And enums are a TypeScript-only construct. Node's native TypeScript type stripping, and the erasableSyntaxOnly option, don't support them, because they're not just types.
+
+A union of string literals, like type ShipmentStatus equals Pending or Shipped or Delivered, has no runtime cost. It works directly with JSON from APIs, which are plain strings anyway. You get autocomplete and exhaustiveness checks. And it's just JavaScript once the types are erased.
+
+When I also need the values at runtime, for a dropdown or validation, I define a const array or object with as const and derive the union type from it, so one definition does both jobs.
+
+So for new code, I prefer string literal unions, or as const objects. Enums are fine where a codebase already uses them consistently, and string enums are way safer than numeric ones.
+
+For API contracts generated from a .NET backend, I configure the generator to produce string unions, which matches our enums being serialised as strings.
+
+@p17-328
+The tsconfig controls how strict TypeScript is and how it understands the project. Honestly, a few options matter way more than the rest.
+
+strict set to true, which turns on a group of checks, especially strictNullChecks, so null and undefined have to be handled explicitly, and noImplicitAny. It catches a huge class of bugs. For an existing JavaScript-heavy codebase, I'd turn it on gradually, but new projects start strict.
+
+noUncheckedIndexedAccess, which makes array and record lookups include undefined in their type, because the item might not exist. It's stricter, but it catches real bugs with lookups by id or index.
+
+exactOptionalPropertyTypes, which separates a missing property from one explicitly set to undefined. Useful for patch-style objects.
+
+noUnusedLocals, noUnusedParameters and noFallthroughCasesInSwitch, for clean code, though linting covers some of this.
+
+For a Vite React project, jsx set to react-jsx, the modern transform without importing React. module ESNext with moduleResolution bundler, which matches how Vite resolves imports. isolatedModules true, since Vite transpiles each file separately. noEmit true, because Vite does the building and TypeScript only type-checks. And types for vite/client, so import.meta.env is typed.
+
+paths for import aliases, like at-sign pointing to src, which has to match the Vite config.
+
+And I run tsc with noEmit in the pipeline, because Vite's dev server doesn't type-check at all. People forget that.
+
+@p17-329
+MUI, Material UI, is customised mainly through the theme. You create a theme with createTheme and define the palette, primary and secondary colours, error and warning colours. Typography, like font family and sizes. Spacing. Breakpoints. Shape, like border radius. And component defaults and style overrides, like making all buttons non-uppercase, or giving every TextField a small size by default. The ThemeProvider at the root makes it available everywhere.
+
+That's really the foundation of a consistent design system. Components use theme values, so changing a brand colour happens in one place. A company design system built on MUI usually ships as a theme package plus extra components.
+
+For one-off styling, there are two main tools. The sx prop applies styles directly on a component, with access to theme values through shorthand, like p 2 for padding on the spacing scale, or color primary.main, and responsive values by breakpoint. Great for small layout tweaks. styled creates a reusable styled component, like a StatusBadge, with styles defined once, which is better for anything reused or complex.
+
+Performance-wise, sx is fine for most cases. But in very large lists, a styled component or theme override avoids recalculating styles per item.
+
+I avoid hard-coded colours and pixel values in components, everything stays tied to the theme.
+
+Our React shell actually uses MUI 5 together with IQVIA's React design system, so this is everyday stuff for me.
+
+@p17-330
+Large grids are really common in business apps, lists of kits, shipments, subjects. And performance and usability both matter.
+
+The first decision is client-side or server-side data. For a few thousand rows, loading everything and letting the grid sort, filter and page in the browser is simple and fast. For tens of thousands or more, or data that changes often, I go server-side. The grid sends sort, filter and page parameters to the API, and the API returns one page with a total count. MUI's DataGrid supports this with paginationMode, sortingMode and filterMode set to server, and AG Grid has the server-side and infinite row models.
+
+Virtualisation is essential. Both MUI DataGrid and AG Grid render only the visible rows and columns, so the DOM stays small even with thousands of rows loaded.
+
+For React performance, keep the columns definition stable with useMemo, or outside the component. A new columns array on every render makes the grid recalculate, and I've seen that make a grid crawl. Memoise custom cell renderers. And avoid heavy components inside cells.
+
+Usability-wise, column visibility and ordering saved per user, export to CSV or Excel, keyboard navigation, and accessible markup.
+
+And licensing is part of it. MUI DataGrid's free version covers the basics, while advanced features like row grouping, tree data and Excel export are in the paid tiers, similar to AG Grid's enterprise edition. So the licence choice is part of the decision.
+
+@p17-331
+Accessibility means people using keyboards, screen readers, magnification or other assistive tech can actually use the app. It's often a legal or contractual requirement too, usually targeting WCAG 2.1 or 2.2 level AA.
+
+The basics come first. Use semantic HTML, button, nav, main, table, label, instead of clickable divs, because they come with keyboard support and meaning for screen readers. Every input has an associated label. Images have meaningful alt text, or empty alt if they're decorative. Headings follow a logical order.
+
+Then keyboard support. Everything must work with the keyboard, with a visible focus indicator, a logical tab order, and no keyboard traps, except on purpose inside open modals.
+
+Focus management in SPAs is the one people miss. When a modal opens, move focus into it and return it afterwards. After client-side navigation, move focus to the new page's heading, so screen reader users know the page changed.
+
+ARIA, used carefully, for custom widgets. Roles, states like aria-expanded or aria-selected, and aria-live regions to announce dynamic updates like "Shipment saved" or validation errors. But the first rule of ARIA is prefer native elements where you can.
+
+Enough colour contrast, and never colour alone to convey meaning, like statuses shown only as red or green.
+
+Component libraries like MUI handle a lot of this. On top, I add eslint-plugin-jsx-a11y, axe checks in tests, and manual keyboard and screen reader testing. That's how I'd approach it.
+
+@p17-332
+React Router lets you define routes as a tree, where parent routes render shared layout and child routes render inside the parent through the Outlet component. Like a parent route for sites slash siteId renders the site header and tabs, and child routes render the inventory, shipments or users tab inside it. Index routes define what shows at the parent path itself, and layout routes without a path group routes that share a layout, like all the authenticated pages.
+
+Hooks give you the routing info. useParams for path parameters. useSearchParams for query strings, which is a good place to keep filter state, so it's shareable and works with the back button. useNavigate for programmatic navigation, and useLocation.
+
+Since version 6.4, with createBrowserRouter, routes can have loaders and actions. A loader fetches data before the route renders, and the component reads it with useLoaderData, so data loading starts in parallel with the code download, no waterfalls. Actions handle form submissions and mutations, and loaders revalidate automatically after. errorElement shows an error UI for failures in that branch, and lazy loads route code on demand. In version 7, these ideas merged with the Remix framework.
+
+Honestly, many teams, ours included, still use simpler component-based routing, with data fetching through RTK Query or TanStack Query inside components, and that works fine too.
+
+And route-level code splitting with lazy imports keeps the initial bundle small.
+
+@p17-333
+Both let separate teams build features independently and combine them into one app, but they integrate at different times.
+
+With npm packages, each feature module is built and published as a versioned package to a registry, and the shell installs specific versions and builds everything together. So it's build-time integration. It's simple, you get full type checking across packages, one optimised bundle with shared dependencies deduplicated, and a clear, tested combination of versions in each shell release. That last part is really important for validated releases. The downside is that releasing a feature change means publishing a new package version and then rebuilding and redeploying the shell.
+
+With Module Federation, from webpack 5 and now available for Vite and Rspack, each feature is deployed separately as a remote, and the shell loads it at runtime from a URL. Teams can deploy their part without redeploying the shell, and shared libraries like React get loaded once and shared at runtime. But you can get runtime failures if shared dependency versions are incompatible, setup is more complex, type sharing needs extra tooling, and the exact combination in production changes whenever any team deploys. That makes testing and validation a lot harder.
+
+In my project, our React shell uses the npm package approach. Feature modules like drug accountability and material block are separate repos published to the Azure DevOps feed, which fits our regulated release process, where every production combination has to be validated.
+
+@p17-334
+A monorepo keeps several related projects, like a shell app, feature packages and a shared component library, in one repository, with tooling that understands how they relate.
+
+The basic building block is workspaces, from npm, pnpm or Yarn. The root package.json lists the workspace folders, dependencies get installed once at the root, and local packages are linked to each other automatically. So the shell can use the latest local version of a feature package without publishing it. pnpm is popular because it's fast and strict about dependencies.
+
+On top of that, build orchestrators like Turborepo or Nx add a lot. Running build, test and lint across packages in the right dependency order. Caching, so unchanged packages aren't rebuilt or retested, locally and in CI with remote caching. And affected detection, so the pipeline only builds and tests the packages a commit changed, plus their dependants. Nx also adds generators, dependency graphs and boundary rules that stop forbidden imports.
+
+What you gain is atomic changes across packages in one pull request, consistent tooling and versions, easier refactoring, and simpler code sharing.
+
+What it costs is a growing repo, CI that needs smart caching to stay fast, and access control that's per repo, so if teams need strict separation, separate repos are easier.
+
+Actually our feature modules are separate repositories published as npm packages, so that's the polyrepo approach. A monorepo would be a reasonable alternative for tighter integration.
+
+@p17-335
+When you build a reusable React package, like a feature module or a component library, the most important rule is that React itself must not be bundled into the package, or installed as its own dependency.
+
+If the package lists react as a normal dependency, or bundles it, the consuming app can end up with two copies of React. Then hooks fail with the "Invalid hook call" error, because the package's components use a different React instance than the app's renderer. And context providers from the app aren't visible inside the package. Honestly, that error confuses everyone the first time.
+
+So in package.json, react and react-dom go in peerDependencies, with a compatible version range, like React 17 or 18, and in devDependencies for local development and tests. Same for other libraries that must be singletons, MUI, Emotion, React Router, Redux, because their contexts have to be shared.
+
+In the build, with Vite's library mode or tsup, I mark these as external, so they come from the host app at runtime instead of being bundled. The output is ES modules with TypeScript declaration files, and the package.json exports field points to them. sideEffects false allows tree shaking.
+
+For local testing with the shell, npm link can cause duplicate React copies too, so I prefer a workspace setup, or tools like yalc.
+
+Versioning follows semver with a changelog, because the shell pins versions. That's how our feature packages work with the React shell through the Azure DevOps feed.

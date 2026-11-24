@@ -1,0 +1,157 @@
+@p17-360
+Okay, so these are the main options for database access in Node with TypeScript, just at different levels of abstraction.
+
+Prisma defines the data model in its own schema file, generates a fully typed client, and handles migrations. Queries are very type-safe and the autocomplete is excellent. It's productive and popular. The downsides are its own schema language, less control over the generated SQL, and some complex queries needing raw SQL anyway.
+
+TypeORM is a classic ORM with decorators on entity classes, kind of like Entity Framework or Hibernate. It supports Active Record and Data Mapper patterns, relations and migrations. It feels familiar if you're from .NET or Java, but query type safety is weaker, and honestly it's had a reputation for bugs and slower maintenance.
+
+Knex is a query builder, not a full ORM. You write queries in JavaScript that map closely to SQL, with migrations and seeds. Lots of control and flexibility, but not much type safety on its own.
+
+Drizzle is a newer, lightweight, TypeScript-first ORM. Schema defined in TypeScript, queries that look like SQL but are fully typed, fast, and it works nicely in serverless environments.
+
+How I'd pick, Prisma or Drizzle for new TypeScript services. Drizzle when I want SQL-like control and a small footprint. Plain SQL with a driver like pg for really simple services or heavy reporting.
+
+Whatever I pick, it's parameterised queries, connection pooling, and migrations run in the pipeline.
+
+@p17-361
+There are a few things I always do for Node containers, honestly almost a checklist.
+
+Use an official slim base image with a specific Node LTS version, like node 22 slim or Alpine, pinned. Never latest.
+
+Use a multi-stage build. The build stage installs all dependencies with npm ci and compiles TypeScript. The final stage copies only the compiled output and production dependencies, installed with npm ci omitting dev, so dev tools and source files don't end up in the image.
+
+Order the Dockerfile for caching. Copy package.json and the lockfile first, install dependencies, then copy the source. That way code changes don't reinstall everything.
+
+A .dockerignore to exclude node_modules, .git, .env files and test files.
+
+Don't run as root. The official images have a node user, and I switch to it with USER node.
+
+Set NODE_ENV to production, which lots of libraries use to turn on optimisations.
+
+Handle signals properly. Start with node dist/server.js directly as the CMD, not npm start, so the Node process gets SIGTERM for graceful shutdown. Or use tini, or docker run with the init flag, to handle PID 1 duties like reaping zombie processes.
+
+Set memory limits consistently. Node's heap limit should fit inside the container's memory limit, using max-old-space-size if needed.
+
+Add a health check endpoint for the orchestrator, and log to standard output.
+
+And on top of all that, scan the image for vulnerabilities in the pipeline. So that's my usual setup.
+
+@p17-362
+There are a few ways now, and honestly they fit different stages.
+
+Compiling with tsc is the traditional one. TypeScript compiles .ts files to JavaScript in a dist folder, and Node runs the JavaScript. It's the reliable production approach, and tsc also does full type checking, which the runtime tools skip.
+
+Running directly in development with a loader is the next one. ts-node was the original tool, but it's slower and had ES module issues. tsx, which uses esbuild, is popular now. tsx watch on your server file runs TypeScript directly, very fast, with reload on changes. It strips types without checking them, so I run tsc with noEmit separately, in the editor or the pipeline.
+
+Then native type stripping. Since Node 22.6 behind a flag, and on by default from Node 23.6 and later 22.x versions, Node can run .ts files directly by removing type annotations. It only supports erasable syntax, meaning types you can simply delete. Features that generate code, like enums, namespaces, and parameter properties in constructors, aren't supported unless you use the transform option, and TypeScript added the erasableSyntaxOnly setting to flag them. It doesn't read tsconfig paths and it doesn't type-check.
+
+Bundlers like esbuild or tsup can also produce a single optimised JavaScript file, which is great for Lambda functions.
+
+My setup is tsx or native stripping for development, tsc type checking in CI, and compiled JavaScript or a bundle in production images.
+
+@p17-363
+AsyncLocalStorage, from the async_hooks module, lets you store data that's available throughout an async call chain, without passing it explicitly through every function. It's similar to AsyncLocal in .NET, or thread-local storage, but it follows async operations instead of threads.
+
+You create one AsyncLocalStorage instance. At the start of each request, a middleware calls run with a context object, like the request id, the user id and a request-scoped logger, and the rest of the request handling runs inside that callback. Then anywhere deeper in the code, services, repositories, the logger, getStore returns the context for the current request. Even after lots of awaits, timers and promise chains. And concurrent requests each see their own context.
+
+Where I use it, adding the correlation or trace id to every log line automatically. Tracking the current user or tenant for auditing or multi-tenant data access. And request-scoped caching. OpenTelemetry's Node SDK actually uses it to track the active span, which is how traces propagate automatically.
+
+A few cautions. Context can get lost with some older callback-based libraries or custom thenables, though that's rare now. It adds a small performance cost. And it's easy to overuse. For core business data, explicit parameters are clearer, so I keep it for cross-cutting things like logging and tracing.
+
+Node 24 improved its implementation and performance too.
+
+@p17-364
+EventEmitter is Node's built-in publish-subscribe mechanism. Lots of core objects, streams, servers, sockets, are emitters, and code subscribes with on and unsubscribes with off or removeListener.
+
+By default, an emitter warns when more than 10 listeners get added for the same event. "MaxListenersExceededWarning, possible EventEmitter memory leak detected." It's a heuristic, not an error, but honestly it usually points to a real bug. Code that adds a listener repeatedly, like on every request or every retry, without removing it. Each listener stays referenced by the emitter, along with everything its closure captured, so memory grows. And the handler runs many times per event, so you get duplicate work.
+
+Typical examples I've seen. Adding an error or close listener to a long-lived shared connection inside a request handler. Subscribing to process events in a function that gets called again and again. Or a reconnection loop that re-registers handlers every time.
+
+The fixes, register listeners once at setup time, not per operation. Use once for listeners that should only fire one time. Always remove listeners when the work's done, in a finally block or a cleanup function. And use AbortSignal with events.on or the signal option, which removes listeners automatically when aborted. events.once also returns a promise if you're waiting on a single event.
+
+Raising the limit with setMaxListeners is only right when many listeners are genuinely expected, not just to silence the warning.
+
+@p17-365
+In Express 4, if an async route handler threw an error or a promise rejected, Express didn't catch it. The rejection went unhandled, the request hung until it timed out, and in modern Node, the unhandled rejection could crash the whole process. So everyone wrapped handlers with try-catch and called next with the error, or used a helper like express-async-handler, or the express-async-errors package, which patches Express.
+
+Express 5, which became the stable release in late 2024, fixed this. When a handler or middleware returns a rejected promise, Express automatically passes the error to the error-handling middleware. So async handlers can just throw.
+
+Either way, I have one central error-handling middleware, the special four-argument function, registered after all the routes. It maps known error types to responses. A ValidationError to 400 with details, NotFoundError to 404, and a custom AppError with its own status code and error code. For anything unexpected, it logs the full error with the request id and returns a generic 500 without internal details. Responses use a consistent format, like Problem Details.
+
+I also add a 404 handler for unknown routes. And I make sure errors in streams or background callbacks are handled right where they happen, because they're not part of the request's promise, so the central handler never sees them. That one's caught people out in my team.
+
+@p17-366
+Node runs all JavaScript for all requests on one thread. If one operation takes 200 milliseconds of CPU, every other request waits 200 milliseconds. So keeping each piece of work short is really critical.
+
+The common ways the loop gets blocked, and what I do about each.
+
+Synchronous APIs in request paths. readFileSync, existsSync, execSync, and crypto's sync functions, like pbkdf2Sync. I use the async versions. Sync APIs are fine only during startup.
+
+Large JSON. JSON.parse and JSON.stringify are synchronous and can take a long time on very big payloads. I limit payload sizes, paginate, or stream JSON.
+
+Heavy computation. Big loops, sorting huge arrays, image processing, compression, PDF generation. These go to worker threads, a separate service, or a job queue.
+
+Catastrophic regular expressions. Certain regex patterns with nested quantifiers take exponential time on crafted input, that's the ReDoS attack. I keep regexes simple, limit input length, and use linting tools that detect unsafe patterns.
+
+Processing a large collection in one go. I split the work into chunks and yield between them with setImmediate, so other requests get a turn.
+
+To catch blocking, I monitor event loop delay with perf_hooks and alert when it's high, and use CPU profiles to find the culprit. Honestly, that monitoring has saved us more than once.
+
+@p17-367
+Prototype pollution is a JavaScript-specific vulnerability. Every object inherits from Object.prototype. If an attacker can make the app set a property on Object.prototype itself, that property suddenly shows up on every object in the process. That can change application logic, like an isAdmin property becoming true everywhere, bypass security checks, crash the app, or in some cases lead to remote code execution through template engines or child process options. Scary stuff.
+
+It usually happens through unsafe recursive merge, deep clone, or set-by-path functions that copy user-controlled JSON into objects. If the input has a key like underscore-underscore proto, or constructor.prototype, a naive merge walks into the prototype and writes there. Plenty of popular libraries had bugs like this over the years.
+
+How I protect against it. Validate input with a schema that only allows expected properties, like Zod or JSON Schema, which also strips unknown keys. Don't write your own deep merge of untrusted data, and keep libraries like lodash updated. Block the dangerous keys, proto, constructor and prototype, in any code that sets properties by a dynamic key. Use Map instead of plain objects for user-keyed data, or objects created with Object.create of null, which have no prototype. Freezing Object.prototype at startup is strong but blunt, and it can break some libraries. Node also has a flag to disable proto.
+
+And dependency scanning catches the known vulnerable package versions.
+
+@p17-368
+The npm ecosystem has had a lot of supply chain attacks. Typosquatted package names, maintainer accounts compromised and malicious versions published, and in 2025, self-spreading worms that stole tokens through install scripts. A typical project has hundreds of transitive dependencies, so the risk is very real.
+
+What I do about it. Commit the lockfile and install with npm ci, so builds use exactly the reviewed versions, and a newly published malicious version doesn't sneak in automatically. Review new dependencies before adding them. Is it needed, is it maintained, how popular is it, and is the name spelled right? Fewer dependencies is better. Disable or restrict install scripts, which run arbitrary code at install time, with ignore-scripts, or pnpm's approach of only allowing scripts for approved packages. Run dependency scanning, npm audit, Dependabot, Snyk or Socket, in the pipeline, failing on high-severity issues. Hold off on brand-new versions for a few days, since malicious releases are usually caught quickly, and tools like Renovate support a minimum release age. Use a private registry or proxy, like Azure Artifacts or AWS CodeArtifact, so packages come through a controlled source. And protect our own publishing with 2FA and short-lived tokens, and publish with provenance from CI.
+
+One more, CI build agents shouldn't have more secrets than they need, because a malicious package runs with the agent's permissions. People forget that part.
+
+@p17-369
+Since Node 18, fetch is available globally, stable since Node 21, implemented by the undici library. So for HTTP calls you don't need axios or node-fetch anymore, and the same API works in browsers and Node.
+
+But using it well on a server needs a few things fetch doesn't do by default.
+
+Timeouts. fetch has no default timeout, so a hanging server can hold the request forever. I pass a signal from AbortSignal.timeout of, say, 5,000 milliseconds, or combine signals with AbortSignal.any to support cancellation too.
+
+Error handling. fetch only rejects on network errors. A 404 or 500 response resolves successfully, so I always check response.ok or the status, and throw or handle errors explicitly. That catches people a lot.
+
+Consuming the body. If you don't read or cancel the response body, the connection might not go back to the pool, so I always read it, even on errors.
+
+Connection pooling and keep-alive are handled by undici's global agent, and for heavy use, you can configure an undici Agent or Pool with connection limits.
+
+Retries, backoff and circuit breaking aren't built in, so I add them with a small wrapper or a library, and only retry safe requests.
+
+Axios is still a fine choice in existing code, especially for its interceptors, which our React apps use for adding tokens. In Node services though, I go with native fetch plus a thin wrapper.
+
+@p17-370
+These all take several promises and combine them, but they resolve or reject differently.
+
+Promise.all resolves with an array of all results once every promise resolves, and rejects immediately if any one rejects, with that first error. The other operations keep running, but their results get ignored. I use it when every result is required, like loading a page's essential data in parallel.
+
+Promise.allSettled waits for all of them, success or not, and resolves with an array of objects, each with a status, fulfilled or rejected, and a value or reason. It never rejects. I use it when operations are independent and I want each outcome. Like sending notifications to several recipients, or loading optional dashboard widgets, where one failure shouldn't hide the rest.
+
+Promise.race settles as soon as the first promise settles, whether it resolves or rejects. The classic use was a timeout, racing the operation against a timer, though AbortSignal.timeout is cleaner now because it also cancels the operation.
+
+Promise.any resolves with the first promise that fulfils, ignoring rejections, and only rejects, with an AggregateError, if all of them reject. Handy for redundancy, like trying several mirrors or replicas and taking the fastest successful response.
+
+And one thing people forget, none of them limit concurrency. For hundreds of operations, I use a concurrency limiter, like p-limit, instead of firing them all at once.
+
+@p17-371
+The Global Interpreter Lock is a lock in CPython, the standard Python interpreter, that allows only one thread to execute Python bytecode at a time. It simplifies memory management, since reference counting doesn't need fine-grained locks, and makes C extensions easier to write.
+
+The effect is Python threads can't run CPU-bound Python code in parallel on multiple cores. Ten threads doing heavy calculations take about as long as one thread, or even longer.
+
+But for I/O-bound work, HTTP calls, database queries, file reads, the GIL is released while waiting on I/O, so threads, or asyncio, work well for concurrency. And many C-based libraries, like NumPy, release the GIL during heavy computations, so they can use multiple cores.
+
+For CPU-bound Python code, the usual options are multiprocessing or ProcessPoolExecutor from concurrent.futures, which use separate processes, each with its own interpreter and GIL. Or moving the hot code into a compiled library. Or running multiple worker processes, which web servers like Gunicorn do anyway.
+
+Things are changing though. Python 3.13 introduced an experimental free-threaded build without the GIL, and in 3.14 the free-threaded build became officially supported, though not the default. Many libraries are still catching up, and single-threaded code can be slightly slower in that build.
+
+For our RAG service, the work is mostly I/O, calling embedding APIs and the database, so async FastAPI fits well, and honestly the GIL just isn't a bottleneck there.

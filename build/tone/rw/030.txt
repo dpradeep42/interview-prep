@@ -1,0 +1,131 @@
+@p17-348
+So a Buffer represents raw binary data in Node.js, a fixed-size sequence of bytes. JavaScript strings are text, made of UTF-16 characters, so they're not suitable for binary stuff like files, images, network packets, encrypted or compressed data. Buffers fill that gap. These days Buffer is a subclass of Uint8Array, so it works with the standard typed array APIs too.
+
+You create buffers with Buffer.from, from a string with an encoding, an array, or another buffer, and Buffer.alloc for a zero-filled buffer of a given size. Going back uses toString with an encoding, like utf8, base64 or hex. That's how I'd encode binary data as Base64 for JSON, or compute a hex digest.
+
+A few things matter here. Encoding matters a lot. Reading UTF-8 bytes as Latin-1 garbles text, and cutting a buffer in the middle of a multi-byte character breaks it, which is why streams use a StringDecoder when turning chunks into text. Buffer.allocUnsafe is faster because it doesn't zero the memory, but it might contain old data, which can leak sensitive information if you don't fully overwrite it. So I only use it when I fill it immediately. Comparing buffers with secrets, like HMAC signatures, should use crypto.timingSafeEqual, not a normal equality check. And large buffers count against the process's memory, so for big data, streams beat reading whole files into buffers.
+
+@p17-349
+CommonJS is Node's original module system. require to import, module.exports to export. It loads modules synchronously at runtime, and you can call require anywhere, even conditionally.
+
+ES modules are the JavaScript standard, import and export statements, used in browsers and modern tooling. Imports are static and analysed before the code runs, which enables tree shaking in bundlers and top-level await. Loading is asynchronous.
+
+In Node, a file is treated as an ES module if it has the .mjs extension, or if the nearest package.json has type set to module and the file is .js. Otherwise .js is CommonJS, and .cjs is always CommonJS.
+
+The differences that actually bite you. In ESM, file imports need the extension, like importing from utils.js with the .js. dirname and filename globals don't exist, so you use import.meta.dirname or import.meta.url. JSON imports need an import attribute. ESM can import CommonJS packages, though named exports aren't always detected. CommonJS historically couldn't require ES modules at all, only use dynamic import, but since Node 22, requiring synchronous ES modules works, which honestly removed a lot of pain.
+
+For TypeScript projects, the module and moduleResolution settings, like NodeNext, have to match whichever system you pick.
+
+New projects should go with ES modules. Libraries often publish both formats, using the exports field in package.json.
+
+@p17-350
+package.json describes a Node project or package, and a handful of fields really matter.
+
+name and version identify the package, and version follows semantic versioning when you publish.
+
+dependencies are packages needed at runtime. devDependencies are only for development and building, like TypeScript, test frameworks and linters, and that matters because production installs can skip them. peerDependencies declare packages the consumer has to provide, like React for a component library, so only one copy exists. optionalDependencies can fail to install without failing the whole install.
+
+scripts define commands, build, test, lint, start, which you run with npm run. Pre and post hooks run automatically, so I'm careful with install scripts, because they run for dependencies too and they're a supply-chain risk.
+
+type set to module makes .js files ES modules.
+
+exports is the modern way to define a package's public entry points, with conditions for import versus require, types, and subpaths. It also hides internal files, anything not listed can't be imported, which is great for library authors. main and module are the older entry fields.
+
+types points to the TypeScript declarations. engines declares supported Node versions, and with engine-strict, npm can enforce it. files lists what gets published, and private true stops you accidentally publishing an application.
+
+And along with package.json, the lockfile has to be committed, so installs are reproducible. That one's non-negotiable for me.
+
+@p17-351
+npm install installs dependencies from package.json, and it may update package-lock.json if versions within the allowed ranges changed, or if package.json changed. It's what developers use when adding or updating packages.
+
+npm ci is for CI and production builds. It deletes node_modules, installs exactly the versions in package-lock.json, and fails if package.json and the lockfile don't match. It never touches the lockfile. So builds are reproducible, and usually faster too. In pipelines I always use npm ci, often with the npm cache directory cached.
+
+Version ranges follow semantic versioning, major dot minor dot patch. A caret, like caret 4.2.1, allows anything below the next major. So 4.3.0 is fine, 5.0.0 isn't. It assumes minor and patch releases are backward compatible. For 0.x versions, caret is stricter, because 0.x minors can break things. A tilde, like tilde 4.2.1, allows only patch updates, 4.2.9 but not 4.3.0. And an exact version pins it precisely.
+
+The thing people miss is the lockfile is what really decides what gets installed. The ranges only decide what updates are allowed when someone runs npm update or regenerates the lockfile.
+
+In practice, I commit the lockfile, let Dependabot or Renovate propose updates as pull requests with the test suite running, and use exact versions for packages known to break in minor releases. pnpm and Yarn have equivalents, like pnpm install with frozen-lockfile.
+
+@p17-352
+Express is the classic, minimal web framework for Node. Simple, extremely well known, huge middleware ecosystem. But it's unopinionated, so big projects need their own structure, and historically it had weak async error handling and limited TypeScript support. Express 5, which came out in late 2024, finally handles rejected promises in route handlers properly.
+
+Fastify is a performance-focused framework with a similar feel. It's noticeably faster than Express, thanks to optimised routing and schema-based JSON serialisation. It has built-in JSON Schema validation for requests and responses, a structured plugin system with encapsulation, first-class async support, built-in logging with Pino, and good TypeScript support.
+
+NestJS is a full application framework built on top of Express or Fastify. It brings structure inspired by Angular and ASP.NET Core. Modules, controllers, providers, dependency injection with decorators, guards, interceptors, pipes for validation, plus integrations for GraphQL, microservices, queues and OpenAPI. For someone coming from .NET or Angular, like me, it feels very familiar.
+
+How I'd choose, a small focused service or a simple BFF, Fastify, or Express if the team already knows it well. A bigger application with many developers and a complex domain, NestJS, because the enforced structure and DI keep it maintainable. And for performance-critical endpoints, Fastify, maybe as NestJS's underlying adapter. So it really depends on the size and the team.
+
+@p17-353
+NestJS has a dependency injection container that's very similar to ASP.NET Core's and Angular's, so honestly it felt natural to me.
+
+A class marked with the Injectable decorator is a provider. You register providers in a module's providers array and inject them through constructor parameters, and Nest resolves them using TypeScript metadata about the parameter types. Controllers, guards, interceptors and pipes all get their dependencies this way.
+
+Modules organise the app into features. Each module declares its providers and controllers, exports the providers other modules may use, and imports the modules it depends on. A provider is private to its module unless exported, which keeps features encapsulated. Global modules, or dynamic modules with forRoot and forFeature, are for shared infrastructure, like configuration or database connections.
+
+Custom providers cover more cases. useValue for constants or mocks, useClass to swap implementations, useFactory for values that need logic or async setup, like creating a database client. And injection tokens, strings or symbols, for things that aren't classes, since TypeScript interfaces don't exist at runtime.
+
+Scopes are like .NET lifetimes. Default is singleton, shared across the app. REQUEST scope creates a new instance per request. TRANSIENT gives each consumer its own instance. Request scope bubbles up the dependency chain and costs performance, so I only use it when I really need it.
+
+Testing is easy too. The testing module lets you override providers with mocks.
+
+@p17-354
+Since Node 15, an unhandled promise rejection crashes the process by default, just like an uncaught exception. And that's on purpose. Carrying on after an unexpected error can leave the app in an inconsistent state.
+
+I handle errors where they happen, try-catch around awaits, and catch on promises that aren't awaited. As a safety net, I register process.on for unhandledRejection and uncaughtException to log the error with full details. But after an uncaught exception, the process state is unknown. So I log, exit with a non-zero code, and let the orchestrator, ECS, Kubernetes or PM2, restart a fresh instance. I don't try to keep running.
+
+Graceful shutdown is about planned stops, like deployments or scale-in. The orchestrator sends SIGTERM, and after a grace period, SIGKILL. On SIGTERM, the app should stop accepting new connections with server.close, fail its readiness check so the load balancer stops sending traffic, let in-flight requests finish, stop consuming new messages from queues and finish or release the current ones, close database pools and other connections, and then exit. A timeout forces the exit if something hangs.
+
+One thing people miss in Docker, the Node process has to actually receive the signals. If it's started through npm start or a shell script, signals might not reach it. So I run node directly as the main process, or use an init like tini, or the init flag.
+
+@p17-355
+The symptom is memory growing steadily over time, until the process crashes with "JavaScript heap out of memory", or the container gets killed for going over its memory limit.
+
+The first thing I do is confirm it's actually a leak, and not just a high but stable working set. Watching process.memoryUsage, especially heapUsed, over hours shows whether memory comes back to a baseline after garbage collection or keeps climbing.
+
+To find the cause, I take heap snapshots. Run Node with inspect and connect Chrome DevTools, or use the inspector API, or start with the heapsnapshot-signal flag, so sending a signal writes a snapshot, which is handy in a container. I take one snapshot after warm-up, run some load, take another, and compare. The comparison view shows which object types grew, and the retainers path shows what's keeping them alive.
+
+Common causes in Node, honestly I've seen most of these. Global or module-level caches, like a plain object or Map used as a cache with no size limit or expiry. Event listeners added repeatedly and never removed, often with the MaxListenersExceededWarning as a hint. Closures capturing big objects, held by long-lived timers or callbacks. Unbounded arrays, like collecting metrics or logs in memory. And unresolved promises piling up.
+
+Fixes are usually bounded caches, like lru-cache, removing listeners, and clearing timers. The max-old-space-size flag only delays the crash, though you should set it to suit the container's memory.
+
+@p17-356
+High CPU in Node often shows up as slow responses for everyone, because one busy main thread delays every request. So the first thing I measure is event loop lag, how long callbacks wait to run, using perf_hooks' monitorEventLoopDelay or metrics from APM tools. High lag means something's blocking the loop.
+
+To find what, I take a CPU profile. You can run with inspect and record a profile in Chrome DevTools. Or use the cpu-prof flag, which writes a profile file when the process exits. Or Clinic.js, which runs the app under load and gives you a flame graph plus a diagnosis of whether the issue is CPU, I/O or the event loop. Linux perf with perf-basic-prof works for system-level profiling, and APM tools like Datadog or New Relic offer continuous profiling in production.
+
+In a flame graph, wide bars are functions eating lots of CPU time. What I usually find is synchronous functions like readFileSync or crypto's sync methods in request paths. JSON.parse and JSON.stringify on huge payloads. Expensive regular expressions, sometimes even vulnerable to catastrophic backtracking. Heavy loops over big arrays. And too much synchronous logging.
+
+Fixes include switching to async APIs, streaming large payloads, caching results, moving CPU-heavy work to worker threads or another service, and simplifying regexes. Then I profile again to confirm it actually helped.
+
+@p17-357
+Configuration comes from environment variables, the twelve-factor way. The same build runs everywhere, with different environment variables set by the platform, like ECS task definitions or Kubernetes ConfigMaps and Secrets.
+
+For local development, a .env file loaded with dotenv, or Node's built-in env-file flag since Node 20, provides values. The .env file is in .gitignore, and a .env.example with dummy values documents what's needed.
+
+The important part, honestly, is validating configuration at startup. process.env values are all strings or undefined, so a typo or a missing variable otherwise causes some confusing failure much later. I define a schema, with Zod or envalid. Like PORT as a number with a default, DATABASE_URL as a required URL, LOG_LEVEL as one of a few values, and a feature flag as a boolean parsed from the string. At startup, the app parses process.env with the schema, and if anything's missing or invalid, it logs a clear message listing the problems and exits right away. What you get is a typed config object that the rest of the app imports, instead of reading process.env all over the code.
+
+Secrets, like database passwords and API keys, come from a secret store. Either injected as environment variables by the platform, or fetched at startup from AWS Secrets Manager or Parameter Store. And they're never logged.
+
+In NestJS, the ConfigModule supports the same validation approach.
+
+@p17-358
+I use structured logging. Each log entry is a JSON object with fields, not just a text line, so logs can be searched and filtered in a central system, by request id, user id, error type, whatever.
+
+Pino is my preferred library, because it's very fast and does JSON by default. Logging is a hot path, and slow logging blocks the event loop. Winston is another popular option, more flexible but slower. I create one logger with the level from configuration, and child loggers that add context, like a child with the module name, or one per request with the request id.
+
+For HTTP services, pino-http or the framework's integration logs each request with method, route, status code and duration, and attaches a request-scoped logger. To carry the request id or trace id into every log line, even deep in service code, I use AsyncLocalStorage, which keeps per-request context across async calls. Or the OpenTelemetry integration, which adds trace and span ids automatically, so logs and traces link up.
+
+Some habits I follow. Log at sensible levels, info for significant events, and error with the full error object so the stack gets captured. Redact sensitive fields, which Pino supports with paths like headers.authorization. Don't log whole request bodies. And write to standard output and let the platform collect logs, instead of writing files inside containers.
+
+In development, pino-pretty makes the JSON readable for humans.
+
+@p17-359
+Every request body, query string and path parameter is untrusted input, so I validate it at the edge, before it ever reaches business logic.
+
+How depends on the framework. With Express, I use a schema library like Zod or Joi, and a small middleware that validates req.body, req.query and req.params against the route's schema. If validation fails, it responds with 400 and a structured list of errors. If it passes, it replaces the raw input with the parsed, typed values, so defaults and type coercion get applied. With Zod, the TypeScript type is inferred from the schema, so the handler is typed without separate interfaces.
+
+Fastify has validation built in, JSON Schema on each route, compiled for speed with Ajv. Response schemas also speed up serialisation and stop extra fields leaking out. TypeBox or Zod type providers give you TypeScript types from those schemas.
+
+NestJS uses DTO classes with class-validator decorators, like IsString and IsInt, and a global ValidationPipe with whitelist and forbidNonWhitelisted options. Those strip or reject unknown properties, which protects against mass assignment. Zod-based pipes are an alternative.
+
+Whatever the tool, I validate types, required fields, lengths, ranges, formats and allowed values, limit body size, and reject unknown fields for sensitive endpoints. Business-rule validation, like whether a site is active, happens later in the service layer. That's how I keep the two separate.
