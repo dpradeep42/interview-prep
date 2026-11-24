@@ -1,0 +1,111 @@
+@p5-30
+I'd usually find duplicates in SQL one of two ways, and the second one also helps you clean them up.
+
+The simple one is GROUP BY with HAVING. Like, select KitNumber and COUNT star from Kits, group by KitNumber, having COUNT star greater than 1. That lists every value that appears more than once, and how many times. If duplicates are defined by several columns, I group by all of them.
+
+The other uses ROW_NUMBER. Over PARTITION BY KitNumber ORDER BY Id, each row in a group of duplicates gets a number, 1, 2, 3. Rows with number 1 are the ones to keep, usually the oldest, and rows with a number greater than 1 are the extras. Wrapped in a CTE, I can review them, and if appropriate, delete or merge them.
+
+Then, most importantly, I stop it from happening again with a unique constraint, and fix the code path that allowed it.
+
+In a regulated system, honestly, I wouldn't just delete duplicates. We'd investigate the root cause, document it, and apply a reviewed data fix with an audit trail. I've done that for a duplicate import issue, which is also why our CSV import now uses a file hash. I can walk through that.
+
+@p5-31
+You can find the nth-highest value a few different ways, and the main thing to get right is how ties are handled.
+
+The cleanest general approach uses DENSE_RANK. Rank the salaries with DENSE_RANK over ORDER BY Salary descending, in a CTE, and then select the rows where the rank equals N. Because DENSE_RANK gives equal salaries the same rank, with no gaps, "second highest" really means the second distinct salary, and it returns every employee who earns it. Another approach is SELECT DISTINCT Salary ORDER BY Salary descending, then OFFSET N minus 1 ROWS FETCH NEXT 1 ROW ONLY. And for just the second highest, a classic answer is SELECT MAX Salary WHERE Salary is less than the overall MAX.
+
+The trap is using ROW_NUMBER or TOP without DISTINCT. If two people share the highest salary, "second row" gives you the highest salary again, which is wrong. People miss this one a lot.
+
+I also mention what happens if there's no Nth value, like fewer than N distinct salaries. These queries return nothing, or null with MAX, and the caller should handle that.
+
+In my day-to-day work, the same pattern answers questions like "the second most recent shipment per site". I can write the full query if you like.
+
+@p5-32
+"Top N per group" is one of the most common SQL patterns, like the three most recent shipments for each site.
+
+The standard solution uses ROW_NUMBER in a CTE. Select from Shipments, adding ROW_NUMBER OVER PARTITION BY SiteId ORDER BY ShipDate descending, as rn. PARTITION BY restarts the numbering for each site, and ORDER BY decides which rows come first. Then, in the outer query, select where rn is less than or equal to 3. If ties should be included, I use RANK or DENSE_RANK instead. An alternative is CROSS APPLY. For each site, apply a subquery that selects TOP 3 shipments for that site ordered by date. With a good index on SiteId and ShipDate, CROSS APPLY can be very efficient when there are few groups and many rows per group, because it seeks per group.
+
+Either way, an index on the partition column and the order column, like SiteId and ShipDate, is what really makes it fast.
+
+In EF Core, the same thing can be written with GroupBy and Take inside a Select, and recent versions translate it into a ROW_NUMBER query. In our IRT dashboards, we use this pattern to show each site's latest shipments. I can write it out, it's honestly short.
+
+@p5-33
+Okay, so these are three concurrency problems that can happen when transactions run at the same time, and isolation levels exist to prevent them.
+
+A dirty read is reading data that another transaction has changed but not yet committed. If that transaction rolls back, you've read data that never really existed. A non-repeatable read is when you read the same row twice in one transaction and get different values, because another transaction updated and committed it in between. A phantom read is when you run the same range query twice, like all pending shipments for a site, and the second time new rows appear, because another transaction inserted them.
+
+Isolation levels map to these. Read Uncommitted allows all three. Read Committed, SQL Server's default, prevents dirty reads. Repeatable Read also prevents non-repeatable reads. Serializable prevents phantoms too. Snapshot isolation gives a consistent view of the data as of the start of the transaction, without blocking writers.
+
+In practice, I pick the level per use case. Like, when allocating kits to a site, a phantom could mean promising the same stock twice, so that short transaction uses stricter isolation. I can explain how snapshot isolation works.
+
+@p5-34
+ACID is basically the set of four guarantees that a reliable database transaction gives you.
+
+Atomicity means all or nothing. If a transaction has five steps and the fourth fails, the first three are rolled back, so you never end up halfway. Consistency means a transaction takes the database from one valid state to another, so all rules, like constraints, foreign keys and checks, still hold after it commits. Isolation means concurrent transactions don't interfere with each other, and each behaves as if it were running alone, to the degree set by the isolation level. Durability means once a transaction is committed, it stays committed, even if the server crashes a second later, because SQL Server writes changes to the transaction log on disk before confirming the commit.
+
+These guarantees are why relational databases are the backbone of systems where correctness really matters.
+
+In clinical trials, that's critical. When a subject is randomised, recording the assignment and allocating the kit have to happen together or not at all. With a single ACID transaction, we never get a subject randomised without a kit. Across services, where we can't have one transaction, we use outbox and sagas instead. I can explain those.
+
+@p5-35
+These are two strategies for handling two users or processes trying to change the same data at the same time.
+
+Optimistic locking assumes conflicts are rare. It doesn't lock anything while the user works. Instead, each row has a version, like a SQL Server rowversion column. When saving, the update includes WHERE version equals the original version. If someone else changed the row in the meantime, no row is updated, and the application detects the conflict and handles it, by retrying, merging, or returning 409 to the user. In EF Core, that's a concurrency token and DbUpdateConcurrencyException. It's scalable, because no locks are held.
+
+Pessimistic locking assumes conflicts are likely, so it locks the rows up front, like with an UPDLOCK hint inside a transaction, and others have to wait. It guarantees no conflicts, but reduces concurrency, and long locks cause blocking and deadlocks.
+
+So my rule is optimistic by default, pessimistic only for short, high-contention critical sections. In our IRT system, editing shipments and sites is optimistic. But allocating the last available drug kits at a depot uses a short pessimistic lock, because two sites must never get the same kit. I can explain that design.
+
+@p5-36
+My approach to database performance is always measure, fix the biggest problems, and then measure again.
+
+Finding what's actually slow comes before anything. Query Store shows the most expensive queries by CPU, duration and reads, wait statistics show what the server is waiting on, and application metrics show which endpoints suffer. Then I fix the top queries. That usually means proper indexes, SARGable predicates, avoiding SELECT star, removing N+1 patterns from the application, and checking execution plans. Then the schema and maintenance, correct data types, sensible normalisation, up-to-date statistics, and index maintenance. Then reducing load, so caching reference data in the application or Redis, read replicas for reporting, and archiving or partitioning old data. And keep transactions short, to reduce blocking and deadlocks.
+
+Only after that do I think about scaling up the server, because hardware hides problems rather than fixing them.
+
+My best example is our shipment list, which went from [about 9 seconds to under 300 ms], and logical reads from [about 400,000 to 2,000], with a predicate rewrite, a covering index and paging, no hardware changes at all. I can walk through that.
+
+@p5-37
+I design indexes from real query patterns, not by guessing, and I always weigh the read benefit against the write cost.
+
+The clustered index should usually be narrow, unique, static and ever-increasing, like an integer identity, because every non-clustered index carries the clustered key, and random keys cause page splits. Then non-clustered indexes. I index foreign key columns, since SQL Server doesn't do it automatically, and the columns used in frequent filters and joins. For composite indexes, I put equality columns up front and range columns last, and add INCLUDE columns for what the query selects, so it's covered without key lookups. For hot subsets, like only pending records, a filtered index can be much smaller.
+
+Then I verify. I check the execution plan to confirm the index is actually used, and over time I look at the index usage DMVs to find indexes that are never read but are constantly updated, and remove unused or duplicate ones.
+
+The covering index from our shipment list fix is a good example, honestly. StudyId and Status for equality, ShipmentDate for the range, plus the displayed columns. We also tested its write impact in validation. I can explain how I'd find missing indexes.
+
+@p5-38
+Microservices is an architectural style where an application is built as a set of small, independently deployable services. Each service owns one business capability and its own data, and they talk over APIs or messages.
+
+The key word is independent. Each service can be developed, deployed, scaled and even written in a different technology, without coordinating a big release with everyone else. A service owns its database, so no other service reaches into its tables, it shares data only through its API or events. That gives teams autonomy, and a failure in one service can be isolated instead of taking down everything.
+
+But it's not free. You swap the simplicity of one process for the complexity of a distributed system, network failures, eventual consistency, distributed tracing, and a lot more DevOps work. So I'd say it pays off for large systems and multiple teams, not for every project.
+
+In my work, our IRT platform combines a legacy .NET Framework core with newer domain microservices, like the IRT API, notifications, reports, supply management and integrations, as ASP.NET Core services talking via REST and RabbitMQ, hosted on-premise, while [IQVIA's newer services run on AWS ECS]. I coordinate releases across [about 5] scrum teams. I can explain how we drew the service boundaries.
+
+@p5-39
+So yeah, microservices bring real benefits, but every benefit comes with a cost.
+
+On the plus side, independent deployment, so one team can release without waiting for others. Independent scaling, so only the busy service gets more instances. Fault isolation, so a failure in notifications doesn't stop randomisation. Team autonomy, with clear ownership of each service. And freedom to choose the best technology per service.
+
+On the minus side, everything becomes a network call, which adds latency and new failure modes, so you need timeouts, retries and circuit breakers. Data is distributed, so you lose simple transactions and have to handle eventual consistency, with patterns like outbox and sagas. Testing and debugging across services is harder, so you need contract tests, correlation ids and distributed tracing. And there's way more DevOps work, a pipeline per service, container orchestration, monitoring and alerting for lots of moving parts.
+
+The way I see it, microservices swap code complexity for operational complexity. It's worth it when you have several teams and parts of the system that genuinely change and scale differently. In our IRT platform, correlation ids and the outbox pattern were exactly the kind of investments this needed. I can explain when I'd avoid them.
+
+@p5-40
+I wouldn't use microservices when the costs clearly outweigh the benefits, which honestly is more often than people think.
+
+Some clear signals. A small team, because one team managing ten services spends more time on infrastructure than features. An early-stage product, where the domain isn't well understood yet, because wrong service boundaries are very expensive to fix later, and you end up with a distributed monolith, where every change touches several services. Low scale, where there's no need to scale parts independently. Low DevOps maturity, without solid CI/CD, monitoring and on-call, because microservices depend on all of that. And a domain that needs strong transactional consistency across most of its data, where splitting the data creates more problems than it solves.
+
+In those cases, I'd start with a modular monolith. One deployable application, but with clear internal module boundaries, separate schemas or at least separate DbContexts per module, and communication through interfaces or in-process events. If a module later needs independent scaling or a separate team, it can be extracted into a service with much less risk.
+
+I'd rather earn microservices than start with them. I can describe how I'd extract a module from a monolith.
+
+@p5-41
+Service boundaries are the hardest part of microservices, and I use Domain-Driven Design, specifically bounded contexts, to find them.
+
+A bounded context is an area of the business where one model and one language stay consistent. The same word can mean different things in different contexts. Like, in clinical trials, a "kit" in the supply context is stock with a lot number and expiry date, while in the dispensing context, it's something assigned to a subject at a visit. Each bounded context is a natural candidate for a service, with its own model and its own data.
+
+To find them, I look at business capabilities, like randomisation, supply management, shipments, consent and notifications. Then I check some signals. Does each area own its own data? Do they change at different rates, or belong to different teams? And how chatty would they be? If two candidate services constantly need synchronous calls to each other to do anything, the boundary is probably wrong, and they belong together.
+
+In our IRT platform, randomisation, supply and shipments are separate contexts that talk mainly through events, which keeps them loosely coupled. I think that's worked well for us. I can explain how event storming helps discover these boundaries.
