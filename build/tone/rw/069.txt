@@ -1,0 +1,175 @@
+@p17-816 | How do you warn users about unsaved changes when they leave a page in Angular?
+Losing work to an accidental click is really frustrating, especially in long configuration forms. There are two situations to handle, navigation inside the app, and leaving the app completely, like closing the tab or refreshing.
+
+Inside the app, it's a CanDeactivate guard. With functional guards you write an unsaved-changes guard that takes the component, and if the component says it has unsaved changes, it opens a confirm dialog asking "You have unsaved changes, leave anyway?", otherwise it just returns true. Then you add that to the route's canDeactivate list. Components implement a small interface with a hasUnsavedChanges method, usually checking whether the form's dirty, or comparing current state with a saved snapshot. The guard can return a boolean, a Promise or an Observable, so it can wait on a proper Material dialog instead of the browser's confirm box.
+
+Leaving the app, you listen to the window beforeunload event, with a HostListener or a host binding, and call preventDefault on the event when there are unsaved changes. Browsers show their own generic message, custom text isn't allowed anymore.
+
+The details that actually matter. After saving, mark the form pristine so the warning doesn't pop up wrongly. Don't warn when the user cancels on purpose, or after a successful save that navigates away. And for logout and session timeout, decide whether to warn or just auto-save drafts.
+
+Auto-saving drafts every so often is honestly the nicest option for long forms, because leaving is always safe, but it needs backend support for drafts.
+
+For our study configuration screens, where users enter a lot of data, this kind of protection is definitely worth adding.
+
+@p17-817 | How do you poll an API with RxJS and stop when the job is done?
+So a common case, the user starts a long-running job, like generating a report, and the API returns a job id. The UI has to check the status every few seconds until it's completed or failed.
+
+A clean RxJS way. Start with a timer that fires at zero and then every three seconds, pipe it through switchMap to call get job status with the job id, then takeWhile the state is Running, passing true as the second argument, and finally takeUntilDestroyed with the destroy ref.
+
+How it works, the timer emits straight away and then every three seconds. switchMap calls the API each time and cancels the previous call if it's still going. takeWhile keeps going while the job runs, and that true argument means the final status, Completed or Failed, also gets emitted so the UI can show it. takeUntilDestroyed stops polling if the user leaves the page.
+
+Improvements I'd make. If responses can be slow, use exhaustMap instead of switchMap, so no new call starts while one's in flight, or poll with a delay after each response using repeat with a three-second delay on the request observable.
+
+Backoff for long jobs, increasing the interval over time, two, four, then eight seconds.
+
+For errors, retry with a count and a delay for transient failures, and a timeout so you eventually give up with a clear message.
+
+Pause polling when the browser tab is hidden, using the visibilitychange event, which saves server load.
+
+If there are lots of users or frequent updates, server push with SignalR or Server-Sent Events is more efficient than polling. But for the occasional long job, I'd say polling is simple, reliable and works through every proxy.
+
+@p17-818 | debounceTime vs throttleTime vs auditTime vs sampleTime in RxJS: what is the difference?
+Okay, these all limit how often values get through, but they pick different values at different times.
+
+debounceTime of 300 waits until the source has been quiet for 300 milliseconds, then emits the last value. If values keep coming, it keeps waiting. Perfect for search boxes, you only search after the user stops typing. The downside is during continuous activity, nothing comes out at all.
+
+throttleTime of 300 emits the first value straight away, ignores values for 300 milliseconds, then lets the next one through. Good for button clicks, to stop double submits, or scroll events where you want an immediate reaction and then regular updates. If you set both leading and trailing to true in its config, it also emits the last value at the end of the window.
+
+auditTime of 300, when a value arrives, waits 300 milliseconds, then emits the most recent value. So during continuous activity it emits regularly, with the latest value, not the first. Good for window resize or drag positions, where you want the latest state at a steady rate.
+
+sampleTime of 300 emits the most recent value every 300 milliseconds on a fixed clock, whenever values arrived, and only if there was a new one. Good for sampling a fast stream, like progress or sensor readings, for display.
+
+The way I remember it, debounce waits for silence, throttle takes the first and ignores the rest for a bit, audit takes the last after a delay, and sample just checks on a clock.
+
+Picking the right one is what makes the UI feel responsive without flooding the server or the rendering. People mix up throttle and audit a lot, in my experience.
+
+@p17-819 | How do you handle dynamic rows with FormArray in Angular reactive forms?
+FormArray holds a variable number of controls or groups, which is exactly what you need for a list of shipment items, contacts, or visit schedule rows where users add and remove rows.
+
+Setup, in a typed reactive form, items is built with the form builder's array of item form groups, starting empty. A helper creates one row, a create-item method that returns a group with kit type, required, and quantity, defaulting to one, required, with a minimum of one. Adding a row is pushing a new item onto items, removing is removeAt with the index, and loading existing data is clearing the array and pushing a group per item.
+
+In the template you bind formArrayName to items, loop with an at-for over the item controls with a track expression, and bind each group with formGroupName set to the index. Show errors per row.
+
+Validation at the array level means a validator on the FormArray itself, like at least one row, no duplicate kit types across rows, or a total quantity limit. Cross-row validation has to live on the array or the parent group, because individual rows can't see each other.
+
+Performance, for big arrays use OnPush and track by a stable id, not the index, so Angular doesn't rebuild every row when one's removed. For hundreds of rows, I'd think about a virtualised grid instead.
+
+Typed forms from Angular 14 make the items value strongly typed, which really helps when mapping to the API request.
+
+Common pitfalls I've seen, mutating the array without updating validity, forgetting to mark controls touched before showing errors on submit, and patchValue not adding missing rows, so you have to create the groups first.
+
+@p17-820 | How do you share code between several Angular apps with libraries and npm packages?
+Yeah, when several Angular apps need the same components, services or utilities, like our sub-apps embedded in the MVC host, copying code leads to drift and the same fix done three times. Libraries solve that.
+
+Inside one workspace, ng generate library shared-ui creates a library project. Apps import it through a TypeScript path mapping, so changes get picked up immediately without publishing. A monorepo tool like Nx makes that scale with boundaries and caching.
+
+Across repositories, build the library with ng-packagr, which produces the Angular Package Format, compiled and ready for any Angular app, and publish it to a private npm registry, like an Azure DevOps Artifacts feed. Apps install a specific version and upgrade when they're ready.
+
+Good practices. A clear public API, exporting only what consumers should use from the public API file. Peer dependencies on Angular and other shared libraries, not direct ones, so apps don't end up with duplicate copies of Angular. Semantic versioning and a changelog, with breaking changes only in major versions.
+
+Honestly, compatibility is the tricky one. A library built for a newer Angular might not work with older apps. With sub-apps on Angular 8 and 12, the library either targets the oldest version or you maintain separate lines, which is one more reason to keep versions close.
+
+Storybook or a demo app to document the components, tests in the library itself, and a CI pipeline that builds, tests and publishes on merge with automated version bumps.
+
+And for things shared between Angular and React, like API types, validation rules or design tokens, I put them in framework-agnostic TypeScript packages, so both front ends use the same source.
+
+@p17-821 | How does cache invalidation work in RTK Query with tags?
+Right, RTK Query caches responses from query endpoints, keyed by endpoint and arguments. After a mutation, say creating or updating a shipment, the cached lists and details go stale. Tags tell RTK Query which cached data to refetch automatically.
+
+How it works. In createApi you declare tag types, like Shipment. Query endpoints say what data they provide. Get shipments provides a Shipment tag with the id LIST, plus one Shipment tag per returned id, and get shipment provides the Shipment tag for its id. Mutation endpoints say what they invalidate. Add shipment invalidates the Shipment LIST tag, so lists refetch. Update shipment invalidates the tag for that id, so that shipment's detail and any list containing it refetch.
+
+When a mutation succeeds, RTK Query finds active queries with matching tags and refetches them. Components subscribed through hooks re-render with fresh data, no manual dispatching.
+
+You can fine-tune it. Optimistic updates with onQueryStarted and updateQueryData, which change the cache straight away and undo it if the mutation fails. Pessimistic updates, where you write the mutation's response directly into the cache instead of refetching, saving a request. keepUnusedDataFor controls how long unused entries stay, and refetchOnFocus and refetchOnReconnect refresh data when users come back.
+
+Common mistakes, providing only a generic tag, so every mutation refetches everything, or forgetting the LIST tag, so new items never show up in lists. That second one can catch people out.
+
+In the React shell with Redux Toolkit, RTK Query keeps API state consistent without hand-written loading flags and thunks, which removes a lot of boilerplate compared to our older patterns.
+
+@p17-822 | staleTime vs gcTime in TanStack Query: what is the difference?
+Honestly these two confuse a lot of people, because both are about caching, but they control different things.
+
+staleTime is how long fetched data counts as fresh. While it's fresh, TanStack Query serves it from cache without refetching, even when a new component mounts with the same query key. The default's zero, so data's stale immediately and it refetches in the background on things like mount, window focus or reconnect. Setting staleTime to, say, five minutes for reference data, a list of countries or sites, avoids pointless requests.
+
+gcTime, which was called cacheTime before version 5, is how long unused data stays in the cache once no component is using it. Default's five minutes, and then it's garbage collected. If a component mounts again before that, the cached data shows instantly, maybe with a background refetch if it's stale.
+
+So staleTime decides when to refetch, and gcTime decides when to forget.
+
+Query keys matter just as much. A key array of "shipments" plus an object with site id and page includes all the parameters, so different filters are cached separately. And after a mutation, invalidateQueries with just the "shipments" prefix refetches every shipment query.
+
+Typical settings I use, low staleTime for data that changes a lot, like statuses, a long one for reference data, and refetchOnWindowFocus turned off for heavy queries if it causes too many requests.
+
+For showing data, isPending for the first load and isFetching for background refreshes, so the UI can show a subtle indicator instead of a full spinner when it's just refreshing cached data.
+
+@p17-823 | Next.js vs a Vite single-page app: when would you choose each?
+Both build React apps, but they're really solving different problems.
+
+A Vite single-page app is client-side React. The server sends a small HTML file and a JavaScript bundle, and everything renders in the browser. Routing, data fetching and state come from libraries like React Router and TanStack Query. It's simple to deploy as static files on any web server or CDN, behind IIS, or inside an existing application, and it pairs well with a separate API backend like ASP.NET Core.
+
+Next.js is a full-stack React framework. Server-side rendering, static generation, React Server Components, file-based routing, API routes and server actions, image optimisation and so on. Pages can render on the server, so users see content quickly and search engines can index it.
+
+I'd go with Next.js for public websites where SEO and first-load speed matter, marketing sites, e-commerce, content. Also when the team wants server-side React with a Node runtime, or wants Server Components to cut client JavaScript.
+
+I'd pick a Vite SPA for internal business apps behind a login, where SEO doesn't matter, when there's already a separate backend like .NET APIs, when the app has to be embedded in or hosted by another platform, like our MVC host on IIS, and when the team wants simple static hosting without running Node servers in production.
+
+For our React 17 shell with Vite, MUI and Redux Toolkit, a SPA is the right fit. It's an authenticated enterprise app, on-premise, with .NET APIs. Next.js would just add a Node server layer without any real benefit there.
+
+@p17-824 | What is state colocation, and when should you lift state up?
+State colocation basically means keeping state as close as possible to where it's used. If only one component needs a value, like whether a dropdown's open, it lives in that component's useState, not in Redux or some parent.
+
+Why it matters. When state lives high up, every change re-renders a big chunk of the tree, and the code gets harder to follow, because you have to trace where state's set and passed. Colocated state is easier to understand, delete and refactor, and it performs better.
+
+Lifting state up is the opposite move, done when you need it. If two sibling components need the same state, like a filter panel and a results table, you move it to their closest common parent and pass it down as props, with callbacks to change it.
+
+The order I go through in practice. Local component state for UI-only things. Lift to the nearest common parent when siblings share it. The URL for state that should survive a refresh or be shareable, filters, sorting, pagination. A server-state library like TanStack Query or RTK Query for API data, instead of copying it into global state. Context for rarely changing app-wide values, theme, current user, locale. And a global store like Redux Toolkit or Zustand for complex client state that's shared widely, like a multi-step workflow or cross-feature selections.
+
+A common anti-pattern I've cleaned up is putting everything into Redux, form inputs and modal flags included. Simple components ended up depending on the global store and re-rendering for no reason.
+
+@p17-825 | How do you test custom React hooks with renderHook?
+Custom hooks hold real logic, data fetching, debouncing, form handling, so they should be tested too. But hooks only run inside components, so you need a harness, and that's what renderHook from React Testing Library gives you.
+
+You call renderHook with a function that uses your hook, say useCounter starting at five, and you get back result, rerender and unmount. result dot current holds the hook's latest return value. You call the functions it returns inside act, like act calling increment, and then expect result dot current dot count to be six.
+
+To change props, you pass initialProps, say a delay of 300 for a useDebounce hook, and then call rerender with a delay of 500.
+
+For async behaviour, use waitFor to wait until the data's defined for hooks that fetch, and fake timers, like vi useFakeTimers, to control debounce or polling without actually waiting.
+
+For context and providers, pass a wrapper option that renders whatever's needed, a QueryClientProvider with a fresh client per test, a Redux Provider with a test store, or a router.
+
+For network calls, I'd use Mock Service Worker to return fake API responses, so the hook runs its real fetch code.
+
+And call unmount to check effects clean up properly, cancelling subscriptions or timers.
+
+When I don't bother with renderHook, if the hook's simple and only used by one component, testing that component's behaviour covers it. renderHook is most valuable for shared hooks in a library where the hook itself is the public API, like hooks in our npm feature packages.
+
+@p17-826 | How do you handle API errors globally in a React application?
+Without a plan, error handling ends up all over the place. Some components show alerts, some log to the console, some do nothing. So I set it up in layers.
+
+A central API client, one fetch or axios wrapper used by every feature. It turns error responses into a consistent error object, reading ProblemDetails from the .NET API, status, title, error code and validation errors, and adds the correlation id from the response headers, which helps support find the logs.
+
+Then global handling for the cross-cutting cases. A 401, try a token refresh, and if that fails, redirect to login. A 403, show a "you don't have access" message or page. Network errors and 500s, a toast like "Something went wrong, please try again", with the reference id.
+
+These can live in an axios interceptor, a TanStack Query cache onError callback, or RTK Query middleware using isRejectedWithValue, so every query and mutation behaves the same.
+
+Local handling for business errors. Validation errors, 400 or 422, show up next to the form fields using React Hook Form's setError. Conflict errors, 409, get a specific message like "this record was changed by someone else".
+
+Rendering errors, error boundaries catch exceptions during render and show a fallback per section instead of a white screen.
+
+Logging, send unexpected errors to a front-end monitoring tool with user context and the correlation id, so we can link front-end and back-end errors together.
+
+And one thing people miss is duplicate toasts. If a component handles an error locally, mark it so the global handler skips it, otherwise the user sees two messages for one problem.
+
+@p17-827 | How do you implement OpenID Connect login in a React app?
+For a React SPA, login is OpenID Connect with the authorisation code flow and PKCE, against something like Keycloak, Entra ID or Cognito. Pretty much the same story as Angular.
+
+Libraries, oidc-client-ts with react-oidc-context works with any standard provider, MSAL React for Entra ID, and keycloak-js with a React wrapper for Keycloak. They handle the redirect to login, the code exchange, token storage, silent renewal and logout.
+
+Typical setup, wrap the app in an AuthProvider with the authority URL, client id, redirect URI and scopes. A protected route component checks whether useAuth says you're authenticated, and if not, calls signinRedirect, saving the original URL so the user comes back there after login. A callback route handles the redirect back.
+
+Calling APIs, the API client takes the access token from the auth context and adds the Authorization header, only for our API's base URL. Before tokens expire, the library renews them silently, or the client retries once after a refresh if it gets a 401.
+
+Security choices, keep tokens in memory or session storage rather than localStorage where you can, use short access token lifetimes, and think about the BFF pattern, where a backend holds the tokens and the browser only gets a secure HttpOnly cookie. That's the most secure option for SPAs.
+
+Roles and permissions, read them from the token or a user profile endpoint to show or hide features, but the API always enforces authorisation.
+
+With Keycloak providing SSO across our legacy MVC app, the Angular sub-apps and the React shell, a user signs in once and moves between them without logging in again.
