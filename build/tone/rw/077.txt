@@ -1,0 +1,193 @@
+@p17-912 | How do you protect Key Vault with soft delete, purge protection and RBAC?
+So Key Vault holds the most sensitive stuff, secrets, keys and certificates. Protecting the vault itself matters just as much as using it.
+
+Soft delete means deleted vaults and objects are kept for a retention period, 7 to 90 days, and can be recovered. It's on for all vaults by default now and you can't turn it off.
+
+Purge protection stops anyone, even administrators, from permanently purging deleted items or vaults until the retention period ends. That protects against malicious or accidental permanent deletion, which is especially important for encryption keys, because losing a key means losing whatever data it encrypts. Once it's on, it can't be switched off. I turn it on for production vaults, especially ones holding keys used for encryption at rest.
+
+Access control, Azure RBAC is the recommended permission model now, instead of vault access policies. RBAC gives fine-grained roles, like Key Vault Secrets User for reading secrets, can be scoped right down to individual secrets, is managed the same way as other Azure permissions, and works with Privileged Identity Management for just-in-time admin access. Access policies were vault-wide and harder to audit.
+
+Network, disable public network access and use private endpoints, or at least the vault firewall with allowed networks.
+
+Separate vaults per application and environment, so access and blast radius stay limited. I've seen one shared vault for everything, and honestly it's a mess to audit.
+
+Monitoring, diagnostic logs to Log Analytics, with alerts on unusual access patterns, failed attempts and deletions.
+
+And rotation, set expiry dates on secrets and certificates, with Event Grid notifications before they expire, and automate rotation where you can.
+
+@p17-913 | What is an Azure landing zone?
+An Azure landing zone is basically a pre-configured, well-governed environment that workloads get deployed into. It comes from Microsoft's Cloud Adoption Framework, so every team doesn't have to design networking, security and governance from scratch.
+
+What it usually includes. A management group and subscription structure, a hierarchy like platform, landing zones for corporate and online workloads, sandbox and decommissioned, with subscriptions per application or environment, so policies and access can be applied at the right level.
+
+Identity, Entra ID integration, least-privilege role assignments, and Privileged Identity Management for admin access.
+
+Networking, a hub-and-spoke or Virtual WAN topology, with a central firewall, DNS, connectivity to on-premise through ExpressRoute or VPN, and private endpoints for PaaS services.
+
+Governance, Azure Policy assignments enforcing rules, like allowed regions, required tags, no public IPs, and diagnostic settings on every resource.
+
+Security, Defender for Cloud enabled, central logging to Log Analytics, and Sentinel for security operations.
+
+Management, monitoring, backup, update management and cost management with budgets.
+
+There's a split between platform and application landing zones. A central platform team owns the shared parts, and application teams get subscriptions with guardrails, where they can deploy freely within policy.
+
+Microsoft provides reference implementations as Bicep and Terraform modules, deployed and maintained as code.
+
+The AWS equivalent is a multi-account setup with Organizations, Control Tower and Service Control Policies. For an organisation moving workloads into the cloud, I'd say set up the landing zone first. It avoids a sprawl of inconsistent, insecure subscriptions later.
+
+@p17-914 | What are Azure Virtual Machine Scale Sets?
+Virtual Machine Scale Sets let you create and manage a group of identical or mixed VMs that scale automatically, pretty much like Auto Scaling groups in AWS.
+
+The key features. Autoscale, where rules based on metrics like CPU, memory or queue length, or on schedules, add and remove instances automatically, with minimum and maximum counts.
+
+High availability, instances spread across availability zones and fault domains.
+
+Load balancing, it plugs into Azure Load Balancer or Application Gateway, with health probes so unhealthy instances stop getting traffic, and automatic instance repairs to replace them.
+
+Orchestration modes. Flexible orchestration, now the default, supports mixing VM sizes and Spot with regular VMs and treats instances as normal VMs. Uniform mode uses identical instances from one model, mainly for older large-scale workloads.
+
+Upgrades, when the model changes, like a new image, rolling upgrade policies update instances in batches, and automatic OS image upgrades keep the OS patched.
+
+Images, build a golden image with Azure Image Builder or Packer, stored in an Azure Compute Gallery, so new instances start ready to serve instead of installing software at boot. Installing at boot is slow and flaky, from what I've seen.
+
+Uses, stateless web tiers that can't be containerised yet, like Windows and IIS apps, build agents, since Azure DevOps supports scale set agent pools that grow with pipeline demand, and batch or compute workloads.
+
+For new applications I'd usually prefer PaaS, App Service, Container Apps or AKS, which handle more for you. But for lifting existing VM-based apps, scale sets give elasticity and automated recovery without a rewrite.
+
+@p17-915 | How do Azure SQL elastic pools help when you have many databases?
+Right, an elastic pool lets many Azure SQL databases share a set amount of resources, compute and storage, instead of each database having its own fixed size. Databases take what they need from the pool, within per-database minimum and maximum limits.
+
+Why it helps. In a database-per-tenant or database-per-customer model, most databases are idle or lightly used most of the time, and their peaks happen at different times. Sizing every database for its own peak wastes money. In a pool, the combined capacity can be much smaller than the sum of the individual peaks, so costs drop a lot while each database still gets resources when it's busy.
+
+This is really close to a system with one database per study plus a master database. Studies have different activity levels, a few are in busy enrolment phases while others are in maintenance or closing, and that fits pooling really well.
+
+Things to think about. Sizing, monitor combined usage and size the pool for the busiest concurrent load, with per-database caps so one busy database can't starve the others. That's the noisy neighbour problem.
+
+Very large or consistently busy databases might be better as single databases outside the pool.
+
+Operations across lots of databases, Elastic Jobs run T-SQL across every database in a pool for maintenance or schema changes, and deployment pipelines have to update all databases consistently.
+
+There's a max number of databases per pool, so very large estates need several pools.
+
+High availability and backups work per database as usual, and failover groups can include pooled databases.
+
+On-premise, the equivalent is consolidating databases on shared instances, but I think elastic pools add per-database limits and much easier scaling.
+
+@p17-916 | Cosmos DB vs Azure SQL: how do you choose?
+Both are excellent, honestly, but they're built for different access patterns.
+
+Azure SQL is a relational database. Strong schema, joins, complex queries and reporting, foreign keys, multi-row ACID transactions across any tables, and mature tooling. It fits most business systems, especially with complex relationships and reporting needs, like clinical supply data where studies, sites, kits and shipments are all linked.
+
+Cosmos DB is a globally distributed NoSQL database with document, key-value and other APIs. Single-digit millisecond reads and writes at any scale, automatic horizontal scaling through partitioning, multi-region writes, tunable consistency levels, and a change feed. Transactions are limited to items within one logical partition, and cross-partition queries cost more. You design the data model around access patterns, often denormalised, and the partition key is the most important decision you'll make.
+
+When I'd choose Cosmos DB, very high scale with predictable access by key, like user profiles, device telemetry, session state, product catalogues or event data. Globally distributed apps that need low latency in many regions. Flexible schemas that change a lot. And event-driven architectures using the change feed.
+
+When I'd choose Azure SQL, complex relationships and queries, ad hoc reporting, strong consistency across many entities, and teams with strong SQL skills. Most line-of-business systems land here.
+
+Cost works differently too. Cosmos DB charges by request units, so inefficient queries or a poor partition key get expensive fast. Azure SQL charges by compute and storage.
+
+Often the best architecture uses both, SQL for the core transactional system and Cosmos DB for specific high-scale features.
+
+@p17-917 | Azure Automation runbooks vs Azure Functions: how do you automate operations?
+Operational tasks, starting and stopping VMs, cleaning up resources, rotating something on a schedule, running maintenance scripts on servers, can be automated in Azure a few ways.
+
+Azure Automation runs PowerShell or Python runbooks in the cloud, or on machines through Hybrid Runbook Workers, which run on on-premise or other servers. Good for traditional IT automation written by ops teams in PowerShell, with schedules, webhooks, shared credentials and modules. The hybrid workers make it useful for on-premise tasks, like maintenance on servers in a data centre. Its older Update Management and change tracking features have moved to Azure Update Manager and Azure Monitor.
+
+Azure Functions is event-driven code, in .NET, PowerShell, Python or others, triggered by timers, queues, HTTP or events. Better for developer-built automation with tests, dependency injection, source control and CI/CD, and for reacting to events, like processing a resource change from Event Grid.
+
+Logic Apps is low-code workflows connecting services, like sending approvals or tickets when something happens.
+
+And Azure Update Manager handles patching for Azure and Arc-enabled servers on schedules.
+
+How I choose, PowerShell-heavy, admin-owned tasks, especially on servers, go to Automation. Developer-owned, event-driven or complex logic goes to Functions. Integrations with business tools and approvals go to Logic Apps.
+
+Whichever one, my approach is managed identity instead of stored credentials, code in source control with pipelines deploying it, logging and alerting on failures, and least-privilege permissions, because automation accounts often have broad rights and they're attractive targets.
+
+@p17-918 | Can you use Application Insights for on-premise IIS applications?
+Yes, definitely. Application Insights doesn't need the application to run in Azure. It only needs outbound connectivity to Azure Monitor endpoints, directly, through a proxy, or through Azure Monitor Private Link.
+
+The options for on-premise IIS apps. SDK-based instrumentation, add the Application Insights SDK to the .NET Framework 4.8 or ASP.NET Core application, configured with a connection string. It collects requests, dependencies like SQL and HTTP calls, exceptions, performance counters and custom telemetry. Gives you the most control and custom events.
+
+OpenTelemetry, the Azure Monitor OpenTelemetry distro for ASP.NET Core, or the OpenTelemetry SDK with the Azure Monitor exporter. That keeps instrumentation vendor-neutral, so the same code could send data to Datadog or another backend later.
+
+Agent-based, codeless instrumentation. The Application Insights Agent, a PowerShell module, can instrument IIS-hosted .NET apps on-premise without code changes, which is handy for legacy apps.
+
+Server-level monitoring, the Azure Monitor agent, ideally on Arc-enabled servers, collects Windows event logs, IIS logs and performance counters into Log Analytics.
+
+For regulated, on-premise systems, there's more to think about. Data leaves the data centre, so check what the telemetry contains and keep personal or clinical data out of logs and custom properties. Check data residency and retention, use sampling to control cost, and make sure the security team approves the outbound connection.
+
+In our case, monitoring goes to Splunk and Grafana for the on-premise platform, and OpenTelemetry with Datadog for the newest services. So Application Insights would be an option rather than what we use, but it shows how cloud monitoring can cover on-premise apps.
+
+@p17-919 | How do you build a reliable Service Bus consumer in .NET with ServiceBusProcessor?
+The Azure Messaging ServiceBus SDK gives you ServiceBusProcessor, which handles receiving, concurrency and lock management, so I don't write receive loops by hand.
+
+Setup, create one ServiceBusClient per application, registered as a singleton, using DefaultAzureCredential with managed identity instead of connection strings. Then create a processor for a queue or topic subscription with some options. MaxConcurrentCalls to control parallelism, PrefetchCount for throughput, AutoCompleteMessages set to false so I complete messages explicitly, and a max auto lock renewal duration so locks get renewed for long-running processing.
+
+Handlers. ProcessMessageAsync gets each message. I deserialise and validate the body, process it idempotently, checking the message id against a processed-messages store or using upserts, then call CompleteMessageAsync. For invalid messages that'll never succeed, DeadLetterMessageAsync with a reason and description. For transient failures, let the exception propagate or abandon the message so it's retried, and after the max delivery count, Service Bus dead-letters it automatically. ProcessErrorAsync logs errors from the processor itself, like connection issues.
+
+Hosting, run the processor inside a BackgroundService, start it in StartAsync and stop it gracefully in StopAsync, so in-flight messages finish during deployments.
+
+Ordering, for per-entity ordering, use sessions with the session processor.
+
+Delayed retries, schedule a copy of the message for later with an attempt count and complete the original, for backoff beyond immediate redelivery.
+
+Observability, the SDK supports distributed tracing, so traces connect producer and consumer, and monitor active and dead-letter counts with alerts.
+
+These are pretty much the same reliability habits as our RabbitMQ consumers, just translated to Service Bus.
+
+@p17-920 | What are Kubernetes operators and custom resource definitions?
+Kubernetes is extensible. A custom resource definition, a CRD, adds a new resource type to the Kubernetes API, like PostgresCluster or Certificate, which you create with YAML and kubectl just like a Deployment.
+
+An operator is a controller that watches those custom resources and makes reality match them. It runs a reconcile loop. Read the desired state from the resource, compare it with the actual state, act to close the gap, and repeat. It basically encodes operational knowledge, what a human operator would do, into software.
+
+Examples. Database operators, like CloudNativePG, or the operators for Redis and RabbitMQ, which create clusters and handle failover, backups and upgrades from a simple resource definition. cert-manager, which issues and renews TLS certificates from Certificate resources. Prometheus Operator, which manages monitoring config through ServiceMonitor resources. And Argo CD, whose Application resource describes what to deploy.
+
+Why they're useful, complex stateful software becomes manageable declaratively, with GitOps, and day-two operations like scaling, backups and upgrades are automated consistently.
+
+Cautions, an operator is powerful software running with broad permissions in your cluster, so pick mature, well-maintained ones and review their RBAC. Understand what it does, because when it misbehaves you're debugging both the application and the operator. And keep operators upgraded along with the cluster, since CRD versions change.
+
+Writing your own operator, with Kubebuilder, Operator SDK or KubeOps for .NET, only makes sense for platform teams automating something repeated many times. For most application teams, I'd go with Helm charts or Kustomize plus existing operators.
+
+@p17-921 | How does cert-manager automate TLS certificates in Kubernetes?
+Expired certificates are one of the most common causes of outages, and manual renewal just doesn't scale. cert-manager automates issuing and renewing certificates inside Kubernetes.
+
+How it works, you install cert-manager in the cluster and define an Issuer or ClusterIssuer, which says where certificates come from. Let's Encrypt using the ACME protocol, an internal certificate authority, HashiCorp Vault, a cloud private CA like AWS Private CA, or a self-signed issuer for testing.
+
+Then you request certificates, either by creating a Certificate resource with the DNS names, or by annotating an Ingress or Gateway, and cert-manager creates the certificate for you. For ACME it proves domain ownership with HTTP-01 challenges, serving a token through the ingress, or DNS-01 challenges, creating DNS records through your DNS provider, which you need for wildcard certificates. The certificate and key end up in a Kubernetes Secret, which the ingress controller uses.
+
+Renewal's automatic, by default well before expiry, around two thirds of the way through the certificate's lifetime, and the Secret gets updated, so the ingress picks up the new certificate without downtime.
+
+It's also used for internal mTLS certificates between services, sometimes with a service mesh, or with trust-manager to distribute CA bundles.
+
+What I'd still monitor, certificate expiry metrics, which cert-manager exposes for Prometheus, with alerts if a certificate gets close to expiry. Renewals can fail silently because of DNS changes, rate limits or permissions. Learned that one the hard way on a non-Kubernetes setup, actually.
+
+On managed cloud load balancers, the cloud certificate service, like ACM on AWS, often handles certificates instead.
+
+@p17-922 | How does logging work in Kubernetes, and what does Fluent Bit do?
+In Kubernetes, the standard practice is containers write logs to stdout and stderr, not to files. The container runtime writes those streams to files on the node, and kubectl logs reads them. But those files get rotated and lost when pods are deleted or nodes replaced, so production needs central log collection.
+
+The common pattern is a node-level agent running as a DaemonSet, one pod per node. It reads all the container log files on that node, enriches each line with Kubernetes metadata, namespace, pod name, container name, labels, and ships them to a backend, Elasticsearch or OpenSearch, Loki, Splunk, Datadog, CloudWatch Logs or Azure Monitor.
+
+Fluent Bit is the most popular agent for this. Lightweight, written in C, low memory, and loads of input, filter and output plugins. Fluentd is its older, heavier, Ruby-based sibling, sometimes used as an aggregator. The OpenTelemetry Collector can collect logs this way too, and cloud providers have their own agents.
+
+What makes it work well. Structured JSON logs from the apps, so fields like level, trace id and correlation id are searchable, instead of parsing free text. Multiline handling for stack traces, configured in the agent, or avoided by logging exceptions as single JSON events. Buffering and backpressure settings, so a slow backend doesn't lose logs or overload nodes. And filtering noisy logs at the agent to keep cost down.
+
+Sidecar log collectors are an alternative for apps that can only write to files, at the cost of extra containers.
+
+And logs and traces linked through trace ids make investigations so much faster, in my experience that's the biggest win.
+
+@p17-923 | How do you build multi-architecture container images for ARM and x86?
+Yeah, a lot of teams run containers on ARM now, like AWS Graviton, Azure Cobalt or Ampere, because the price-performance is better, often 20 to 40 percent cheaper for the same work. Developers on Apple Silicon Macs run ARM locally too. An image built only for x86 won't run natively on ARM, so we build multi-architecture images.
+
+How, you run docker buildx build with the platform flag set to linux amd64 and linux arm64, which builds the image for both and pushes a manifest list. When a machine pulls the image, it automatically gets the variant matching its architecture.
+
+Building approaches. Emulation with QEMU, one builder machine builds both. Simple, but slow for the foreign architecture, especially compilation-heavy builds.
+
+Native builders, run builds on both x86 and ARM agents and combine the results into one manifest. Much faster, and CI providers offer ARM runners now.
+
+Cross-compilation. For .NET, the SDK can build for another architecture on the build platform, using the TARGETARCH build argument with dotnet publish and the right runtime identifier, so only the final stage uses the target platform's base image. Fast, and it's what Microsoft's Dockerfile samples recommend.
+
+Things to check, base images have to support both architectures, which the official .NET, Node and Python images do. Native dependencies, like some npm packages or Python wheels, have to exist for ARM. And actually test on ARM, don't just build, because behaviour or performance can differ.
+
+Rollout, I'd add ARM nodes, schedule one service there with node selectors, compare performance and cost, then move more workloads over.
