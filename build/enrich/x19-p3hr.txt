@@ -55,34 +55,34 @@ X: I also want to grow as a mentor. I've really enjoyed mentoring two graduate d
 X: And I want to keep shaping engineering practices, especially how teams use AI in development. Building the CIRT MCP server showed me how much a well-designed AI tool can change a team's productivity, when it's done safely and responsibly. I think that area will matter even more in five years.
 X: I'd like to grow along that path inside a company like yours, taking on bigger systems and more responsibility over time, rather than moving around. So for me, this role is a step toward that, more design ownership now, and technical leadership as I prove myself here.
 +@p3-60
-X: I've done some research on the market for senior backend roles with my experience in Bengaluru, and I've also considered the scope of this role and my current compensation.
-X: Based on that, I'm looking for a fair increase on my current CTC that reflects the move to a senior role. When you'd like a specific figure, I'll share my expected range, and it's based on the market rather than an arbitrary number.
-X: That said, salary isn't the only factor for me. The role itself matters a lot: design ownership, the scale of the systems, the team, and the chance to grow toward technical leadership. So I'm flexible for the right role.
-X: I'd also like to understand the full package, not just the fixed pay: the variable component and how it's calculated, benefits like health insurance, learning budgets, and how reviews and increments work. That helps me compare fairly.
+X: I've done some research on the market for senior backend roles with my experience in Bengaluru, and I've also thought about the scope of this role and my current compensation.
+X: Based on that, I'm looking for a fair increase on my current CTC that reflects the move to a senior role. If you'd like a specific figure, I'll share my expected range, and honestly it's based on the market rather than some random number.
+X: That said, salary isn't the only factor for me. The role itself matters a lot, design ownership, the scale of the systems, the team, and the chance to grow toward technical leadership. So I'm flexible for the right role.
+X: I'd also like to understand the full package, not just the fixed pay. The variable component and how it's calculated, benefits like health insurance, learning budgets, and how reviews and increments work. That helps me compare fairly.
 X: Could you share the budgeted range for this position? Then we can see whether we're aligned, and I'm sure we can find something that works for both sides.
 +@p3-61
 X: My notice period is as per my current contract with IQVIA, and I'll confirm the exact date as soon as I resign.
 X: I understand that joining early would help you, so I'm happy to explore options. I can speak to my manager about an early release, especially if I plan a good handover, and if a notice period buyout is possible on your side, I'm open to that as well.
-X: What I won't do is leave my current team in a difficult position. I'll make sure I do a clean, well-documented handover: my in-progress work, the services and components I own, like the SFTP integration and the CIRT MCP server, and any upcoming release responsibilities. I think doing that properly is part of being professional, and it's the same way I'd want someone to leave your team.
+X: What I won't do is leave my current team in a difficult spot. I'll make sure I do a clean, well-documented handover, my in-progress work, the services and components I own, like the SFTP integration and the CIRT MCP server, and any upcoming release responsibilities. I think doing that properly is part of being professional, and it's the same way I'd want someone to leave your team.
 X: In the meantime, if it helps, I'm happy to get familiar with your stack, documentation or codebase before joining, so I can start contributing quickly from day one.
-X: So, in short: I'll confirm my exact joining date as soon as possible, I'll push for the earliest date I can manage responsibly, and I'll keep you updated throughout.
+X: So, in short, I'll confirm my exact joining date as soon as possible, I'll push for the earliest date I can manage responsibly, and I'll keep you updated throughout.
 +@p3-62
-X: There are a few reasons I'm genuinely interested in joining your company.
-X: First, the work itself. From what I've read about your product and your engineering team, you're building backend systems at a scale and complexity that I'd like to work on. Your tech stack also matches my experience closely: .NET microservices, cloud infrastructure, and messaging between services. So I can contribute quickly, and also learn a lot.
-X: Second, the engineering culture. You clearly care about quality, reliability and good engineering practices. I come from a quality-first, regulated environment at IQVIA, where every release has formal validation, and I really value working somewhere that takes quality seriously.
-X: Third, AI-assisted engineering. I've been using AI tools to improve how we work. I built the CIRT MCP server, which lets AI agents run our builds and deployments, and it cut deployments from 6 hours to 2. It seems you're investing in this area too, and I'd love to contribute to that.
-X: And finally, I'm looking for a place to grow for the long term, toward design ownership and technical leadership, not just my next job. From what I've seen, your company offers that path. That's why this role stands out for me.
+X: Honestly, there are a few reasons I'm genuinely interested in joining your company.
+X: The work itself, mainly. From what I've read about your product and your engineering team, you're building backend systems at a scale and complexity that I'd like to work on. Your tech stack also matches my experience closely, .NET microservices, cloud infrastructure, and messaging between services. So I can contribute quickly, and also learn a lot.
+X: Then the engineering culture. You clearly care about quality, reliability and good engineering practices. I come from a quality-first, regulated environment at IQVIA, where every release has formal validation, and I really value working somewhere that takes quality seriously.
+X: AI-assisted engineering is another one. I've been using AI tools to improve how we work. I built the CIRT MCP server, which lets AI agents run our builds and deployments, and it cut deployments from 6 hours to 2. It seems you're investing in this area too, and I'd love to contribute to that.
+X: And I'm looking for a place to grow for the long term, toward design ownership and technical leadership, not just my next job. From what I've seen, your company offers that path. That's why this role stands out for me.
 +@p3-63
 X: My B.Tech aggregate is 67.7 percent.
 X: I'll be honest, it isn't the highest, and during college I was more focused on learning practical skills than on maximising marks. But I believe what I've built since then shows my abilities better than my grades do.
-X: In about 5.5 years of work, I've built and supported production systems in demanding environments. At DXC, I built .NET solutions on SharePoint and handled production support for enterprise clients. At IQVIA, I've worked on a regulated clinical trial platform: ASP.NET Core microservices, EF Core and SQL Server, RabbitMQ and Kafka, and AWS. I've owned features end to end, like a CSV bulk import that cut study setup from days to under an hour, and I've solved difficult production problems, like a SQL query that went from about 9 seconds to under 300 milliseconds.
+X: In about 5.5 years of work, I've built and supported production systems in demanding environments. At DXC, I built .NET solutions on SharePoint and handled production support for enterprise clients. At IQVIA, I've worked on a regulated clinical trial platform, ASP.NET Core microservices, EF Core and SQL Server, RabbitMQ and Kafka, and AWS. I've owned features end to end, like a CSV bulk import that cut study setup from days to under an hour, and I've solved tough production problems, like a SQL query that went from about 9 seconds to under 300 milliseconds.
 X: I also built the CIRT MCP server, which cut our deployments from 6 hours to 2 and from 6 people to 1, and I learned a brand-new technology, MCP, to do it.
-X: I keep learning continuously, for example upgrading our services to .NET 10 and keeping up with AI tooling. So I'd ask you to judge me on that track record, and I'm happy to go deep on any of it.
+X: I keep learning all the time, like upgrading our services to .NET 10 and keeping up with AI tooling. So I'd ask you to judge me on that track record, and I'm happy to go deep on any of it.
 +@p3-64
 X: Yes, I do have a few questions, thank you.
-X: First, what does success look like in the first 90 days for this role? What would you want me to have delivered or learned by then? That helps me understand your expectations and how I can make an impact quickly.
-X: Second, how do you deploy and monitor your services today? For example, how often do you release, what does your CI/CD pipeline look like, and what does on-call involve for the team?
-X: Third, how does the team use AI coding tools in day-to-day development? I've built tooling in that area, so I'm curious how you approach it, including how you review AI-generated code.
-X: Fourth, what are the biggest technical challenges the team is facing in the next year? Is it scaling, reliability, modernising older systems, or something else?
-X: And finally, how is the team structured, and how do engineers grow here, for example toward senior or lead roles and design ownership?
-X: Those answers would really help me understand where I could contribute most.
+X: What does success look like in the first 90 days for this role? What would you want me to have delivered or learned by then? That helps me understand your expectations and how I can make an impact quickly.
+X: I'm also curious how you deploy and monitor your services today. Like, how often do you release, what does your CI/CD pipeline look like, and what does on-call involve for the team?
+X: How does the team use AI coding tools in day-to-day development? I've built tooling in that area, so I'm curious how you approach it, including how you review AI-generated code.
+X: What are the biggest technical challenges the team is facing in the next year? Is it scaling, reliability, modernising older systems, or something else?
+X: And how is the team structured, and how do engineers grow here, say toward senior or lead roles and design ownership?
+X: Honestly, those answers would really help me understand where I could contribute most.

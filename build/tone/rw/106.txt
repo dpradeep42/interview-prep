@@ -1,0 +1,131 @@
+@p3-60
+I've done some research on the market for senior backend roles with my experience in Bengaluru, and I've also thought about the scope of this role and my current compensation.
+
+Based on that, I'm looking for a fair increase on my current CTC that reflects the move to a senior role. If you'd like a specific figure, I'll share my expected range, and honestly it's based on the market rather than some random number.
+
+That said, salary isn't the only factor for me. The role itself matters a lot, design ownership, the scale of the systems, the team, and the chance to grow toward technical leadership. So I'm flexible for the right role.
+
+I'd also like to understand the full package, not just the fixed pay. The variable component and how it's calculated, benefits like health insurance, learning budgets, and how reviews and increments work. That helps me compare fairly.
+
+Could you share the budgeted range for this position? Then we can see whether we're aligned, and I'm sure we can find something that works for both sides.
+
+@p3-61
+My notice period is as per my current contract with IQVIA, and I'll confirm the exact date as soon as I resign.
+
+I understand that joining early would help you, so I'm happy to explore options. I can speak to my manager about an early release, especially if I plan a good handover, and if a notice period buyout is possible on your side, I'm open to that as well.
+
+What I won't do is leave my current team in a difficult spot. I'll make sure I do a clean, well-documented handover, my in-progress work, the services and components I own, like the SFTP integration and the CIRT MCP server, and any upcoming release responsibilities. I think doing that properly is part of being professional, and it's the same way I'd want someone to leave your team.
+
+In the meantime, if it helps, I'm happy to get familiar with your stack, documentation or codebase before joining, so I can start contributing quickly from day one.
+
+So, in short, I'll confirm my exact joining date as soon as possible, I'll push for the earliest date I can manage responsibly, and I'll keep you updated throughout.
+
+@p3-62
+Honestly, there are a few reasons I'm genuinely interested in joining your company.
+
+The work itself, mainly. From what I've read about your product and your engineering team, you're building backend systems at a scale and complexity that I'd like to work on. Your tech stack also matches my experience closely, .NET microservices, cloud infrastructure, and messaging between services. So I can contribute quickly, and also learn a lot.
+
+Then the engineering culture. You clearly care about quality, reliability and good engineering practices. I come from a quality-first, regulated environment at IQVIA, where every release has formal validation, and I really value working somewhere that takes quality seriously.
+
+AI-assisted engineering is another one. I've been using AI tools to improve how we work. I built the CIRT MCP server, which lets AI agents run our builds and deployments, and it cut deployments from 6 hours to 2. It seems you're investing in this area too, and I'd love to contribute to that.
+
+And I'm looking for a place to grow for the long term, toward design ownership and technical leadership, not just my next job. From what I've seen, your company offers that path. That's why this role stands out for me.
+
+@p3-63
+My B.Tech aggregate is 67.7 percent.
+
+I'll be honest, it isn't the highest, and during college I was more focused on learning practical skills than on maximising marks. But I believe what I've built since then shows my abilities better than my grades do.
+
+In about 5.5 years of work, I've built and supported production systems in demanding environments. At DXC, I built .NET solutions on SharePoint and handled production support for enterprise clients. At IQVIA, I've worked on a regulated clinical trial platform, ASP.NET Core microservices, EF Core and SQL Server, RabbitMQ and Kafka, and AWS. I've owned features end to end, like a CSV bulk import that cut study setup from days to under an hour, and I've solved tough production problems, like a SQL query that went from about 9 seconds to under 300 milliseconds.
+
+I also built the CIRT MCP server, which cut our deployments from 6 hours to 2 and from 6 people to 1, and I learned a brand-new technology, MCP, to do it.
+
+I keep learning all the time, like upgrading our services to .NET 10 and keeping up with AI tooling. So I'd ask you to judge me on that track record, and I'm happy to go deep on any of it.
+
+@p3-64
+Yes, I do have a few questions, thank you.
+
+What does success look like in the first 90 days for this role? What would you want me to have delivered or learned by then? That helps me understand your expectations and how I can make an impact quickly.
+
+I'm also curious how you deploy and monitor your services today. Like, how often do you release, what does your CI/CD pipeline look like, and what does on-call involve for the team?
+
+How does the team use AI coding tools in day-to-day development? I've built tooling in that area, so I'm curious how you approach it, including how you review AI-generated code.
+
+What are the biggest technical challenges the team is facing in the next year? Is it scaling, reliability, modernising older systems, or something else?
+
+And how is the team structured, and how do engineers grow here, say toward senior or lead roles and design ownership?
+
+Honestly, those answers would really help me understand where I could contribute most.
+
+@p4-1
+Roughly [70 percent] of my work is backend, about [15 percent] is frontend, and the other [15 percent] is release, DevOps and tooling.
+
+The backend part is the core, C# and .NET microservices, ASP.NET Core Web APIs, EF Core and SQL Server, messaging with RabbitMQ and Kafka, and deployments on AWS. The frontend part is React and TypeScript components and some Angular modules in the IRT UI, because our component-based UI started on Angular and new modules are now built in React, usually when a feature I own needs screen changes. The last part is release integration, pipelines in Azure DevOps, and tooling like the CIRT MCP server.
+
+So I'd say I'm backend-first full-stack. I can take a feature from the database to the screen and into production, which helps a lot with ownership, but my real depth is APIs, data and distributed systems.
+
+Like, in the CSV bulk import I built the parsing, validation and transactional save in .NET, and also the upload and error preview screen in React. I can talk more about either side.
+
+@p4-2
+My strongest technology is C# with ASP.NET Core Web API, backed by EF Core and SQL Server.
+
+I've used this stack every day for more than four years on IRT. I'm comfortable with the parts that matter in production, async code, dependency injection and lifetimes, middleware and filters, the Options pattern, EF Core change tracking and query performance, and SQL indexing. I also led part of our upgrade to .NET 10 in [early 2026], where I upgraded [3] services and we saw about [10-15%] better p95 latency.
+
+Close behind that, I'm strong in messaging with RabbitMQ and Kafka, AWS deployments on ECS and Lambda, CI/CD and release automation, and AI-assisted engineering, especially MCP.
+
+A good example is when I fixed a slow shipment-list query from [9 seconds to under 300 milliseconds] by rewriting it to be SARGable and adding a covering index. So I think I'm strong both in writing the C# code and in understanding what it actually does in the database. Happy to go deeper into any of these.
+
+@p4-3
+Day to day, my core is C# and .NET. I build features with ASP.NET Core Web API, EF Core and SQL Server, and I write tests with xUnit and Moq, plus Playwright for end-to-end checks.
+
+For the workflow, I use Git with Azure DevOps for pull requests, code reviews and pipelines, and SonarQube quality gates before anything merges. For running systems, I check Splunk and Grafana for logs, metrics and alerts, and I work with RabbitMQ and Kafka when features publish or consume events. Our CIRT services run on-premise on IIS with SQL Server, and [the newer IQVIA services I work on run on AWS], mainly ECS with Docker, plus Lambda, API Gateway, DynamoDB and RDS, with Terraform and CloudFormation for infrastructure.
+
+On some days I also work in React and TypeScript for UI changes, or in Node and Python services.
+
+And I use AI tools daily, GitHub Copilot and Cursor while coding, and our CIRT MCP server to run builds and deployments. Like, a typical release day for me is basically Azure DevOps plus the MCP server plus Grafana. I can walk through a normal day if that helps.
+
+@p4-4
+The most challenging project was the CIRT MCP server, for sure.
+
+Okay, so the situation was, our deployments ran on on-premise Azure DevOps Server across many nodes. That server came from CIRT, Cenduit's IRT, before IQVIA acquired it. The CIRT application and its validated releases stayed on-premise, while IQVIA's newer services run on AWS. A full deployment took about 6 hours and needed about 6 people, following manual steps and checklists, and mistakes were costly in a regulated product.
+
+My job was to automate this safely, on my own, without disturbing live releases or the approval process.
+
+I started by mapping [about 30] manual steps. Then I built read-only tools before anything else, things like checking build status and node versions, so people could trust it with no risk. After that I added write tools, like triggering builds and releases, but with confirmations, per-user credentials so every action is audited under the real person, and polling for long-running jobs. Approvals stayed exactly as they were. I built it in C# on .NET 8 with the official MCP SDK. Step by step it grew to about 77 tools, grouped by build, release, deploy and info.
+
+In the end, deployments went from 6 hours to 2, and from 6 people to 1, and I packaged it so teammates install and use it.
+
+Honestly, the hardest part wasn't the code, it was safety and good tool design. I can explain how I kept it safe if that's useful.
+
+@p4-5
+A decision I'm proud of was the design of our CSV bulk import for clinical study data. A study here means one clinical trial set up in our IRT system, with its protocol rules, countries and sites, treatment arms, visit schedule, drug kits and user roles.
+
+So the situation was, study teams wanted to upload large CSV files instead of entering data one record at a time. The big question was, if some rows are bad, do we save the good rows, a partial import, or nothing at all?
+
+I owned the design, so I weighed both options. Partial imports feel friendlier, but in a GxP system they leave a study half-configured, they make rollback and the audit trail messy, and users have to work out what got saved. All-or-nothing is safer, but frustrating if users only find errors at the end.
+
+So I proposed a two-step design. A validate-only preview that checks every row and shows all errors with row numbers, and then an all-or-nothing save in one transaction, but only once the file is clean. I walked the BA and the QA lead through the pros and cons and we agreed on it.
+
+In the end, it's live in production, users fix every error before saving, and we've never had a half-imported study. I can go into the technical design too.
+
+@p4-6
+A good example is our SFTP integration for vendor file exchange.
+
+Right, so the situation was, all our vendor file transfers were tied to one SFTP library, ComponentPro. In [2024] a depot vendor hardened their server security, and our connection broke. Because the library calls were spread across the code, switching libraries was risky.
+
+My task was to fix it, and to make sure a library change would never touch business code again.
+
+What I did was introduce a common ISftpClient interface for connect, upload, download and list, with a factory that picks the provider for each vendor from configuration. I added a base class for the shared parts like retries, timeouts and logging. Then I implemented three providers behind it, ComponentPro, SSH.NET and Rebex, and moved vendors over one at a time by configuration, checking each one in UAT first.
+
+In the end, Rebex went to production with [no failed transfers caused by the switch], no business code changed, and a future library change is now one class plus a config entry.
+
+It's honestly a nice real example of the open-closed principle and the strategy pattern.
+
+@p4-7
+I'm looking for a senior backend or API engineer role, mainly on .NET, where I own the design and delivery of services, not just individual tickets.
+
+Ideally it involves AWS or another cloud, and event-driven systems with something like Kafka or RabbitMQ, because that's where I've built most of my experience. I'd like a product with real scale and high quality standards, where things like testing, observability and reliability are taken seriously, because that's how I've worked in a regulated domain.
+
+I'd also like room to keep using AI-assisted engineering and to build developer tooling, like I did with the MCP server that cut our deployments from 6 hours to 2. And I enjoy mentoring, so a role where I can help newer engineers grow would be great.
+
+What I'm not looking for is a pure maintenance or support role. From what I've read about this position, the ownership and the backend focus match well, I think. I'd love to hear more about what the team is building.
