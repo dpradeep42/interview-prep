@@ -1,0 +1,203 @@
+@p17-828 | How do you render very long lists in React with virtualization?
+So rendering thousands of rows means thousands of DOM nodes, which makes the first render slow, scrolling janky and memory high. Virtualisation, or windowing, renders only the rows you can actually see plus a small buffer, and swaps them as the user scrolls, while a spacer element keeps the scrollbar the right size.
+
+Libraries I'd look at. TanStack Virtual is headless, it gives you the virtual items and their positions and you render the markup, so it fits any design system, MUI included. It handles variable heights by measuring rows, plus horizontal lists and grids.
+
+react-window gives simple components like a fixed-size list and a variable-size list, small and fast. react-virtuoso handles variable heights and grouping with very little setup.
+
+And grid components like MUI X Data Grid and AG Grid have row and column virtualisation built in.
+
+Things to get right. Give the scroll container a fixed height. Use stable keys based on item ids. Memoise row components so scrolling doesn't re-render everything. And for variable heights, use the measuring support instead of guessing.
+
+What you give up. Browser find with Control F only finds rendered rows. Screen readers only see rendered items too, so set aria-rowcount and aria-rowindex. And printing only shows the visible rows.
+
+Honestly, often the better first step is server-side pagination or filtering, so users never load thousands of rows at all. Infinite scrolling loads more as you scroll, and you can combine it with virtualisation for really long feeds.
+
+In our data-heavy screens, like inventory or shipment lists, virtualisation or a grid with it built in keeps the UI smooth.
+
+@p17-829 | How do you analyse and reduce bundle size in a React Vite app?
+Big JavaScript bundles slow down the first load, especially on slower machines and networks. My approach is to treat bundle size as something you measure regularly, not guess at.
+
+To analyse, add rollup-plugin-visualizer to the Vite build and you get a treemap of what's in each chunk. Look for big libraries, duplicated packages with different versions, and code that shouldn't be in the initial bundle. Also check the network tab and Lighthouse for real load behaviour.
+
+Then the usual fixes. Route-based code splitting, lazy-load pages with React lazy and dynamic imports, so users only download what they visit.
+
+Lazy-load heavy components, charts, rich text editors, PDF viewers, export libraries, only when they're needed.
+
+Replace or trim heavy libraries. moment.js swapped for date-fns or dayjs, only the bits of lodash you use, like lodash-es with named imports, and icon libraries imported per icon, like the MUI icons per-file imports, not the whole package. That icon one is a surprisingly common culprit.
+
+Tree shaking, prefer ES module packages and avoid side-effect imports so unused code gets dropped.
+
+Deduplicate. Make sure shared libraries like React, MUI and Redux are peer dependencies in internal packages so the app has one copy, and use npm ls or the visualiser to spot duplicates.
+
+Vendor chunking, configure manualChunks for libraries that rarely change, so browsers keep them cached across releases.
+
+Compression, serve Brotli or gzip from the server or IIS, with long cache headers for hashed files.
+
+And guard it in CI. Set a size budget with something like size-limit, so a pull request that drags in a big dependency fails or gets flagged.
+
+@p17-830 | How do you write generic components in React with TypeScript?
+A generic component works with any data type but keeps full type safety. Typical examples, a Table that renders rows of any type, a Select whose options are any objects, or a List with a custom item renderer.
+
+How you do it is declare a type parameter on the component function. Say table props of T has rows, which is an array of T, columns, where each column has a key that must be a key of T, a header and an optional render function that takes a T, a get-row-id function, and an optional row click callback. Then the Table function itself takes a type parameter T and props of that type.
+
+When you use it with shipments as rows and a get-row-id that returns the shipment's id, TypeScript infers T as Shipment. So column keys have to be real Shipment properties, and callbacks get typed rows. A typo in a key becomes a compile error.
+
+A few tips. In tsx files, arrow functions with generics need a trailing comma after the T, or a constraint like T extends object, so the parser doesn't think it's JSX. That one can catch people out.
+
+Use constraints, like T extends something with a string id, when the component needs certain fields.
+
+Wrapping with memo or forwardRef loses the generics, so you might need a type assertion to keep the generic signature. React 19's ref-as-prop makes that easier.
+
+And don't over-engineer. If a component's only used with one type, generics just add complexity.
+
+Where they really pay off is shared design system packages, like our npm feature packages, where lots of teams render different data with the same grid or picker, and type safety stops integration mistakes.
+
+@p17-831 | What does the non-null assertion operator do in TypeScript, and why avoid it?
+Okay, with strictNullChecks on, TypeScript tracks whether values can be null or undefined. The non-null assertion operator is that exclamation mark after a value, like user-bang-dot-name, or getElementById for root followed by a bang. It tells the compiler, trust me, this isn't null or undefined. And it removes those types without any runtime check.
+
+The problem is if you're wrong, you get a runtime error, "cannot read properties of undefined", which is exactly the error strict null checks were meant to stop. It silences the compiler instead of handling the case. Over time, code full of exclamation marks gives a false sense of safety.
+
+Better alternatives. Narrowing with checks, like if there's no user, return null, and then TypeScript knows user is defined below that.
+
+Optional chaining and nullish coalescing, user question-mark-dot name, falling back to "Unknown".
+
+Assertion functions that check at runtime and throw a clear error, like an assert-defined function whose return type asserts the value is non-nullable.
+
+Better types. If a value's always there after loading, model the loading state with a discriminated union so the component handles loading and loaded explicitly.
+
+Definite assignment on class fields set outside the constructor, like Angular ViewChild, uses a similar exclamation mark on the field, with the same risks. Signal-based queries reduce the need for that.
+
+Where it's acceptable is when the guarantee's obvious and local, like the root element in main dot tsx that always exists, or in tests.
+
+What I do is turn on the ESLint no-non-null-assertion rule as a warning, so each use is a conscious decision that shows up in code review.
+
+@p17-832 | What are .d.ts declaration files, and how do you type a JavaScript library?
+Declaration files, the ones ending in d dot ts, describe the types of JavaScript code without any implementation. They let TypeScript understand libraries written in plain JavaScript, or code generated somewhere else.
+
+Types basically come from three places. Bundled types, where the library ships its own declaration files, referenced by the types field in package dot json. DefinitelyTyped, community types published as at-types packages, like at-types slash lodash, installed as dev dependencies. And your own declarations, for libraries without types or for internal JavaScript code.
+
+Writing one, you create a file like a legacy-lib declaration file under src types, and inside you declare the module legacy-lib, exporting a format-kit function that takes a string code and returns a string. For a quick unblock, just declaring the module with nothing else makes everything any. That's better than nothing as a temporary step, but you lose type safety.
+
+Augmenting existing types. Module augmentation adds properties to existing interfaces, like adding custom fields to MUI's theme by declaring the MUI styles module again, or extending the Window interface for a global config object the server page injects. That's pretty common when an SPA is hosted inside an MVC page, like ours.
+
+Assets, you need declarations for importing non-code files like SVGs or CSS modules. Vite provides those through its client types.
+
+When you publish a TypeScript library, turn on declaration in tsconfig so consumers get types automatically. Our internal npm packages ship declarations, so apps get type checking and IntelliSense for shared components.
+
+And I make sure custom declaration files are included in tsconfig, kept near the code they describe, and replaced once the library adds official types.
+
+@p17-833 | CSS Modules vs styled-components vs Tailwind vs MUI sx: how do you choose a styling approach?
+React has loads of styling options, and honestly each one has its own pros and cons.
+
+CSS Modules are regular CSS files where class names get scoped per component automatically, so no global conflicts. No runtime cost, works with any build tool including Vite, and anyone who knows CSS is comfortable. Dynamic styling is done with conditional class names.
+
+CSS-in-JS, like styled-components and Emotion, means styles written in JavaScript next to the component, with props-based dynamic styles and theming. MUI uses Emotion internally. The downside is runtime cost, since styles are generated in the browser, and weaker compatibility with React Server Components. Newer zero-runtime options like Pigment CSS or vanilla-extract deal with that.
+
+Tailwind is utility classes right in the markup, like flex, gap two, padding four in the className. Very fast to build with, consistent spacing and colours from a design system, small production CSS. Some people find the markup cluttered, and it's a different way of thinking.
+
+MUI's sx prop and styled, if the app's on MUI, plug into the theme, so colours and spacing come from theme tokens. sx is handy for one-off tweaks, styled is better for reusable pieces.
+
+How I choose, consistency with the component library matters most. In a React shell built on MUI 5, I'd use the theme, sx for small tweaks and styled for reusable pieces, rather than mixing in Tailwind or another system. Two systems fighting each other is worse than either one. For a new project without a component library, CSS Modules or Tailwind are good low-runtime choices.
+
+Whatever you pick, design tokens should be the single source of truth for colours, spacing and typography.
+
+@p17-834 | How do you add internationalization to a React app?
+For multilingual React apps the common libraries are react-i18next and FormatJS with react-intl. I'll talk about react-i18next, which I find simple and flexible.
+
+Setup, you initialise i18next with the supported languages, a fallback language, and translation resources, usually JSON files per language and namespace, like an English shipments file. Load them lazily with a backend plugin so users only download their language and the features they use. Detect the language from user settings, the browser or the URL.
+
+Using translations, the useTranslation hook gives you a t function, and you call it with a key like shipments dot title. Interpolation handles variables, like a count of five, and plural rules are handled per language properly, which in a lot of languages is more complicated than just singular and plural. The Trans component handles translations that contain links or bold text.
+
+Dates, numbers and currencies, use the Intl APIs, DateTimeFormat and NumberFormat, or library helpers, so formatting follows the user's locale. Don't hand-build formats, it always goes wrong somewhere.
+
+Right-to-left languages, set dir to rtl on the document and set the MUI theme direction so layouts mirror correctly.
+
+Workflow, keys get extracted from code automatically, translation files live in a translation platform, and CI checks for missing keys. Typing translation keys with TypeScript catches typos too.
+
+Testing, render with a test i18n instance, and run pseudo-localisation, longer or accented text, to catch layout issues and hard-coded strings.
+
+One thing to decide early is content from the server, like configuration labels defined per study. Those might need translation too, so you need to decide which texts live in the front end and which come from the backend.
+
+@p17-835 | How do you keep filters and pagination state in the URL in React?
+Honestly, I'm a big fan of this. For list screens, putting filters, sorting and the current page in the URL query string means users can refresh without losing their view, share or bookmark a link to a filtered list, and use the back button to go to previous filter states.
+
+With React Router, useSearchParams gives you the current query parameters and a setter. You read something like status from the search params, defaulting to "all", and to update you call the setter with a function that sets status to shipped and resets page to one. The component re-renders, and the data-fetching hook, like TanStack Query with the params in its query key, fetches the right data.
+
+Good practices. Parse and validate, because URL values are strings and users can edit them. So parse them into typed values with defaults, maybe with a small Zod schema, and ignore anything invalid.
+
+Reset the page when filters change, otherwise users land on an empty page seven.
+
+Replace instead of push for frequent changes, like typing in a search box. Pass replace as true along with debouncing, so the history doesn't get flooded.
+
+Keep the URL clean by leaving out default values.
+
+Don't put sensitive data in URLs, since they end up in logs, history and referrer headers.
+
+If you use this pattern a lot, libraries like nuqs give you typed, hook-based URL state.
+
+What doesn't belong in the URL, transient UI state like whether a dropdown's open, and large data.
+
+It helps support teams too. A user can send the exact link to the filtered view where they're seeing a problem, which saves a lot of back and forth.
+
+@p17-836 | What is the Redux Toolkit listener middleware, and when do you use it instead of thunks?
+Right, Redux reducers have to be pure, so side effects like API calls, timers or navigation live somewhere else. Redux Toolkit gives you two built-in options.
+
+Thunks, with createAsyncThunk, are functions you dispatch straight from a component, like dispatching fetch shipments for a site id. They run the async work and dispatch pending, fulfilled and rejected actions automatically. Good for request-response flows a user triggers. For server data though, RTK Query usually replaces hand-written thunks.
+
+The listener middleware, from createListenerMiddleware, reacts to actions or state changes after they happen. You call startListening with a matcher, like the site-selected action creator, and an async effect that gets the action and a listener API. Inside the effect you can read state, dispatch actions, wait for other actions with take or condition, delay, and cancel earlier runs with cancelActiveListeners, which gives you debounce or take-latest behaviour.
+
+When I use listeners. Cross-feature reactions, like when a user changes the selected study, you clear caches in several slices and load new reference data, without the component knowing about all of that. Persisting certain slices to local storage when they change. Analytics and logging for specific actions. And workflows, wait for one action, then another, with timeouts.
+
+It's kind of a lightweight alternative to Redux-Saga or Redux-Observable, no generators or RxJS, and it's already in Redux Toolkit.
+
+The caution is listeners make behaviour less obvious, because effects happen away from where actions get dispatched. So I keep them in clearly named files per feature and document what triggers them.
+
+@p17-837 | How do you use SignalR in a React application?
+Yeah, SignalR gives you real-time server-to-client messages from an ASP.NET Core backend, live shipment status updates, notifications, over WebSockets with fallbacks.
+
+Client setup, install the microsoft signalr package. Build a connection with a HubConnectionBuilder, with the URL slash hubs slash notifications and an access token factory that returns the current token, then with automatic reconnect, then build. The token factory is needed because WebSockets can't send custom headers, so the token goes in the query string, and the server has to read it from there for hub paths. That can bite people when auth suddenly fails only on the hub.
+
+In React, create the connection once, not per component, in a context provider or a module-level service, and start it after login. Expose a hook, something like use-hub-event with the event name and a handler, that registers the handler with on inside useEffect and removes it with off in the cleanup, so handlers don't pile up on re-renders.
+
+Updating the UI, when a message comes in, update the relevant cache, setQueryData or invalidateQueries in TanStack Query, or dispatch a Redux action, so components re-render through normal state instead of each one holding its own copy.
+
+Reconnection, automatic reconnect retries with backoff. On reconnect, refetch data that might've changed, because messages sent during the gap are just lost. And show a small "reconnecting" indicator.
+
+Groups, the server adds connections to groups, per study or site, so users only get relevant messages.
+
+Scale, with multiple servers the backend needs a backplane like Redis, or Azure SignalR Service, which the server side handles.
+
+And in component tests, mock the hub connection.
+
+@p17-838 | What are the Rules of Hooks, and why do they exist?
+React basically has two rules for hooks.
+
+One, only call hooks at the top level of a component or custom hook. Not inside conditions, loops or nested functions, and not after an early return.
+
+The other, only call hooks from React function components or custom hooks, never from regular JavaScript functions or class components.
+
+Why? React doesn't identify hooks by name. It tracks them by the order they're called in each render. The first useState call gets the first state slot, the second gets the second, and so on. If a hook sits inside a condition, it might run in one render and not the next, so the order shifts and React hands one hook's state to another. That gives really confusing bugs, and React throws errors like "Rendered fewer hooks than expected".
+
+How to handle conditional logic, put the condition inside the hook, not around it. Like an effect that returns early when enabled is false, with enabled in its dependency array, or for data fetching, TanStack Query's enabled option. If a component needs very different hooks in different cases, split it into separate components and render one or the other.
+
+Custom hooks have to start with "use", so React and the lint tools know to apply the rules.
+
+The eslint-plugin-react-hooks package enforces both rules, and its exhaustive-deps rule checks dependency arrays. I keep both as errors in CI, because honestly they catch real bugs.
+
+React 19's use function is the exception. It can be called conditionally, because it doesn't rely on call order in the same way.
+
+@p17-839 | What is the useEffect cleanup function, and when does it run?
+The function you return from a useEffect callback is the cleanup. React runs it to undo whatever the effect set up.
+
+When does it run? Before the effect runs again because a dependency changed, with the old values, and when the component unmounts. In development with StrictMode, React also does an extra setup, cleanup, setup cycle on mount, to expose effects that don't clean up properly. People sometimes think that's a bug, but it's on purpose.
+
+What needs cleanup. Subscriptions, event listeners on window or document, WebSocket or SignalR handlers, observable subscriptions, store subscriptions, remove them all in cleanup. Timers, clearInterval or clearTimeout. Network requests, abort them with an AbortController, so a slow response for old parameters doesn't update state after the parameters changed or the component unmounted. Third-party widgets, destroy chart or map instances the effect created.
+
+A simple example, an effect that starts an interval calling refresh every five seconds, and returns a cleanup that clears that interval, with refresh as the dependency.
+
+Without cleanup you get memory leaks, duplicate event handlers firing several times, intervals multiplying every time dependencies change, and race conditions where old responses overwrite newer data.
+
+My rule is every effect that starts something should stop it. So in code review the quick mental check is "what does this effect start, and where's it stopped?"
+
+And a lot of effects can be avoided altogether. Data fetching through TanStack Query or RTK Query handles cancellation and caching, and derived values can be computed during render. Fewer effects, fewer cleanup bugs.
