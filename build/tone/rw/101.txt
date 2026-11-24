@@ -1,0 +1,107 @@
+@p2-76
+High availability means the system keeps working when individual components fail. The core idea, basically, is removing single points of failure at every layer.
+
+For compute, run multiple instances of every service, spread across at least two availability zones, behind a load balancer that health-checks them and stops sending traffic to unhealthy ones. The orchestrator, like ECS, automatically replaces failed tasks. Services are stateless, so any instance can handle any request. For data, managed databases with Multi-AZ, where a synchronous standby takes over automatically if the primary fails, plus automated backups and point-in-time recovery. Caches and brokers are clustered too. For the application, timeouts, retries and circuit breakers between services, queues to absorb failures, and graceful degradation, so non-critical features can fail without taking down core ones. For deployments, rolling or blue-green, with health checks and automatic rollback, because a lot of outages come from changes.
+
+And then you test it. Failover drills, chaos experiments like killing instances, and monitoring with alerts, so you know availability is real, not assumed.
+
+In [the newer IQVIA services on AWS], every service runs at least two tasks across two availability zones, and RDS SQL Server is Multi-AZ, because sites in many countries need the system round the clock. I can explain how failover affects connections.
+
+@p3-1
+Sure. I'm Pradeep, a backend-focused full-stack engineer with about five and a half years of experience, mainly in C# and .NET.
+
+For the last four years I've been at IQVIA, working on IRT. IRT is a regulated clinical-trial platform that handles patient screening, randomization, drug supply, shipment tracking, eConsent and drug accountability for global trials. I design and build .NET microservices and ASP.NET Core Web APIs with EF Core and SQL Server, and I also build Node and Python services, and front-end components. Our IRT UI is component-based. A legacy ASP.NET MVC portal with Angular sub-apps is moving to React with TypeScript module by module, and I work in both. The product started as CIRT at Cenduit before IQVIA acquired it, so the CIRT platform, a .NET Framework core with newer .NET 8 to 10 APIs, still runs on-premise with an on-premise Azure DevOps Server, while I also work on IQVIA services on AWS.
+
+The work I'm honestly proudest of is an internal MCP server that I designed and built on my own in .NET 8. It gives AI agents about 77 tools to run our builds, releases and multi-node deployments, and it cut deployment time from 6 hours to 2, and the people needed from 6 to 1. I also built a Python RAG service that gives Copilot and Cursor our codebase and standards as context. And I own production issues. I root-caused a RabbitMQ outage and fixed it with publisher confirms, and I made the email notifications from AlertWatchDog, our alert engine, reliable.
+
+I started my career at DXC on C#, .NET Framework and SharePoint. Now I'm looking for a senior backend role where I can own design and delivery. Happy to go deeper into any of these.
+
+@p3-2
+I'll keep it short and in order. I finished my B.Tech in Computer Science in 2020, and in March 2021 I joined DXC Technology as an Associate Professional.
+
+At DXC I built C# and .NET Framework solutions on SharePoint, custom web parts, lists and workflows that automated client business processes. I also handled integrations with other enterprise systems and production support, so I learned early how to debug issues under pressure and follow change processes.
+
+In July 2022 I moved to IQVIA as a Software Development Engineer 2 on IRT, our clinical-trial platform. It started as CIRT, Cenduit's IRT, and after IQVIA acquired Cenduit, CIRT stayed on-premise while IQVIA's newer services run on AWS, so I've worked across both. My scope there grew step by step. I started by building features in .NET Core microservices and APIs. Then I owned whole components, like the pluggable SFTP integration and the CSV bulk import. Along the way I also worked on the front end, which started on Angular and is moving to React with TypeScript. Then I took on release integration across the application, APIs, database and UI, and after that platform tooling, where I built the MCP deployment server that cut deployments from 6 hours to 2.
+
+So the pattern, I'd say, is growing ownership. Features, then services, then releases and platform. The next step I'm looking for is a senior backend role where I own design end to end. I can go deeper into any stage you like.
+
+@p3-3
+Let me explain it with a simple picture. When a new medicine is tested, thousands of patients in hospitals around the world take part. Each patient is randomly given either the new medicine or a comparison treatment, and nobody, not the doctor and not the patient, should know which one. That's what keeps the trial fair.
+
+IRT is the system that makes that random choice fairly and secretly. When a site enrols a patient, IRT decides the treatment group and tells the site which numbered drug kit to give, so the kit number hides what's inside. It also acts like an automatic stock manager. It watches the stock at every hospital, sends shipments from depots before they run out, and tracks those shipments. It also supports electronic consent, and it tracks every kit that patients return, which we call drug accountability. Each trial is set up in IRT as a study, by our internal study build team using our Admin console tooling, a desktop study designer and a newer web-based study builder, with the hospitals, the treatment groups, the visit plan and the medicine kits.
+
+Because mistakes here can affect patient safety and the trial results, it's a regulated, GxP system. Every change we make is tested, validated and approved, and every action is recorded in an audit trail.
+
+So in one line, it's kind of a fair, secret lottery plus a global pharmacy stock manager. I can explain the technical side too if that's useful.
+
+@p3-4
+My title is Software Development Engineer 2, and I work in an IRT engineering organisation of about 100 people, inside a smaller scrum team of [~8 people].
+
+My role has a few parts, basically. I design and build .NET services and ASP.NET Core APIs, plus some Node and Python work, and front-end work in both our older Angular screens and our newer React with TypeScript modules, from the design discussion to production. I own release integration and verification. That means merging and tagging releases, running our automated multi-node installs through FV, TechOps, UAT and production, and checking every node runs the right version. I handle production issues and do root-cause analysis using Splunk and Grafana, like the RabbitMQ outage I fixed with publisher confirms. And I built and own the CIRT MCP server, which lets AI agents run our deployments, and I helped the team adopt it.
+
+Along with that, I review code, mentor newer developers and take part in PI planning, grooming and sprint demos.
+
+So it's a hands-on engineering role with real ownership of releases and tooling. I'm happy to go deeper into any one of these areas.
+
+@p3-5
+Honestly, it was a growth decision. At DXC I learned a lot, enterprise C# and .NET, working with clients, and handling production support with proper change processes. But most of the work was SharePoint customisation and support, and I knew I wanted to build modern backend systems.
+
+I wanted cloud-based microservices, a real product used around the world rather than one client's customisation, and a domain where engineering quality really matters. IQVIA IRT gave me all of that. I moved to .NET Core microservices, AWS, messaging with RabbitMQ and Kafka, and a regulated clinical-trial domain where every change is validated and audited.
+
+Looking back, it was the right move. In four years there I went from building features to owning components, releases and the MCP deployment platform.
+
+I'm grateful for what DXC taught me, especially the discipline around production support. It was really about growing as an engineer, not about leaving anything behind.
+
+@p3-6
+That's a fair question. SDE 2 is IQVIA's internal level name, and levels differ a lot between companies. My headline describes the scope of work I actually do, and I'm happy to back it with facts.
+
+Like, I designed and solely built the CIRT MCP server, about 77 tools that cut deployments from 6 hours to 2 and from 6 people to 1. I own release integration across the application, APIs, database and UI, through FV, TechOps, UAT and production. I lead root-cause analysis on production issues, like the RabbitMQ outage and the SSO cookie failures. I make design decisions, like the validate-first, all-or-nothing design for our CSV bulk import, and I mentor newer developers.
+
+That's the kind of ownership a senior engineer has, so I describe the work honestly and let the examples speak. I'm applying for senior roles because I'm already doing a lot of that work every day, and I want the title and the scope to match.
+
+I'm happy to go into any of those examples in detail, you know, whichever one is most useful for you.
+
+@p3-7
+I'll draw it from left to right, clients, the edge, services, data and messaging, integrations, and monitoring.
+
+On the left are the users. Site staff, like investigators and pharmacists, use the IRT web UI for screening, randomisation, re-randomisation, eConsent status and DARM for drug accountability. It's component-based, a legacy ASP.NET MVC portal with Angular sub-applications, and a newer React and TypeScript shell app whose features are separate npm packages, both sharing Keycloak single sign-on. Internal teams build studies in our Admin console tooling, and external partners connect through integrations. In the middle is a hybrid backend, hosted on-premise on IIS, a legacy .NET Framework 4.8 core with the transaction engine for screening, randomisation and dispensing, and newer .NET 6 to 10 APIs built with clean architecture, MediatR and FluentValidation, which call the engine through a transaction engine API. For data, each study has its own SQL Server database, plus a global master database, with Redis for caching. RabbitMQ carries events and work queues for .NET worker services, like notifications and cache refreshes, and Quartz.NET runs scheduled jobs. Integrations with EDC systems, depots and couriers run through MuleSoft, mostly as SFTP file exchanges, and are moving into .NET data transfer APIs. Across everything, correlation ids, audit trails, CI/CD through our on-premise Azure DevOps Server, and Splunk and Grafana for monitoring.
+
+One flow end to end. A site randomises a subject, the transaction engine allocates the slot and assigns a kit in one transaction in the study database, then a RabbitMQ event drives notifications, and a MuleSoft flow updates the sponsor's EDC.
+
+I worked most on the .NET services, messaging, SFTP integration and releases, so I can go deepest there.
+
+@p3-8
+Okay, so the why. Our deployments ran on an on-premise Azure DevOps Server across many nodes, and they were largely manual. That server is a legacy of CIRT, Cenduit's IRT, which IQVIA acquired. The CIRT application and its validated builds and releases stayed on-premise, while IQVIA's newer services run on AWS, where AI assistants like Copilot and Cursor couldn't reach. A typical deployment took about 6 hours and needed about 6 people on a call, following steps, checking each node and copying logs around. Slow, expensive and error-prone.
+
+So I built the CIRT MCP server. MCP, the Model Context Protocol, lets AI tools like Cursor, Claude Code and Copilot call external tools. My server exposes about 77 typed tools for builds, releases, approvals and multi-node deployments, wrapping the Azure DevOps APIs and our install scripts. So an engineer can say "deploy release 4.2 to UAT and verify all nodes", and the agent runs the right steps.
+
+How it works, it's written in C# on .NET 8 with the official MCP SDK, runs locally over stdio, and is packaged as a .NET global tool. Tools are grouped by domain with clear names and schemas, long operations return an id with a status tool to poll, and outputs are short structured summaries. For safety, it uses each user's own token, separates read and write tools, asks for confirmation on risky steps, keeps the existing approval gates, and logs every call.
+
+And the impact, measured on [8 vs 8] comparable deployments, time went from 6 hours to 2, and people from 6 to 1. I can go into any part.
+
+@p3-9
+Right, so the situation was, after the CIRT MCP server was in use, my lead asked a fair question. Is the improvement real, or does it just feel faster? Claims like "6 hours to 2" need evidence, especially when you're asking a whole team to change how they work.
+
+I needed a like-for-like comparison, based on data from the system of record, not memory or estimates.
+
+What I did was take [8] deployments from the [two release cycles] before the tool, and [8] similar deployments from the [next two cycles] using it. I matched them on the same environments and the same number of nodes, [4 to 6], and similar release sizes, so the comparison was fair. For duration, I used the release start and end timestamps from Azure DevOps. For people, I used the attendee lists of the deployment calls. I was also honest about the limits. It's a small sample, and part of the improvement came from cleaning up our install scripts while building the tools. And I was clear that approvals and validation still need humans.
+
+In the end, the average deployment time went from about 6 hours to about 2, and the people involved from 6 to 1. In business terms, that's roughly [20 person-hours down to 2] per deployment. Having real numbers made it much easier to get the rest of the team, and management, behind it. I can show how I'd present that comparison.
+
+@p3-10
+Honestly, the hardest part wasn't the code. It was designing the tools so the AI reliably picked the right one out of about 77.
+
+Early on, the model sometimes chose the wrong tool, or passed slightly wrong parameters, because some tools overlapped or had vague descriptions. I fixed that with a strict verb-noun naming convention, like queue build and get release status, descriptions that say "use this when", enums for environment names instead of free text, and by removing overlapping tools. Outputs mattered too. Returning raw JSON logs filled up the model's context, so I switched to short structured summaries with a link to the full details.
+
+Then there were long-running deployments. A deployment can take an hour, and a tool call can't block that long. So start tools return an id, and status tools poll. And the on-premise Azure DevOps Server API was its own headache. It differs from the cloud documentation in versions and authentication details, so I tested every call against our actual server. Throughout, I had to keep humans in control, read-only tools at the start, write tools with confirmation, and production only through existing approvals.
+
+What I learned is that for AI tools, interface design matters more than implementation. I can show a before and after tool description.
+
+@p3-11
+Okay, so the situation was, the first version of the CIRT MCP server ran from my own clone of the repository. When a couple of teammates started using it, they cloned it too, and their copies quickly got out of sync with mine. People were running different versions, and setup took [about an hour] of building and configuring.
+
+I wanted installation to be a single, repeatable step, with everyone on the same version, and no secrets anywhere in files.
+
+What I did was package it as a .NET global tool, using PackAsTool and a tool command name in the project file, with semantic versioning and release notes. I created its own pipeline that builds, tests and publishes it to our internal Azure Artifacts feed on every tag. To install, a teammate runs one dotnet tool install command, and adds one entry to their Cursor or Claude Code MCP configuration. The server URL and each person's personal access token come from environment variables, never from config files or the repository. Updates are just dotnet tool update. I also added a health check tool that confirms connectivity and permissions, so if something's wrong, the first run tells you exactly what.
+
+In the end, setup went from [about an hour] to [about 10 minutes], everyone runs the same version, and support questions about setup almost disappeared. That ease of installation was a big part of why adoption spread. I can show the project file settings.
