@@ -30,6 +30,8 @@ function norm(t) {
 }
 function toks(t) { var n = norm(t).trim(); return n ? n.split(' ').map(stem) : []; }
 var SYN = [
+  ['use state', 'usestate'], ['use memo', 'usememo'], ['use effect', 'useeffect'], ['use callback', 'usecallback'], ['use ref', 'useref'], ['use reducer', 'usereducer'], ['use context', 'usecontext'],
+  ['centralized', 'centralised'], ['centralised', 'centralized'], ['dynamo db', 'dynamodb'], ['dynamo', 'dynamodb'], ['gt metrics', 'gtmetrix'], ['elastic cache', 'elasticache'], ['re render', 'rerender'], ['re renders', 'rerenders'],
   ['di', 'dependency injection'], ['ioc', 'inversion of control'], ['jwt', 'json web token', 'bearer token'], ['k8s', 'kubernetes'], ['kube', 'kubernetes'],
   ['ef', 'entity framework'], ['ef core', 'entity framework core'], ['gc', 'garbage collection', 'garbage collector'], ['sso', 'single sign on'], ['iac', 'infrastructure as code'],
   ['dlq', 'dead letter queue', 'dead letter'], ['oop', 'object oriented', 'oops'], ['rag', 'retrieval augmented generation'], ['mcp', 'model context protocol'],

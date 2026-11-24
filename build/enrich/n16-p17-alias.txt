@@ -1,0 +1,8 @@
++@p1-44
+K: sql index, sql server index
++@p2-25
+K: ci cd pipeline, cicd pipeline
++@p11-20
+K: ngrx, ngrx store
++@p16-6
+K: keycloak, keycloak in irt

@@ -48,7 +48,8 @@ const NEWPARTS = {
   p13: { T: { fe: 'Front end in IRT: Angular and React', irt: 'IRT: clinical studies and modules', irts: 'IRT stories' }, ORDER: ['fe', 'irt', 'irts'] },
   p14: { T: { hyb: 'On-premise Azure DevOps and AWS: the CIRT story', map: 'Azure to AWS: how the concepts map', awd: 'AlertWatchDog, Azure Functions and the AWS way' }, ORDER: ['hyb', 'map', 'awd'] },
   p15: { T: { mcp: 'AI: the CIRT MCP server in .NET 8', rag: 'AI: RAG for Copilot and Cursor (Python)', ragu: 'AI: the RAG assistant for end users', ai: 'AI: applied AI engineering' }, ORDER: ['mcp', 'rag', 'ragu', 'ai'] },
-  p16: { T: { plat: 'IRT platform: architecture, integrations and features' }, ORDER: ['plat'] }
+  p16: { T: { plat: 'IRT platform: architecture, integrations and features' }, ORDER: ['plat'] },
+  p17: { T: {"iv": "Interview round: questions asked in a real interview", "msa": "Microservices and distributed systems", "secx": "Security, authentication and authorization", "csx": "C# and .NET", "apix": "ASP.NET Core and Web API", "sqlx": "SQL, EF Core and databases", "ngx": "Angular in depth", "rx": "React and TypeScript in depth", "nodex": "Node.js and JavaScript", "pyx": "Python", "awsx": "AWS in depth", "azx": "Azure", "dkx": "Docker and Kubernetes", "cdx": "CI/CD and deployments", "tx": "Testing", "obx": "Logging, monitoring and observability", "scx": "Production scenarios and troubleshooting"}, ORDER: ["iv", "msa", "secx", "csx", "apix", "sqlx", "ngx", "rx", "nodex", "pyx", "awsx", "azx", "dkx", "cdx", "tx", "obx", "scx"] }
 };
 const vis10 = fs.existsSync('vis10.json') ? JSON.parse(fs.readFileSync('vis10.json', 'utf8')) : {};
 const OUTP = {};

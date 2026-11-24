@@ -991,3 +991,38 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - I tuned a slow shipment report from 8 to 12 seconds down to under 300 milliseconds with a covering index and a rewritten query.
 - **p16-17** How does supply forecasting work in your IRT?
   - a newer version of the forecasting backend is being built as a .NET API
+- **p17-10** What is the difference between useState and useMemo?
+  - count, setCount
+  - items
+- **p17-11** How do you prevent unnecessary re-renders in a React application?
+  - Moving the filter state down, memoising the row component and virtualising the grid made typing smooth again.
+- **p17-27** When you deploy to production through CI/CD, how do you implement automatic rollback if something goes wrong?
+  - rolled back a UAT release within 15 minutes
+- **p17-29** A production API that took 200 ms now takes 5 seconds. How do you troubleshoot it?
+  - In March 2025, our shipments API went from about 200 milliseconds to 3 seconds because of parameter sniffing; I forced the good plan, then fixed the index.
+- **p17-31** A production issue can't be reproduced locally. What is your approach?
+  - Once, a date filter bug appeared only for US sites, because I'd tested only in Indian time; I fixed it by storing everything in UTC.
+- **p17-44** Database per service or shared database: which do you prefer and why?
+  - about 560
+- **p17-60** How do you handle a long-running operation in an API?
+  - It took a transfer from around 40 minutes of manual steps to under 10 minutes, with clear status for the user.
+- **p17-71** How do you handle time zones and dates across services?
+  - A visit window bug at US sites came from a midnight conversion, and we fixed it by storing the date as a date.
+- **p17-90** What is a threat model, and how do you do one for a new feature?
+  - When we threat-modelled the drug accountability return screens, it showed that the return quantity API needed a site ownership check, which we added before release.
+- **p17-91** How do you secure webhooks you send and receive?
+  - Our vendor status callbacks in the newer data transfer API verify an HMAC signature and timestamp before queuing the message.
+- **p17-108** What is multiple enumeration of IEnumerable, and why is it a problem?
+  - I once found a report that ran the same query three times because of this, and ToList fixed it.
+- **p17-206** What is a covering index, and what are INCLUDE columns?
+  - Adding one covering index to the shipment search query removed a key lookup on about 40,000 rows and cut its time from several seconds to under 200 milliseconds.
+- **p17-213** What is Query Store, and how have you used it?
+  - That's how we diagnosed a query that went from 200 milliseconds to 5 seconds in March 2025: Query Store showed a new plan compiled for an unusual parameter value, a classic parameter sniffing case. Forcing the previous plan fixed it within minutes, and then we fixed the query properly.
+- **p17-278** How do you load runtime configuration in an Angular app instead of build-time environments?
+  - and the older Angular sub-apps read their settings from the hosting MVC page
+- **p17-287** How do you display very large lists efficiently in Angular?
+  - Our material forecasting dashboard was the kind of screen where server-side paging and OnPush made the difference.
+- **p17-347** What are streams in Node.js, and how does backpressure work with pipeline?
+  - I used a pipeline of a file read stream, a CSV parser and a batching transform to load large extract files without memory spikes.
+- **p17-456** Azure SQL Database vs Managed Instance vs SQL Server on a VM: how do you choose?
+  - and some cross-database queries
