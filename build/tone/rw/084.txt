@@ -1,0 +1,147 @@
+@p17-996 | What is API fuzz testing, and how do tools like Schemathesis help?
+So fuzz testing sends huge numbers of unexpected, random or malformed inputs to a system to find crashes and unhandled cases. Normal tests check the inputs you thought of, fuzzing finds the ones you didn't.
+
+For APIs, schema-based fuzzers are the practical option. Schemathesis reads your OpenAPI spec and generates requests covering each endpoint with valid and edge-case values, empty strings, huge numbers, unicode, missing optional fields, boundary dates. Then it checks the responses. No 500 errors, responses match the documented schema, and status codes are ones the spec actually declares. RESTler from Microsoft does stateful fuzzing, chaining calls like create, then read, then delete.
+
+What it usually finds is unhandled exceptions from unexpected nulls or formats, validation that's missing on the server even though the client validates, responses that don't match the documented contract, and now and then security issues like errors leaking stack traces.
+
+I'd run it in CI against a test deployment or an in-process app, starting with a limited number of examples per endpoint so it stays fast, and run longer fuzzing nightly. Failures come with the exact request, which is easy to turn into a normal regression test.
+
+For an ASP.NET Core API, it's also a good check that the generated OpenAPI document is actually accurate. When we tried it on an internal API, the first findings were 500 errors from date parameters in unexpected formats, which honestly should've been 400 validation responses.
+
+@p17-997 | What is test impact analysis, and how do you run only the tests affected by a change?
+Test impact analysis means working out which tests a change could affect and running only those, instead of the whole suite. It matters when the full suite takes too long for every pull request.
+
+You can do it at different levels. The simplest is project-level selection. In a monorepo, tools like Nx or Turborepo know the dependency graph, so changing one library runs tests only for that library and the projects that depend on it. Path filters in pipelines do a basic version of the same thing, triggering a service's pipeline only when its folder changes.
+
+The finer level uses coverage data to map tests to the code they run. Azure Pipelines has a test impact analysis feature for .NET, and Jest can run tests related to changed files. When a file changes, only tests that touched it run.
+
+The risk is missing something. Changes to config, shared build files or test data aren't always tracked well. So I treat it as a speed-up for pull requests, while main and nightly builds still run everything. Any change to shared infrastructure, like the build config, should trigger the full suite.
+
+Before going for impact analysis though, I'd check the basics, because they often give bigger wins. Run tests in parallel, cache dependencies, split slow integration tests into a separate stage, and get rid of sleep calls in tests.
+
+For our front-end packages in a shared repo, running only affected projects cut pull request builds from around twenty minutes to a few minutes for most changes.
+
+@p17-998 | How do you assert that the right logs were written in .NET tests?
+Sometimes logging is a requirement, not just debugging help. Like, an audit-relevant warning has to be written when access is denied, or a security event has to be logged with specific fields. Then it deserves a test.
+
+The old way was mocking ILogger with Moq and verifying the Log method, which is painful, because the logging extension methods call a generic Log method with a formatter, so the verification's ugly and fragile.
+
+Since .NET 8, the diagnostics testing package from Microsoft includes FakeLogger and FakeLogCollector. You pass a FakeLogger into the class under test, or register the fake logging provider in an integration test, and afterwards read the collected records, level, message, event id, exception and structured state. That lets you assert a warning with a given event id was logged and that it included the user id property.
+
+For Serilog, there are similar in-memory sinks for tests.
+
+What I assert is the important bit, level, event id and key structured properties, not the exact message text, since wording changes. I also write tests that sensitive data isn't logged, for example checking no record contains the password or token value passed in a request.
+
+These tests are few and targeted, I'd say. Most code shouldn't have log assertions, or tests break every time someone improves a message. In our services, we test logging only for security and audit-related events, where a missing log entry would be a real compliance problem.
+
+@p17-999 | How do you test authorization rules systematically across roles and endpoints?
+Broken access control is the top risk on the OWASP list, and it usually comes from one endpoint missing an authorization check. Testing a few endpoints by hand won't find that, so what I do is test authorization as a matrix.
+
+Start by defining the expected access. For each endpoint and each role, should the response be allowed, forbidden or not found. Keep that as data, like a table in the test project.
+
+Then write a parameterised integration test that runs every combination. Using WebApplicationFactory with a test authentication handler, each test sets the user's roles and claims, calls the endpoint and checks the status code against the table. Adding a role or an endpoint is just a new row.
+
+On top of that, a guard test that discovers all endpoints from the app's endpoint data sources and fails if any endpoint's missing from the matrix or has no authorization metadata, unless it's explicitly marked anonymous. That catches the new endpoint someone forgot to protect.
+
+Also test resource-level rules, not just roles. User A must not read user B's record by changing an id in the URL. Those tests create two users with their own data and try cross-access.
+
+In a system with site-level and study-level permissions, this approach found an export endpoint that checked the role but not whether the user belonged to that site. The matrix test covers it now, and the endpoint discovery check stops similar gaps from coming back.
+
+@p17-1000 | userEvent vs fireEvent in React Testing Library: which should you use?
+Both trigger events in React Testing Library tests, but they work at different levels.
+
+fireEvent dispatches a single DOM event. fireEvent change sets a value and fires one change event, fireEvent click fires one click. It's low level and doesn't do what a browser does around that event.
+
+userEvent, from the user-event package, simulates what a real user actually does. Typing into an input fires focus, key down, key press, input and key up for every character, respects disabled and read-only fields, and moves the cursor. Clicking fires pointer events, mouse down, focus, mouse up and click. So tests catch bugs fireEvent misses, like a handler on key down, or a field that's disabled but still accepted a change.
+
+In version 14, userEvent is asynchronous. The recommended pattern is calling userEvent setup at the start of the test, then awaiting each action. If you use fake timers, pass the timer advance function to setup, or tests just hang. That one catches people out.
+
+My default is userEvent for anything a user does, typing, clicking, selecting, tabbing through a form. I keep fireEvent for events users can't easily trigger, like scroll or a custom event, or where userEvent doesn't support something.
+
+Combined with queries by role and label, this keeps tests close to real usage. In our React shell's forms built with MUI, switching from fireEvent to userEvent exposed a validation message that only appeared on blur, which the old tests never triggered.
+
+@p17-1001 | Test pyramid vs testing trophy: which shape should your test suite have?
+The test pyramid says most tests should be fast unit tests, fewer integration tests, and very few end-to-end. The testing trophy, which got popular in the front-end world, puts most weight on integration tests, with static analysis like TypeScript and linting as the base, fewer unit tests and a few end-to-end. In microservices, a similar idea's called the honeycomb.
+
+The reasoning behind the trophy is confidence per test. A unit test of a React component with all its children mocked proves very little about whether the screen works. Rendering the real component tree with a mocked network layer gives way more confidence for similar cost. And modern tools made integration tests fast enough, Testing Library with Mock Service Worker on the front end, or WebApplicationFactory with Testcontainers on the back end.
+
+The pyramid still fits code with heavy logic, calculations, rules engines, parsers, algorithms. Those deserve lots of small unit tests covering edge cases.
+
+So honestly my answer depends on the code. For a business API that mostly moves data through validation into a database, I write mainly integration tests at the API level, plus unit tests for the complex rules. For a calculation-heavy module, like randomisation or dosing logic, I write extensive unit tests. Static checks come first everywhere, because the type checker catches a whole class of bugs for free.
+
+The shape matters less than the outcome, tests that are fast, trusted, catch real bugs and don't break on every refactor.
+
+@p17-1002 | How do you test an ETL job or data pipeline?
+Data pipelines fail more quietly than APIs, you know. They run successfully but produce wrong or incomplete data. So testing covers both the code and the data.
+
+Unit tests cover transformation logic with small, hand-written inputs, including the awkward cases, nulls, duplicates, dates across time zones, unexpected codes and really long strings. If transformations are pure functions, this is straightforward.
+
+Integration tests run the job end to end against real database containers with a realistic sample dataset, checking the output tables. They catch mapping mistakes, type conversion issues and performance problems with set-based SQL.
+
+Data quality checks run in production too, as part of the pipeline. Tools like Great Expectations or dbt tests, or simple SQL assertions, check row counts against the source, no unexpected nulls in required columns, valid ranges, unique keys and referential integrity. A failed check stops the load or flags it, instead of quietly publishing bad data.
+
+Reconciliation is the last safety net. Compare totals between source and target, like counts per day or sums of key amounts, and alert on differences.
+
+Idempotency testing matters as well. Running the job twice mustn't duplicate data, and a run that fails halfway has to be safe to rerun.
+
+For data transfers between systems, like moving integration flows from a middleware platform to .NET APIs, we ran old and new paths in parallel and compared the outputs record by record before switching, which was the strongest test of all.
+
+@p17-1003 | How do you catch breaking API changes automatically in CI?
+Breaking changes usually slip in by accident. A renamed field, a property made required, a removed enum value, a changed status code. Reviewers miss them because the diff looks harmless, so I check compatibility automatically.
+
+For HTTP APIs, the pipeline generates the OpenAPI document from the built service, for example with build-time document generation in ASP.NET Core, and compares it with the version from main or the last release using a diff tool like oasdiff or openapi-diff. These tools classify changes, and the build fails on breaking ones, like removing an endpoint, adding a required request field, or removing a response field. Non-breaking additions just get reported.
+
+For shared .NET libraries, the public API analyzer tracks every public member in text files, so any change to the public surface shows up in the pull request, and package validation compares with the previous NuGet version. For TypeScript packages, API Extractor does something similar with an API report file.
+
+For events, a schema registry, or checked-in JSON schemas with compatibility checks, do the same job.
+
+When a breaking change is genuinely needed, the check forces a conscious decision. Add a new version, mark the old one deprecated and tell consumers. Contract tests with Pact add another layer by checking what consumers actually use.
+
+In my team, with many front-end sub-apps calling the same APIs, the OpenAPI diff check stopped several accidental field renames that would otherwise have broken a screen in production.
+
+@p17-1004 | How do you connect logs to traces using trace ids and span ids?
+Logs tell you what happened, traces tell you where the time went across services. Linking them means every log line written during a request carries that request's trace id and span id, so from one error log you can open the whole distributed trace, and from a slow span you can see its logs.
+
+In .NET this mostly comes for free. Activity Current holds the current trace, and the logging infrastructure can include the trace id and span id in every log scope, either through the logger factory's activity tracking options or through the OpenTelemetry logging provider, which attaches them automatically. Serilog has an enricher that does the same. In Node, the OpenTelemetry instrumentation for pino or winston injects trace ids, and in Python, the logging instrumentation adds them to log records.
+
+The backend also has to know how to link them. In Datadog, Grafana with Loki and Tempo, or Application Insights, a trace id field in structured logs becomes a clickable link to the trace.
+
+Some details matter. The field name has to match what the backend expects. Background jobs and message consumers need their own spans, or their logs have no trace id. And if traces are sampled, some logs will point to traces that weren't kept, so the sampling policy should keep traces with errors. People forget that last bit a lot.
+
+In older services, we already had a correlation id passed through middleware and message headers. In the newer OpenTelemetry-based services, the W3C trace id replaces that, and Datadog connects logs, traces and metrics for one request automatically.
+
+@p17-1005 | What is OpenTelemetry baggage, and how is it different from span attributes?
+Span attributes are key-value pairs recorded on one span, like the HTTP route or the order id. They stay on that span and don't travel to other services.
+
+Baggage is key-value data that travels with the request context across process boundaries. It goes in the baggage HTTP header, next to the traceparent header, and every downstream service can read it. A typical example is a tenant id or customer tier set at the edge, so services several hops away know it without every API passing it as a parameter.
+
+Baggage isn't automatically recorded on spans or logs, though. If you want the tenant id on downstream spans, you add a span processor that copies chosen baggage entries into attributes, which also makes them searchable in the tracing backend.
+
+A few cautions I'd really stress. Baggage goes out on every outgoing call, including calls to third parties unless you strip it, so never put sensitive data like user emails, patient details or tokens in it. Keep it small, since it adds bytes to every request. And treat incoming baggage from outside as untrusted. Anyone can send the header, so it must not drive authorization decisions.
+
+In .NET, the Baggage API in OpenTelemetry, or Activity baggage, sets values, and the propagators handle the header. I'd use it for low-sensitivity routing and diagnostic context, like a tenant or region label, which makes it easy to filter traces by tenant during an incident.
+
+@p17-1006 | What are OpenTelemetry semantic conventions, and how should you name spans and attributes?
+Semantic conventions are basically OpenTelemetry's standard names for common telemetry. Attributes like http dot request dot method, http dot route, the response status code, db dot system and the messaging destination name, plus standard metric names like the HTTP server request duration. When every service and library uses the same names, dashboards and queries work across languages without any mapping.
+
+The automatic instrumentation for ASP.NET Core, HttpClient, Express or FastAPI already follows them. So the question's mostly about custom spans and attributes you add yourself.
+
+For span names, keep them low cardinality and describing the operation, not the data. GET plus the route template, like orders by id, is good. The full URL with an actual id is bad, because every request becomes a unique name, which breaks aggregation and pushes up cost. For a custom operation, something like process shipment or allocate kit is clear.
+
+For custom attributes, follow the conventions first, then use your own namespace for business attributes, like app dot study dot phase or app dot order dot type, so they don't clash with future standard names. Put high-cardinality identifiers, like an order id, on spans as attributes, where they're useful for search, but never as metric labels.
+
+Record errors with the span status set to error and the exception recorded as an event, so backends show them consistently.
+
+Agreeing a short naming guide across teams was one of the most useful things we did when moving newer services to OpenTelemetry. Without it, the same field showed up under four different names, and cross-service queries were painful.
+
+@p17-1007 | What are burn-rate alerts, and why are they better than simple error thresholds?
+A simple threshold alert, like error rate above two percent for five minutes, has two problems. It fires on short blips that don't matter, and it misses slow, steady problems that sit just under the threshold but burn through the error budget over days.
+
+Burn rate measures how fast you're using the error budget compared with the allowed pace. If your SLO is 99.9 percent success over thirty days, a burn rate of one uses exactly the budget in thirty days. A burn rate of fourteen point four would use two percent of the monthly budget in one hour, which is serious.
+
+Multi-window, multi-burn-rate alerting, from Google's SRE workbook, combines a fast alert and a slow one. A page fires when the burn rate is high over both a long window, like one hour, and a short window, like five minutes. The long window proves it's significant, the short window proves it's still happening, so the alert clears quickly after recovery. A ticket-level alert fires for a lower burn rate over six hours or a day, catching slow leaks.
+
+What you get is alerts that map to user impact and the SLO the business agreed. People get woken up for things that threaten the budget, not for every spike, and I think that's what keeps on-call sane.
+
+You need an SLI defined as good events over total events, like successful requests under a latency target. Datadog, Grafana and most monitoring tools have built-in SLO and burn-rate alerting, so the hard work is choosing good SLIs, not the maths.
