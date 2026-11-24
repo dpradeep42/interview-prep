@@ -10916,129 +10916,129 @@ S: cdx
 D: A
 T: How do you keep dev, test and production environments consistent?
 K: environment parity, dev prod parity, environment drift, consistent environments, it works on my machine
-X: Inconsistent environments cause the classic problem: it works in test but fails in production. The goal is that environments differ only in size and configuration, not in how they're built.
-X: The first tool is infrastructure as code. If every environment is created from the same Terraform or Bicep modules with different variables, they can't quietly drift apart, and drift detection in the pipeline catches manual changes.
-X: The second is building once and promoting the same artifact, so test and production run identical binaries or images. Configuration comes from the environment through settings and secret stores, never baked into the build.
-X: The third is matching versions of dependencies: the same database engine version, the same runtime, the same message broker version. Containers and Docker Compose help locally, so a developer runs the same Redis and broker versions as production.
-X: Data is the hard part. Test databases are often small and clean, so performance problems and odd data only show in production. Masked copies of production data, or generated data at realistic volume, close that gap.
-X: Finally, the deployment process itself should be the same everywhere. If test is deployed by hand and production by pipeline, you're not testing the deployment.
-X: In our on-prem setup, we keep a server configuration baseline and compare IIS settings, installed runtimes and app pool settings across environments. A mismatch in a runtime version on one production node once caused a failure that test never showed, which is why we added that check.
+X: Inconsistent environments give you the classic problem, it works in test but fails in production. What I aim for is environments that differ only in size and configuration, not in how they're built.
+X: The biggest tool is infrastructure as code. If every environment comes from the same Terraform or Bicep modules with different variables, they can't quietly drift apart, and drift detection in the pipeline catches manual changes.
+X: Then building once and promoting the same artifact, so test and production run identical binaries or images. Configuration comes from the environment through settings and secret stores, never baked into the build.
+X: Matching dependency versions matters too. Same database engine version, same runtime, same message broker version. Containers and Docker Compose help locally, so a developer runs the same Redis and broker versions as production.
+X: Data's the hard part, honestly. Test databases are often small and clean, so performance problems and odd data only show up in production. Masked copies of production data, or generated data at realistic volume, close that gap.
+X: And the deployment process itself should be the same everywhere. If test is deployed by hand and production by pipeline, you're not really testing the deployment.
+X: In our on-prem setup, we keep a server configuration baseline and compare IIS settings, installed runtimes and app pool settings across environments. A runtime version mismatch on one production node once caused a failure that test never showed, which is exactly why we added that check.
 @p17-985
 S: cdx
 D: A
 T: How do you protect CI pipelines from malicious pull requests?
 K: pipeline security fork pull request, pull_request_target, untrusted code ci, poisoned pipeline execution, secrets in pr builds
-X: A pull request build runs code that someone else wrote, including the build scripts themselves. If that build has access to secrets or a privileged agent, a malicious pull request can steal credentials or attack your network. This is called poisoned pipeline execution.
-X: The main defences are about separation. Pull request builds from forks must run without secrets and with a read-only token. In GitHub Actions, the pull_request event does this by default, while pull_request_target runs with secrets in the base repository's context, so it must never check out and run the pull request's code. In Azure Pipelines, settings control whether fork builds get secrets, and that should stay off.
-X: Run untrusted builds on hosted, throwaway agents, not self-hosted agents inside the network. Require approval before running workflows from first-time contributors.
-X: Protect the pipeline definitions too. Changes to workflow files or templates should need review from owners, using a code owners file, and deployment pipelines should come from protected templates that a pull request can't modify.
+X: A pull request build runs code someone else wrote, including the build scripts themselves. If that build has access to secrets or a privileged agent, a malicious pull request can steal credentials or attack your network. It's called poisoned pipeline execution.
+X: The main defences are basically about separation. Pull request builds from forks must run without secrets and with a read-only token. In GitHub Actions, the pull request event does this by default, while pull request target runs with secrets in the base repo's context, so it must never check out and run the pull request's code. That one catches people out. In Azure Pipelines, settings control whether fork builds get secrets, and that should stay off.
+X: Run untrusted builds on hosted, throwaway agents, not self-hosted agents inside the network. And require approval before running workflows from first-time contributors.
+X: Protect the pipeline definitions too. Changes to workflow files or templates should need review from owners, using a code owners file, and deployment pipelines should come from protected templates a pull request can't modify.
 X: Keep deployment credentials scoped to protected environments with approvals, so even a compromised build job on a branch can't deploy to production. Pin third-party actions to a commit hash, since a tag can be moved to malicious code.
-X: For internal repos the threat is lower, but the same rules help against a compromised developer account. Secrets live in environments with approvals, not in the pipeline used for pull request validation.
+X: For internal repos the threat's lower, but the same rules help against a compromised developer account. Secrets live in environments with approvals, not in the pipeline used for pull request validation.
 @p17-986
 S: cdx
 D: A
 T: How do you promote container images between registries or environments?
 K: image promotion, promote container image, copy image between registries, acr import, ecr replication, registry per environment
 X: Promotion means the exact image tested in one environment is the one that goes to the next, never a rebuild. With containers, that means moving or re-tagging the same digest.
-X: There are two common setups. With one registry, you promote by adding tags or by updating the deployment to the tested digest. It's simple, but production pulls from a registry that test pipelines can also push to.
-X: With a registry per environment or per trust level, like a dev registry and a production registry, you copy the image across after it passes testing. Azure Container Registry has an import command that copies by digest between registries, ECR supports cross-account replication, and tools like crane or skopeo copy images without pulling them locally. Production clusters only have pull access to the production registry, and only the release pipeline can push to it.
-X: Important details. Always copy and deploy by digest, because a tag like the version number could be overwritten. Copy signatures and SBOMs along with the image so verification still works. Run a vulnerability scan at promotion time as well, since new vulnerabilities appear after build. Keep a record of which digest went to which environment for traceability.
-X: I prefer the separate production registry for anything regulated. It gives a clear boundary: if an image is in the production registry, it passed the gates. The extra copy step is a few seconds and adds a lot of confidence.
+X: You'll usually see two setups. With one registry, you promote by adding tags or by updating the deployment to the tested digest. It's simple, but production pulls from a registry that test pipelines can also push to.
+X: With a registry per environment or per trust level, say a dev registry and a production registry, you copy the image across after it passes testing. Azure Container Registry has an import command that copies by digest between registries, ECR supports cross-account replication, and tools like crane or skopeo copy images without pulling them locally. Production clusters only get pull access to the production registry, and only the release pipeline can push to it.
+X: Important details. Always copy and deploy by digest, because a tag like the version number could get overwritten. Copy signatures and SBOMs along with the image so verification still works. Run a vulnerability scan at promotion time too, since new vulnerabilities show up after build. And keep a record of which digest went to which environment, for traceability.
+X: For anything regulated, I'd go with the separate production registry. It gives a clear boundary, if an image is in the production registry, it passed the gates. The extra copy step takes a few seconds and adds a lot of confidence.
 @p17-987
 S: cdx
 D: A
 T: How do you build a deployment pipeline for serverless apps with SAM or CDK?
 K: sam pipeline, cdk pipelines, deploy lambda ci cd, serverless deployment pipeline, cloudformation deploy lambda
-X: For serverless on AWS, the application and its infrastructure usually deploy together, because a Lambda function, its API Gateway route, its queue and its permissions all belong to the same unit. SAM and CDK both produce CloudFormation, which does the actual deployment.
-X: With SAM, the pipeline runs sam build to package the functions, runs unit tests, and then sam deploy with a parameter file per environment. SAM can also set up gradual deployment for Lambda through CodeDeploy, shifting traffic to the new version over minutes and rolling back automatically if CloudWatch alarms fire.
-X: With CDK, you write infrastructure in a programming language like TypeScript or C#. The pipeline runs cdk synth to produce templates, which become the artifact, and then deploys those same templates to each environment. CDK Pipelines can model the stages and approvals itself, and cdk diff shows what will change, which is useful in a pull request.
-X: The general practices stay the same. Build once and deploy the same package to every stage. Deploy with a role assumed through OIDC, not stored keys. Use separate accounts per environment. Run integration tests against the deployed stack in a test stage before promotion. Watch for changes that replace resources, like renaming a table, which CloudFormation does by deleting and recreating.
-X: For a small team, SAM is quicker to learn. For larger systems with shared constructs, CDK gives better reuse and type checking.
+X: For serverless on AWS, the app and its infrastructure usually deploy together, because a Lambda function, its API Gateway route, its queue and its permissions all belong to the same unit. SAM and CDK both produce CloudFormation, which does the actual deployment.
+X: With SAM, the pipeline runs sam build to package the functions, runs unit tests, and then sam deploy with a parameter file per environment. SAM can also set up gradual deployment for Lambda through CodeDeploy, shifting traffic to the new version over a few minutes and rolling back automatically if CloudWatch alarms fire.
+X: With CDK, you write infrastructure in a programming language like TypeScript or C#. The pipeline runs cdk synth to produce templates, which become the artifact, and then deploys those same templates to each environment. CDK Pipelines can model the stages and approvals itself, and cdk diff shows what'll change, which is handy in a pull request.
+X: The general practices don't change. Build once and deploy the same package to every stage. Deploy with a role assumed through OIDC, not stored keys. Separate accounts per environment. Run integration tests against the deployed stack in a test stage before promotion. And watch for changes that replace resources, like renaming a table, which CloudFormation does by deleting and recreating. That one can really bite people.
+X: For a small team, I think SAM is quicker to learn. For larger systems with shared constructs, CDK gives better reuse and type checking.
 @p17-988
 S: cdx
 D: A
 T: What does a good CI pipeline for a Python service look like?
 K: python ci pipeline, python lint test pipeline, ruff mypy pytest ci, python build pipeline, python docker pipeline
 X: A Python pipeline should check quality quickly and produce one reproducible artifact, usually a container image or a wheel.
-X: The steps I use start with setting up the exact Python version and installing dependencies from a lock file, using uv or pip with hashes, with the package cache saved between runs. Then linting and formatting checks with Ruff, which replaces flake8, isort and black and is very fast. Then type checking with mypy or pyright, which matters in a dynamic language. Then tests with pytest, including coverage reporting and integration tests that use Testcontainers or service containers for Postgres or Redis.
-X: Security checks come next: pip-audit for vulnerable packages, a secret scan, and bandit for risky code patterns.
-X: Then the build. For a service, I build a Docker image with a multi-stage Dockerfile, installing dependencies in a builder stage and copying only what's needed into a slim runtime image, running as non-root. For a library, I build a wheel and publish it to an internal feed.
-X: Finally, tag the image with the commit and version, scan it, push it, and deploy through the same promotion flow as other services.
+X: The way I set it up, it starts with the exact Python version and installs dependencies from a lock file, using uv or pip with hashes, with the package cache saved between runs. Then linting and formatting checks with Ruff, which replaces flake8, isort and black and is really fast. Then type checking with mypy or pyright, which matters in a dynamic language. Then tests with pytest, with coverage reporting and integration tests that use Testcontainers or service containers for Postgres or Redis.
+X: Security checks come next, pip-audit for vulnerable packages, a secret scan, and bandit for risky code patterns.
+X: Then the build. For a service, I build a Docker image with a multi-stage Dockerfile, installing dependencies in a builder stage and copying only what's needed into a slim runtime image that runs as non-root. For a library, I build a wheel and publish it to an internal feed.
+X: After that, tag the image with the commit and version, scan it, push it, and deploy through the same promotion flow as other services.
 X: For our Python RAG service with FastAPI and pgvector, the integration tests run against a real Postgres container with the pgvector extension, because mocking vector search wouldn't prove the queries actually work. The whole pipeline runs in a few minutes, mostly thanks to caching and Ruff's speed.
 @p17-989
 S: cdx
 D: A
 T: How do you use pre-commit hooks with Husky or the pre-commit framework?
 K: pre commit hooks, husky, lint-staged, pre-commit framework, git hooks, shift left checks
-X: Git hooks are scripts that run at points like before a commit or before a push. Pre-commit hooks catch simple problems, like formatting, lint errors or committed secrets, before code ever reaches the pull request.
+X: Git hooks are scripts that run at points like before a commit or before a push. Pre-commit hooks catch simple problems, formatting, lint errors, committed secrets, before code ever reaches the pull request.
 X: In JavaScript projects, Husky installs the hooks automatically when someone runs npm install, and lint-staged runs tools only on the files being committed, so it stays fast. A typical setup runs Prettier and ESLint on staged files and commitlint on the commit message.
-X: In Python and many other stacks, the pre-commit framework manages hooks from a config file, with hooks for Ruff, trailing whitespace, large files and secret scanning with tools like gitleaks. It works for any language, so it's a good choice for repos mixing Python, YAML and Terraform.
+X: In Python and lots of other stacks, the pre-commit framework manages hooks from a config file, with hooks for Ruff, trailing whitespace, large files, and secret scanning with tools like gitleaks. It works for any language, so it's a good pick for repos mixing Python, YAML and Terraform.
 X: In .NET, dotnet format can run in a hook, or with Husky.Net.
-X: A few rules. Keep hooks fast, a few seconds, or people will skip them with the no-verify flag. Hooks are a convenience, not a control, because anyone can bypass them, so the pipeline must run the same checks. Don't run the full test suite in a pre-commit hook; at most, run quick tests in a pre-push hook.
-X: In our front-end repos, Husky with lint-staged catches most formatting and lint issues locally, so pull request reviews focus on design rather than style comments. Secret scanning in the hook has stopped a few accidental commits of local configuration files before they left a laptop.
+X: My rules are pretty simple. Keep hooks fast, a few seconds, or people will just skip them with the no-verify flag. Hooks are a convenience, not a control, because anyone can bypass them, so the pipeline must run the same checks. And don't run the full test suite in a pre-commit hook. At most, quick tests in a pre-push hook.
+X: In our front-end repos, Husky with lint-staged catches most formatting and lint issues locally, so pull request reviews focus on design instead of style comments. Secret scanning in the hook has stopped a few accidental commits of local config files before they left a laptop.
 @p17-990
 S: tx
 D: A
 T: How do you mock dependencies in Python tests with unittest.mock and patch?
 K: python mock, unittest.mock, patch where it is used, MagicMock, pytest monkeypatch, mocker fixture
-X: Python's unittest.mock gives you Mock and MagicMock objects that record how they're called and return whatever you configure. patch temporarily replaces an object during a test, as a decorator or a context manager, and the pytest-mock plugin offers the same through a mocker fixture.
-X: The rule that trips most people is patch where it's used, not where it's defined. If my module does from services import send_email, the name send_email now lives in my module, so I must patch mymodule.send_email. Patching services.send_email won't affect the copy my module already imported.
-X: Other useful points. Use autospec, or create_autospec, so the mock has the real function's signature; otherwise a typo in a method name or wrong arguments still pass silently. For async functions, AsyncMock returns awaitables. Use side_effect to raise exceptions or return a sequence of values, which is how I test retry logic. Assert calls with assert_called_once_with, but don't over-assert every internal call, or tests break on harmless refactors.
+X: Python's unittest mock gives you Mock and MagicMock objects that record how they're called and return whatever you set up. patch temporarily replaces an object during a test, as a decorator or a context manager, and the pytest-mock plugin offers the same thing through a mocker fixture.
+X: The rule that trips most people is, patch where it's used, not where it's defined. If my module does from services import send email, the name send email now lives in my module, so I have to patch it on my module. Patching it on services won't touch the copy my module already imported. Trust me, everyone hits this once.
+X: Other useful points. Use autospec, or create autospec, so the mock has the real function's signature. Otherwise a typo in a method name or wrong arguments still pass silently. For async functions, AsyncMock returns awaitables. Use side effect to raise exceptions or return a sequence of values, which is how I test retry logic. Assert calls with assert called once with, but don't over-assert every internal call, or tests break on harmless refactors.
 X: pytest's monkeypatch is simpler for environment variables and attributes, and it undoes changes automatically.
-X: Design matters more than tooling, though. If a test needs five patches, the code probably has hidden dependencies. Passing dependencies in, for example through FastAPI's Depends with dependency overrides in tests, is cleaner than patching module globals. In our FastAPI RAG service, tests override the embedding client dependency with a fake, so no test calls a real model endpoint.
+X: Design matters more than tooling, though. If a test needs five patches, the code probably has hidden dependencies. Passing dependencies in, like through FastAPI's Depends with dependency overrides in tests, is cleaner than patching module globals. In our FastAPI RAG service, tests override the embedding client dependency with a fake, so no test calls a real model endpoint.
 @p17-991
 S: tx
 D: A
 T: How do you test RxJS streams with marble testing?
 K: marble testing, rxjs testing, TestScheduler, cold hot observables test, test debounceTime
-X: Marble testing describes observable streams as small text diagrams, where each character is a frame of virtual time. A letter is an emitted value, a dash is time passing, a pipe is completion and a hash is an error. RxJS's TestScheduler runs the test in virtual time, so operators like debounceTime or delay finish instantly instead of waiting.
-X: Inside testScheduler.run, you create cold observables from marble strings, apply your operator chain, and use expectObservable to compare the result with an expected marble diagram and a values map. Time can also be written explicitly, like 300 milliseconds, which makes debounce tests readable.
-X: This is most useful for custom operators and complex chains, such as a type-ahead search that debounces, ignores duplicates, cancels old requests with switchMap and handles errors. Testing that with real timers is slow and flaky; with marbles it's precise and deterministic. You can also check subscription timing with expectSubscriptions, which proves an old request was really unsubscribed.
-X: For simpler cases, like a service method that just maps an HTTP response, marbles are overkill. Subscribing and checking the value, or using firstValueFrom with an async test, is clearer.
+X: Marble testing describes observable streams as little text diagrams, where each character is a frame of virtual time. A letter is an emitted value, a dash is time passing, a pipe is completion and a hash is an error. RxJS's TestScheduler runs the test in virtual time, so operators like debounceTime or delay finish instantly instead of actually waiting.
+X: Inside the test scheduler's run, you create cold observables from marble strings, apply your operator chain, and use expectObservable to compare the result with an expected marble diagram and a values map. You can also write time explicitly, like 300 milliseconds, which makes debounce tests readable.
+X: It's most useful for custom operators and complex chains, like a type-ahead search that debounces, ignores duplicates, cancels old requests with switchMap and handles errors. Testing that with real timers is slow and flaky, with marbles it's precise and deterministic. You can also check subscription timing with expectSubscriptions, which proves an old request really got unsubscribed.
+X: For simpler cases, like a service method that just maps an HTTP response, honestly marbles are overkill. Subscribing and checking the value, or using firstValueFrom with an async test, is clearer.
 X: In our Angular study builder, the search-and-filter panel used a chain of debounce, distinct and switchMap. Marble tests caught a bug where an error from one search killed the stream permanently, so later searches did nothing. Adding catchError inside the switchMap fixed it, and the marble test now guards that behaviour.
 @p17-992
 S: tx
 D: A
 T: How do xUnit fixtures and parallel test execution work?
 K: xunit fixtures, IClassFixture, ICollectionFixture, xunit parallel, test collections, shared context xunit
-X: xUnit creates a new instance of the test class for every test method, so the constructor is your per-test setup and Dispose is the teardown. That isolation is good, but expensive setup, like starting a database container, shouldn't run for every test.
-X: Fixtures solve that. IClassFixture of T creates one shared object for all tests in a class, passed into the constructor. ICollectionFixture of T shares one object across several classes that belong to the same named collection. For async setup, the fixture implements IAsyncLifetime with InitializeAsync and DisposeAsync. A typical example is a WebApplicationFactory or a Testcontainers database shared by all integration test classes in one collection.
-X: Parallelism follows collections. By default, each test class is its own collection, and collections run in parallel, while tests inside one collection run one after another. So putting classes in the same collection to share a fixture also makes them run sequentially, which is often what you want for tests sharing a database.
-X: Things to watch: shared fixtures must not hold state that tests change, or test order starts to matter. Static state breaks parallel runs. You can tune parallelism with a runner configuration file or turn it off for a specific collection.
-X: In our integration tests, one collection fixture starts a SQL Server container and applies the schema once. Each test then runs inside a transaction that's rolled back, so tests stay independent and the whole suite runs in a couple of minutes.
+X: xUnit creates a new instance of the test class for every test method, so the constructor is your per-test setup and Dispose is the teardown. That isolation's good, but expensive setup, like starting a database container, shouldn't run for every single test.
+X: Fixtures solve that. A class fixture creates one shared object for all tests in a class, passed into the constructor. A collection fixture shares one object across several classes that belong to the same named collection. For async setup, the fixture implements IAsyncLifetime, with an async initialise and an async dispose. A typical example is a WebApplicationFactory or a Testcontainers database shared by all integration test classes in one collection.
+X: Parallelism follows collections. By default each test class is its own collection, and collections run in parallel, while tests inside one collection run one after another. So putting classes in the same collection to share a fixture also makes them run sequentially, which is usually what you want for tests sharing a database. People mix this up quite often.
+X: Things to watch. Shared fixtures mustn't hold state that tests change, or test order starts to matter. Static state breaks parallel runs. And you can tune parallelism with a runner config file, or turn it off for a specific collection.
+X: In our integration tests, one collection fixture starts a SQL Server container and applies the schema once. Each test then runs inside a transaction that gets rolled back, so tests stay independent and the whole suite runs in a couple of minutes.
 @p17-993
 S: tx
 D: A
 T: How do you test async Python code with pytest-asyncio?
 K: pytest asyncio, test async python, async fixtures pytest, anyio pytest, test fastapi async
-X: pytest doesn't run coroutines by itself, so async tests need a plugin. pytest-asyncio is the common one: you mark a test with the asyncio marker, or set asyncio mode to auto in configuration, and the plugin runs it in an event loop. The anyio plugin is an alternative and also supports trio.
-X: Fixtures can be async too. An async fixture with yield can open a database connection or an HTTP client before the test and close it afterwards. Fixture scope matters: a session-scoped async fixture needs an event loop that lives for the whole session, and newer pytest-asyncio versions let you set the loop scope explicitly, because mismatched loop scopes cause confusing errors about the loop being closed or attached to a different loop.
+X: pytest doesn't run coroutines by itself, so async tests need a plugin. pytest-asyncio is the common one. You mark a test with the asyncio marker, or set asyncio mode to auto in config, and the plugin runs it in an event loop. The anyio plugin's an alternative and also supports trio.
+X: Fixtures can be async too. An async fixture with yield can open a database connection or an HTTP client before the test and close it afterwards. Fixture scope matters here. A session-scoped async fixture needs an event loop that lives for the whole session, and newer pytest-asyncio versions let you set the loop scope explicitly, because mismatched loop scopes cause really confusing errors about the loop being closed or attached to a different loop.
 X: For FastAPI, I use httpx's AsyncClient with an ASGI transport pointed at the app, which calls the app in-process without a real server. Dependency overrides swap real clients for fakes.
-X: To mock async functions, use AsyncMock, so awaiting the mock works. For timing behaviour, keep timeouts small in tests, and avoid real sleeps; inject a clock or patch the sleep function.
-X: A common mistake is calling an async function without awaiting it, which creates a coroutine that never runs, so the test passes without testing anything. Turning warnings into errors in pytest configuration catches the never-awaited warning.
+X: To mock async functions, use AsyncMock, so awaiting the mock works. For timing behaviour, keep timeouts small in tests and avoid real sleeps. Inject a clock or patch the sleep function.
+X: One thing people miss is calling an async function without awaiting it, which creates a coroutine that never runs, so the test passes without testing anything. Turning warnings into errors in pytest config catches the never-awaited warning.
 X: In our RAG service, async tests cover the retrieval endpoint against a real Postgres container, with the embedding call replaced by a deterministic fake.
 @p17-994
 S: tx
 D: A
 T: How do you test AWS code locally with LocalStack or moto?
 K: localstack, moto, test aws locally, mock aws services, s3 sqs local testing, aws integration tests
-X: Code that calls AWS services, like S3, SQS or DynamoDB, is hard to test against real AWS: it's slow, costs money and needs credentials. Two tools help.
+X: Code that calls AWS services, S3, SQS or DynamoDB, is a pain to test against real AWS. It's slow, costs money and needs credentials. Two tools help here.
 X: moto is a Python library that mocks AWS APIs in memory. With a decorator or context manager, boto3 calls go to moto instead of AWS, so you can create a bucket, put an object and test your code's behaviour in milliseconds. It's ideal for unit tests of Python code.
 X: LocalStack runs emulated AWS services in a Docker container with real HTTP endpoints. Any SDK, including .NET and Node, can point at it by overriding the service URL. It's better for integration tests and local development, and it works with Testcontainers, so each test run gets a fresh instance.
-X: The trade-off is fidelity. Emulators don't perfectly copy AWS behaviour, especially IAM permissions, limits and edge cases, and some services are paid-only in LocalStack. So code can pass locally and still fail in AWS because of a missing permission. I still run a small set of smoke tests against a real test account after deployment.
+X: The catch is fidelity. Emulators don't perfectly copy AWS behaviour, especially IAM permissions, limits and edge cases, and some services are paid-only in LocalStack. So code can pass locally and still fail in AWS because of a missing permission. I still run a small set of smoke tests against a real test account after deployment.
 X: Make the endpoint configurable rather than writing special code paths for testing. In .NET, the AWS SDK's service URL setting can be overridden through configuration in the test environment.
-X: For a newer service storing files in S3 and processing them through SQS, LocalStack in Testcontainers let us test the full upload, event and processing flow in CI, which caught a message format bug that unit tests with mocks never would.
+X: For one of IQVIA's newer services storing files in S3 and processing them through SQS, LocalStack in Testcontainers let us test the whole upload, event and processing flow in CI, and I'd say it caught a message format bug that unit tests with mocks never would have.
 @p17-995
 S: tx
 D: A
 T: How do you test Azure code locally with Azurite and emulators?
 K: azurite, azure storage emulator, cosmos db emulator, service bus emulator, test azure locally, azure integration tests
 X: Azure has local emulators for several services, so integration tests can run in CI without real cloud resources.
-X: Azurite emulates Azure Storage: blobs, queues and tables. It runs as a Docker container or npm package, and the SDK connects with the well-known development connection string. It's good for testing file uploads, blob triggers in Azure Functions and queue processing.
+X: Azurite emulates Azure Storage, blobs, queues and tables. It runs as a Docker container or an npm package, and the SDK connects with the well-known development connection string. It's good for testing file uploads, blob triggers in Azure Functions, and queue processing.
 X: The Cosmos DB emulator runs locally, including a Linux container version, and supports the main APIs, which is useful for testing queries and partition key design.
-X: The Service Bus emulator, released more recently, runs in Docker with a configuration file that defines queues and topics, so you can test sessions, dead-lettering and message handling without a namespace in Azure. Event Hubs also has an emulator.
-X: For Azure Functions, Core Tools run functions locally with these emulators. Testcontainers has modules for Azurite, Cosmos and Service Bus, so each test run gets clean instances automatically.
-X: Limitations are similar to any emulator. Authentication is simplified, so managed identity and RBAC aren't tested; performance and throttling differ; and some features are missing. So I keep connection settings configurable, run most tests against emulators, and run a few smoke tests against a real test subscription after deployment, which is where permission problems actually show up.
+X: The Service Bus emulator, which came out more recently, runs in Docker with a config file that defines queues and topics, so you can test sessions, dead-lettering and message handling without a namespace in Azure. Event Hubs has an emulator as well.
+X: For Azure Functions, Core Tools run functions locally against these emulators. Testcontainers has modules for Azurite, Cosmos and Service Bus, so each test run gets clean instances automatically.
+X: The limitations are like any emulator, you know. Authentication's simplified, so managed identity and RBAC aren't tested, performance and throttling differ, and some features are missing. So I keep connection settings configurable, run most tests against emulators, and run a few smoke tests against a real test subscription after deployment, which is where permission problems actually show up.
 X: In a team learning Azure, emulators also make onboarding easier, because a developer can run the whole system locally on day one without waiting for cloud access.
 @p17-996
 S: tx
