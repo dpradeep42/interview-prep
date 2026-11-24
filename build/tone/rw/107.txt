@@ -1,0 +1,111 @@
+@p4-8
+Honestly, I'm mainly expecting three things.
+
+Bigger ownership is the main one, being trusted with design decisions and with production systems, not only implementing tickets. I've already been doing that with releases and the MCP platform, so I'm ready for more.
+
+Then a strong engineering culture. Proper code reviews, CI/CD, good monitoring and observability, blameless post-mortems when things go wrong, and some time to learn. In my current team, our post-incident reviews after the RabbitMQ outage led to real fixes, and I value that kind of honesty.
+
+And a modern stack that's open to AI tools and new ideas, plus a clear growth path, from senior towards lead or architect, with honest feedback along the way.
+
+In return, I bring reliable delivery, ownership of production quality, and a habit of improving the team's tooling. That's pretty much what I'm looking for, and from what I've seen so far, this role offers it.
+
+@p4-9
+Honestly, it started because my first job at DXC was in C# and .NET. But I stayed because I think it's one of the best platforms for enterprise backends.
+
+There are a few reasons for that. C# is strongly typed, which catches a lot of mistakes at compile time, and the tooling, Visual Studio, Rider and the debugger, is excellent. Since .NET Core it's cross-platform, so the newer IQVIA services I work on run in Linux containers on AWS, while CIRT runs on IIS. Performance is very good, with Kestrel among the fastest web servers, and features like async/await, dependency injection, configuration and logging are built into the framework instead of bolted on.
+
+For a regulated product like ours, Microsoft's predictable long-term support releases matter too, because we can plan upgrades. Like, we moved services to .NET 10 in [early 2026] and got about [10-15%] better p95 latency without changing business logic.
+
+That said, I'm not religious about it. I also build Node and Python services when they fit better. I can compare .NET with Node or Java if you like.
+
+@p4-10
+I'd say I didn't move away from backend. I added AI on top of it, because it multiplies what a backend engineer can do.
+
+It started with a real problem. Our deployments took about 6 hours and 6 people, mostly repetitive, checklist-driven steps on Azure DevOps. When MCP, the Model Context Protocol, came out, I saw it was a safe, standard way to let AI agents call real tools. So I built the CIRT MCP server with about 77 tools, and deployments went from 6 hours to 2 and from 6 people to 1. I built it in .NET 8. Then I built a RAG service in Python that gives GitHub Copilot and Cursor the context of our codebase and coding standards, so AI-written code fits our project and hallucinates less.
+
+Building it was mostly backend work, API design, orchestration, security, audit and error handling. That's also how I use AI generally, where it removes repetitive work, like deployments, test scaffolding and log triage, while humans stay in charge of approvals and design decisions. I also review AI-generated code carefully for security and accuracy.
+
+So for me AI is a tool to deliver faster and safer, and my core is still backend engineering. I can explain how I kept the MCP server safe if that's useful.
+
+@p4-11
+So I call myself full-stack because I can deliver a feature end to end, from the database to the screen and into production, although my real depth is in the backend.
+
+On the backend I build .NET services and ASP.NET Core APIs, with EF Core and SQL Server. On the frontend I build React and TypeScript components and I've worked on Angular modules in the IRT UI, since our product started on Angular and is moving to React module by module, things like forms, data tables and error displays, using reusable components and proper state handling. I also write Playwright end-to-end tests, and I handle the pipeline and release side in Azure DevOps.
+
+A good example is the CSV bulk import. I built the backend parsing, validation and transactional save, and also the React upload screen that shows a preview of every error by row number before the user saves.
+
+Working across layers means fewer hand-offs and I understand the whole user flow. But if you ask me where I'm strongest, it's APIs, data and distributed systems. I can go deeper on either side.
+
+@p4-12
+I'm strongest in C# and .NET backend development, ASP.NET Core Web API, EF Core and SQL Server.
+
+I've worked with this stack every day for over four years on IRT, so I'm comfortable with what matters in production, async and threading, dependency injection lifetimes, middleware and filters, configuration with the Options pattern, EF Core performance like AsNoTracking and avoiding N+1 queries, and SQL indexing and execution plans. I also have solid distributed-systems basics, like messaging with RabbitMQ and Kafka, retries, idempotent consumers and the outbox pattern.
+
+A close second, I'd say, is CI/CD and release automation, because I own release integration for our team and built the MCP server that runs our deployments.
+
+A concrete example is the slow shipment-list query I fixed, from [9 seconds to under 300 milliseconds], by making it SARGable and adding a covering index. I'm happy to go deeper into any part of the .NET stack.
+
+@p4-13
+I'd say Java and Spring Boot. I have worked on Spring Boot services, so I can read the code, fix bugs and extend features, but I'm much stronger in .NET.
+
+The good part is that the concepts map almost one to one. Spring's IoC container is like the .NET DI container, controllers are very similar, Spring Data JPA with Hibernate is close to EF Core, and profiles are like appsettings per environment. So when I work in Spring I'm mostly learning syntax and conventions, not new ideas, and I'd ramp up quickly.
+
+The other area is Kubernetes cluster administration. I write deployment YAML, deploy services and debug pods, but platform teams run the clusters themselves, things like node pools and networking.
+
+I'm working on both. Like, when I picked up a Spring service, I compared it side by side with our .NET patterns and was productive within [a couple of weeks]. I'm open about these gaps and I close them quickly, honestly.
+
+@p4-14
+It really depends on the team's skills and the workload, but I can tell you my default choices and why.
+
+For a core business service, I'd go with ASP.NET Core on .NET 10, which is a long-term support release, with EF Core and SQL Server, or DynamoDB if the access patterns are simple key lookups at high scale. I'd run it in containers on ECS, define infrastructure with Terraform, and use RabbitMQ or Kafka for events. Kafka if we need high throughput and replay, RabbitMQ for task queues and routing.
+
+For lightweight glue or tooling, I might use Node with TypeScript, and Python for data processing or AI scripting. For the UI, React with TypeScript, which is also where our own product is heading, moving from Angular module by module.
+
+I'd also start with a well-structured modular monolith unless there's a clear reason for microservices, like separate teams or very different scaling needs. And things like compliance, latency targets and what the team already knows can override my preferences.
+
+Like, I built our MCP server in C# with the official C# MCP SDK, packaged as a .NET global tool, because the team and our deployment code were already .NET. I can explain that choice if you like.
+
+@p4-15
+Without AI, my core strength is shipping reliable .NET backend services in a regulated environment, and owning them in production.
+
+That covers the whole lifecycle. I design and build APIs and services with ASP.NET Core, EF Core and SQL Server, with messaging through RabbitMQ and Kafka. I care about quality, tests up front for risky logic, configuration validated at startup, and monitoring in place before a release. And I own releases, merging, tagging and verifying deployments through FV, TechOps, UAT and production.
+
+Honestly, most of my best stories have nothing to do with AI. I root-caused a RabbitMQ outage and fixed it with publisher confirms. I fixed a slow shipment query from [9 seconds to under 300 milliseconds]. I fixed SSO failures by shrinking an oversized cookie from [~13 KB to under 1 KB]. And I delivered the CSV bulk import, which is live in production.
+
+Even the MCP server is really backend engineering, API design, orchestration, security and audit. AI is a multiplier on top. I can go into any of those stories.
+
+@p4-16
+It's a mix, and I try to be precise about what was mine and what was the team's.
+
+Some work was individual. I designed and built the CIRT MCP server on my own. I owned the SFTP integration component and the Rebex release to production. I built the study-transfer safety guard, and I led several production investigations, like the RabbitMQ outage and the SSO cookie issue.
+
+Other work was team-based, and there I can tell you my part. Our IRT microservices are built by the whole team. In the .NET 10 upgrade, I owned [3] of the services. In the CSV bulk import, I owned the design and most of the build, working closely with the BA and QA. And releases involve [5] scrum teams, where my part is integration and verification.
+
+So when I describe something I'll say "I" for my own work and "we" for team work. I think that honesty matters in an interview. Which of these would you like me to go into?
+
+@p4-17
+The four main OOP principles are encapsulation, abstraction, inheritance and polymorphism.
+
+Encapsulation means an object keeps its data private and changes it only through its own methods, so it protects its rules. Abstraction means exposing what something does and hiding how it does it, usually through an interface. Inheritance lets a class reuse and extend the behaviour of a base class. And polymorphism means one interface, many implementations, where the right method is picked at runtime.
+
+They work best together, honestly. In my SFTP integration component, business code depends on an ISftpClient interface, which is abstraction. Three providers, ComponentPro, SSH.NET and Rebex, implement it, which is polymorphism, since the caller just calls UploadAsync and configuration decides which one runs. They inherit shared retry and logging logic from a base class, which is inheritance. And each provider keeps its connection details private, which is encapsulation.
+
+In practice I prefer composition over deep inheritance trees. I can go deeper into any of the four.
+
+@p4-18
+Encapsulation basically means bundling an object's data with the methods that change it, and hiding the internal state, so the object can protect its own rules.
+
+In C# that means private fields, properties with private setters where needed, and public methods that enforce business rules. The outside world can only ask the object to do something, it can't put it into an invalid state directly. What you get is the rules living in one place, so the data stays valid and the code is safer to change later, because callers don't depend on the internals.
+
+A real example is a shipment in our system. Instead of a public Status property anyone can set, the Shipment class has methods like MarkDispatched and MarkDelivered. MarkDelivered checks that the shipment was actually dispatched, and records the time. If someone tries to deliver a cancelled shipment, it throws a clear domain exception. In a GxP system that matters a lot, because every state change has to be valid and auditable.
+
+I can explain how this relates to rich versus anaemic domain models if that helps.
+
+@p4-19
+Inheritance lets a class reuse and extend the behaviour of another class, called the base class. It models an "is-a" relationship, like a Rebex SFTP client is an SFTP client.
+
+In C#, a class can inherit from only one base class, but it can implement many interfaces. The derived class gets the base members, can add its own, and can override virtual methods to change behaviour. It's powerful for sharing real code, but it creates tight coupling, because changes in the base class ripple into every child. Deep hierarchies also get hard to understand.
+
+So I use it carefully. In our SFTP component, an abstract SftpClientBase class holds the common retry, timeout and logging logic, and each provider class inherits it and only implements the library-specific connect, upload and download. That removed a lot of duplication.
+
+But when the relationship is really "has-a", or behaviour varies a lot, I'd go with composition, injecting a collaborator instead of inheriting. I can talk about when I'd avoid inheritance if you like.
