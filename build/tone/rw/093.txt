@@ -1,0 +1,107 @@
+@p1-61
+BDD, Behaviour-Driven Development, is basically an approach where we describe how the system should behave in plain language, agreed between business, QA and developers, and then automate those descriptions as tests. Cucumber's a popular tool for it.
+
+The scenarios are written in Gherkin, using Given, When, Then. Given sets the context, When is the action, and Then is the expected outcome. Like, Given a study with two sites and stock at the depot, When a subject is randomised at site one, Then a kit from the correct depot is assigned. Each line connects to code through step definitions, which do the actual work, like calling the API or driving the UI with Playwright.
+
+The big value is shared understanding. Business analysts and QA can read and review the scenarios, and the scenarios become living documentation. In a GxP product that's especially useful, because each scenario traces back to a requirement, and the test run produces evidence for validation.
+
+The risk is writing scenarios that are too technical or too detailed. I keep them focused on behaviour, not clicks. I can show how we structure step definitions.
+
+@p1-62
+A SonarQube quality gate is a set of pass or fail conditions code has to meet before it can be merged or released.
+
+SonarQube analyses the code in the CI pipeline. It finds bugs, vulnerabilities, security hotspots, code smells and duplication, and it reads test coverage reports. The quality gate then checks conditions, usually focused on new code. Like coverage on new code above 80 percent, no new bugs or vulnerabilities, all security hotspots reviewed, and duplication below a limit. If any condition fails, the gate fails, and the pipeline blocks the pull request or release.
+
+Focusing on new code is clever, honestly, because you don't have to fix a whole legacy codebase at once. Quality improves gradually with every change, and it can never get worse.
+
+In our regulated environment, it also gives auditors objective evidence that every release met defined quality standards. My approach is to fix issues at the source, not suppress them. If a rule genuinely doesn't apply, we mark it with a documented reason. I can explain how we keep coverage meaningful rather than just hitting a number.
+
+@p1-63
+Jest is a JavaScript testing framework. It runs tests, gives you assertions and mocking, and measures coverage, all in one tool.
+
+For Node.js code, I write tests with describe and it blocks, and expect for assertions. For dependencies, jest dot fn creates mock functions, and jest dot mock replaces whole modules, like a database client or an HTTP library, so the logic's tested in isolation. Async code is easy to test with async and await. For React components, I combine Jest with React Testing Library. I render the component, query elements the way a user would, by role or label text, simulate user events like typing and clicking with user-event, and assert what shows up on screen. That tests behaviour, not implementation details like internal state.
+
+I use snapshot tests sparingly, because large snapshots get approved without anyone reading them. And for API calls in components, Mock Service Worker gives realistic network mocks.
+
+In our React work, every new component came with Testing Library tests for its key states, loading, error, empty and data. Tests run with coverage in CI. I can show a sample component test.
+
+@p1-64
+In a code review, I look at the change from a few angles, roughly in order of risk.
+
+Correctness comes before anything, does it do what the story says, and does it handle edge cases like null, empty lists, concurrency and failure paths? Then security, input validation, authorization checks, especially study-level access in our system, no secrets in code, no injection risks, and no sensitive or patient data in logs. Then design and readability, clear naming, single responsibility, no duplication, and code the next person can understand. Then tests, are there tests for the change, and do they test behaviour, not implementation? And performance and operability, N+1 queries, missing async, missing indexes, and whether there are useful logs and metrics if it fails in production.
+
+Style issues are for linters and analysers, not people, so I don't spend review time on formatting.
+
+And how I review matters too. I ask questions instead of giving orders, explain the why, mark minor points as optional, and praise good solutions. When I mentored [two graduate developers in 2024], code reviews were honestly one of the best teaching tools. I can give an example of a bug I caught in review.
+
+@p1-65
+In a GxP regulated product, like our clinical trial IRT system, testing isn't just about finding bugs. It's about proving, with documented evidence, that the system does what it's supposed to do, because errors can affect patient safety and trial data integrity.
+
+That changes a few things. Every requirement has to trace to tests and their results, through a traceability matrix. Validation phases, like formal verification, FV, and user acceptance, UAT, are formal, with documented test scripts, results and sign-offs. Every change needs an impact assessment, to decide what has to be retested, plus regression testing. And releases follow a quality process with audit trails, so you can show who approved what and when.
+
+Automation helps a lot. Our Playwright and Cucumber suites make regression fast and repeatable, and they generate evidence automatically. But the evidence still has to be reviewed and stored properly, and automated tools themselves might need validation.
+
+For developers, this means writing testable code, documenting changes clearly, and never making untracked changes. I've seen how this discipline catches problems early, especially before anything reaches a validated environment.
+
+@p1-66
+Hooks let function components do everything class components used to do with lifecycle methods, but organised by concern instead of by lifecycle.
+
+useState holds local state. useEffect runs side effects after render, and it covers the three main lifecycle methods. With an empty dependency array, it runs once after the first render, like componentDidMount. With dependencies, it runs again whenever they change, like componentDidUpdate for those values. And the cleanup function you return runs before the next effect and when the component unmounts, like componentWillUnmount, which is where I cancel requests or remove listeners. useRef keeps a mutable value or a DOM reference without causing re-renders, useContext reads shared context, and useMemo and useCallback help with performance.
+
+The big advantage, for me, is custom hooks. Logic like fetching data, with loading and error state, can be pulled into a hook like useShipments and reused across components, which was awkward with classes.
+
+In our React screens, we have custom hooks for API calls with cancellation, so leaving a page aborts the request. A common bug I watch for is a missing dependency, which causes stale values. I can explain that.
+
+@p1-67
+Redux is a pattern for managing shared application state in one predictable place, and Redux Toolkit is the official, modern way to write it with way less boilerplate.
+
+The core flow is, a single store holds the state. Components dispatch actions, which describe what happened. Reducers, which are pure functions, take the current state and an action and return the next state. Components subscribed to that part of the state re-render. Redux Toolkit simplifies all this. createSlice defines the state, reducers and action creators together, and uses Immer, so you can write code that looks like it mutates state, while it actually produces a new immutable state. configureStore sets up the store with good defaults and dev tools. For API calls, createAsyncThunk handles async logic, and RTK Query goes further, handling fetching, caching and invalidation for you.
+
+One design choice I'm strict about is not putting everything in Redux. Server data is best handled by RTK Query or a similar data-fetching library, and local UI state stays in components.
+
+In our React work, we used slices for things like the selected study and user preferences, and RTK Query for API data. I can explain cache invalidation with tags.
+
+@p1-68
+Reusable UI components are about making something easy to use correctly in many places, without it turning into a mess of special cases.
+
+I keep components small and focused, with clearly typed props through TypeScript interfaces, so the contract's obvious. I prefer composition over configuration, accepting children or slots instead of adding a new boolean flag for every variation, because twenty flags usually means the component's doing too much. I keep them presentational, so they get data through props, and data fetching lives in container components or custom hooks. They should be accessible by default, with proper labels, keyboard support and focus handling, and use theme tokens for colours and spacing instead of hard-coded values. And they're documented, say in Storybook, and tested with Testing Library.
+
+A good test of reusability, I think, is whether another developer can use it correctly just by reading the props.
+
+In our React UI, I built a reusable data table component, with sorting, paging, empty and loading states, and accessible headers. It replaced several slightly different tables across screens, and fixes now happen in one place. I can explain how I decided its API.
+
+@p1-69
+React performance work starts with measuring. I use the React DevTools Profiler to see which components re-render and how long they take, before changing anything.
+
+The most common problem is unnecessary re-renders. When a parent re-renders, all children re-render by default. React dot memo lets a component skip rendering when its props haven't changed. useMemo caches expensive calculations, and useCallback keeps function references stable, so memoised children aren't re-rendered just because a new function was created. I keep state as local as possible, because state high up the tree re-renders everything below it. For lists, I use stable unique keys, not array indexes, and for long lists or big tables, virtualisation, which only renders visible rows. For load time, I split code with React dot lazy and Suspense, so each screen loads only its own code.
+
+I don't wrap everything in memo by default, because memoisation has its own cost. I use it where the profiler shows a real problem.
+
+In our IRT UI, a site inventory table with thousands of rows was slow. Virtualising the rows and memoising the row component made scrolling smooth again. I can explain the new React compiler too.
+
+@p1-70
+TypeScript adds static types on top of JavaScript. The code compiles to normal JavaScript, but type errors get caught while you write code, instead of in production.
+
+You get real wins from it. Errors like misspelled properties or passing the wrong type are caught at compile time, the editor gives accurate autocompletion, and refactoring is much safer, because renaming something shows every place it breaks. Types also document the code, especially API contracts. I always use strict mode and avoid any, which basically switches the checks off.
+
+On interface versus type, both can describe object shapes, and for most cases either works. Interfaces can be extended and can be declaration-merged, meaning two declarations with the same name combine. That makes them good for object shapes and public contracts. Type aliases are more flexible. They can describe unions, like "Pending" or "Shipped", intersections, tuples, and advanced mapped and conditional types. My usual rule is interface for object shapes and props, and type for unions and compositions.
+
+In our front end, we generate TypeScript types from our OpenAPI documents, so the front end and API stay in sync, and a backend contract change shows up as a compile error. I can show how that works.
+
+@p1-71
+Angular and React can build the same applications, but honestly they're different kinds of tools.
+
+Angular is a complete, opinionated framework from Google. It includes modules or standalone components, dependency injection, a router, forms, an HTTP client and RxJS for async streams, all built in, and it's TypeScript-first. Teams get one consistent way of doing things, which suits large enterprise apps. React is a UI library from Meta. It focuses on rendering components with JSX and hooks, and you pick the rest yourself, like the router, state management with Redux Toolkit, and data fetching. That gives flexibility, but needs more decisions. On rendering, Angular uses change detection, traditionally with zone.js and now with signals for fine-grained updates. React re-renders components and reconciles a virtual DOM.
+
+My view is either works well. Angular for large teams that want structure out of the box, React for flexibility and its huge ecosystem.
+
+I've worked with both on IRT. Our legacy portal is ASP.NET MVC with Angular 8 and 12 sub-applications, and we're moving to React with TypeScript, module by module, using IQVIA's MUI-based design system. Both are component-based, and our newer study builder is on Angular 17. So I maintain Angular modules and build new React screens.
+
+@p1-72
+The event loop is how JavaScript handles asynchronous work, even though it runs your code on a single thread.
+
+There's one call stack, where your code runs. When you start async work, like a timer, a network request or file I/O, it's handed off to the browser or, in Node, to libuv, which does it in the background. When it's done, its callback goes into a queue. The event loop's job is simple, whenever the call stack is empty, take the next task and run it. There are two kinds of queues. Microtasks, which are promise callbacks and awaits, and macrotasks, like setTimeout and I/O callbacks. After each task, the loop runs all pending microtasks first, then takes the next macrotask. That's why a resolved promise's then runs before a setTimeout with zero delay. That ordering catches people out in interviews a lot.
+
+The practical lesson is that long synchronous code blocks everything, because nothing else can run while the stack's busy. In the browser the UI freezes, and in Node every request waits. So heavy CPU work goes to Web Workers or worker threads.
+
+I can walk through a small code example that shows the ordering.
