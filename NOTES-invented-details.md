@@ -1026,3 +1026,11 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
   - I used a pipeline of a file read stream, a CSV parser and a batching transform to load large extract files without memory spikes.
 - **p17-456** Azure SQL Database vs Managed Instance vs SQL Server on a VM: how do you choose?
   - and some cross-database queries
+- **p17-511** ENTRYPOINT vs CMD, and why does PID 1 matter for graceful shutdown?
+  - "dotnet", "Shipments.Api.dll"
+- **p17-529** Can you run .NET Framework apps in containers?
+  - option to evaluate
+- **p17-582** How would you test a randomisation algorithm in a clinical trial system?
+  - like 100,000 simulated patients
+- **p17-600** What is Prometheus, and how do you write basic PromQL queries?
+  - 5m

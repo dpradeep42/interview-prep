@@ -28,7 +28,7 @@ const CASES = [
  ['rag vs long context', ['p15-25']], ['rag security', ['p15-26']], ['rag failure modes', ['p15-28']], ['python rag stack', ['p15-29']], ['rag for end users', ['p15-31']], ['rag adoption', ['p15-33']],
  ['agents vs workflows', ['p15-36']], ['context window', ['p15-37']], ['temperature', ['p15-38']], ['guardrails', ['p15-39']], ['responsible ai gxp', ['p15-40']], ['cursor rules', ['p15-41']], ['ai code review', ['p15-42']], ['system prompt', ['p15-43']], ['structured output', ['p15-44']],
  ['overall architecture irt', ['p16-1']], ['legacy transaction engine', ['p16-2']], ['database per study', ['p16-3']], ['mulesoft to dotnet', ['p16-4']], ['irt integrations', ['p16-5']], ['keycloak', ['p16-6']], ['quartz', ['p16-7']],
- ['rabbitmq in irt', ['p16-8']], ['cache study configuration', ['p16-9']], ['mediatr fluentvalidation', ['p16-10']], ['splunk', ['p16-11']], ['temperature excursion', ['p16-14']], ['material block', ['p16-15']], ['manual drug assignment', ['p16-16']],
+ ['rabbitmq in irt', ['p16-8']], ['cache study configuration', ['p16-9']], ['mediatr fluentvalidation', ['p16-10']], ['splunk', ['p17-603', 'p16-11']], ['temperature excursion', ['p16-14']], ['material block', ['p16-15']], ['manual drug assignment', ['p16-16']],
  ['supply forecasting', ['p16-17']], ['study transfer between environments', ['p16-18']], ['npm packages shell app', ['p16-19']], ['electronic signature', ['p16-20']], ['production data correction', ['p16-21']], ['alertwatchdog azure functions', ['p14-34']],
  ['90 second self introduction', ['p17-1']],
  ['microservice boundaries', ['p17-2']],
