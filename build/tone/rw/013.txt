@@ -1,0 +1,131 @@
+@p17-144
+So the Builder pattern builds a complex object step by step, usually with a fluent interface, and you get the final object at the end with a Build method. It's useful when an object has lots of optional parts, or the construction steps need validation, where a constructor with ten parameters would just be confusing and easy to get wrong.
+
+ASP.NET Core itself is full of builders. WebApplication.CreateBuilder sets up services, configuration and logging, and then Build gives you the app. The configuration builder, the host builder, EF Core's ModelBuilder, all builders. Even StringBuilder is a simple builder for strings.
+
+In my own code, I use builders a lot for test data, honestly that's where they shine. A ShipmentBuilder has sensible defaults for every field, and methods like WithStatus, WithSite, WithKits. So a test only says what matters to it, like a new ShipmentBuilder, with status Delivered, then Build. Tests get shorter and clearer. And when the Shipment class gets a new required field, I update only the builder, not hundreds of tests.
+
+Another use is building complex queries or requests, like a report filter, or an email message with optional attachments and recipients, where Build checks that the required parts are there.
+
+For simple objects though, object initialisers with required and init properties are enough. I don't add a builder just for the sake of it.
+
+@p17-145
+The Observer pattern lets one object, the subject, notify a bunch of other objects, the observers, when something changes, without knowing who they are. Observers subscribe and unsubscribe, and the subject just raises a notification. It keeps them loosely coupled.
+
+In C#, events are basically the built-in implementation. A class declares an event, like ShipmentStatusChanged, other objects subscribe with plus-equals and a handler, and when the class raises the event, every subscriber gets called. IObservable and IObserver are the more formal interfaces, and Rx.NET builds a powerful reactive library on them. RxJS in Angular follows the same idea actually.
+
+The big gotcha with events is memory leaks. The subject holds references to the subscribers' handlers, so a long-lived subject, like a singleton, keeps short-lived subscribers alive if they never unsubscribe. So I always unsubscribe, usually in Dispose.
+
+Exceptions are another issue. If one handler throws, the handlers after it don't get called.
+
+Honestly, in modern web back ends I rarely use C# events for business logic. Inside a service, I use domain events with MediatR notifications, which play well with DI and scoped services. And across services, the same idea becomes publish-subscribe messaging through RabbitMQ or Kafka. So the pattern is everywhere, just in different forms.
+
+@p17-146
+The Adapter pattern takes a class with an incompatible interface and makes it usable where a different interface is expected, by wrapping it in an adapter that translates the calls. Like a travel plug adapter, basically.
+
+I mostly use it to isolate third-party libraries and external systems. Let me take a real one. Our SFTP integration had to support three different SFTP libraries, and each one has its own classes, method names, exceptions and connection handling. So I defined our own simple interface, ISftpClient, with just the operations we need, like Connect, Upload, Download and List. Then one adapter per library, each implementing ISftpClient and translating calls and exceptions into our own types. The rest of the code only knows ISftpClient.
+
+What that gave us, business code doesn't depend on the library, so switching or upgrading a library touches only the adapter. Our own small interface is easy to mock in unit tests. And library-specific exceptions get translated into ours, so callers handle errors the same way everywhere.
+
+Same idea applies to the anti-corruption layer for legacy systems, which is really an adapter at the service boundary.
+
+And just to compare, Decorator keeps the same interface and adds behaviour, and Facade simplifies a complex subsystem behind one easier interface. Adapter is purely about translating one interface into another.
+
+@p17-147
+In Chain of Responsibility, a request passes through a chain of handlers. Each handler decides, do I process it, pass it to the next one, or stop the chain here? And the sender doesn't know which handler ends up dealing with it.
+
+ASP.NET Core's middleware pipeline is the best-known example. Each middleware gets the HttpContext and a next delegate. It can do work before calling next, after it, or short-circuit, like the authentication middleware returning 401 without calling the rest. HttpClient's DelegatingHandlers and MediatR pipeline behaviours are the same idea.
+
+I've used it for validation and rule checks. Like before a subject can be randomised, a series of checks has to pass. Is the site active, is consent recorded, is the subject eligible, is there drug stock? Each check is a small class implementing a common interface. The chain runs them in order and stops with a clear message at the first failure. Adding a new rule means adding a class and registering it, nothing else gets touched, and each rule gets its own unit test.
+
+The risks, the order of handlers matters and has to be explicit, and it can get hard to see which handler did what. So I log the outcome of each step. That's saved me more than once when someone asked why a subject got blocked.
+
+@p17-148
+The Specification pattern puts a business rule, or query criteria, into its own small, named, reusable object. So instead of repeating the same Where conditions all over the place, I create a class like ActiveSitesInCountrySpecification that wraps the condition, and use it wherever I need that filter.
+
+A specification usually exposes an expression, so it works both with EF Core, which translates it to SQL, and in memory, to check a single object. And you can combine specifications with And, Or and Not, so complex rules get built from simple named ones.
+
+With repositories, it keeps the repository small. Instead of a method for every combination, like GetActiveSitesByCountryWithDepots, the repository has one method that takes a specification. The Ardalis.Specification library also lets specifications include related data, ordering and paging.
+
+What you get is business rules with names the business actually understands, the logic in one place, and each specification easy to unit test.
+
+The downside is more classes and more abstraction. Honestly, with EF Core, a lot of teams just use extension methods on IQueryable, like query dot ActiveOnly dot InCountry, which gives most of the benefit with less ceremony. That's often what I do too. I go for full specifications only when the rules are complex and reused heavily.
+
+@p17-149
+Template Method defines the skeleton of an algorithm in a base class, a fixed sequence of steps, and lets subclasses override specific steps without changing the overall flow.
+
+Let me take an example. Every file import follows the same process. Open the file, validate the header, read each row, validate the row, transform it, save in batches, write a summary. A base class, ImportJobBase, implements Run with that sequence, and declares abstract or virtual methods for the bits that differ, like ValidateRow and MapRow. A KitImportJob and a SiteImportJob only implement those bits. The common stuff, batching, error collection, logging, progress reporting, is written once, so every import behaves the same way.
+
+Hook methods are optional steps with an empty default, like OnCompleted, and subclasses override them only if they need to.
+
+The downside is it relies on inheritance. That's tight coupling between base and derived classes, and deep hierarchies get hard to follow. So honestly, in modern code I often prefer composition. One ImportRunner class that takes an IRowHandler strategy for the varying parts. Same consistent flow, but the parts are swappable and easier to test.
+
+BackgroundService in .NET is a small template method example actually. StartAsync is fixed, and you just override ExecuteAsync.
+
+@p17-150
+Clean architecture organises code in layers, with the business rules in the centre and the technical details on the outside. The core idea is the dependency rule, source code dependencies only point inward. Inner layers know nothing about the outer ones.
+
+In a typical .NET solution, you'd have four projects. Domain is at the centre, entities, value objects, domain events and business rules, with no dependency on frameworks or databases. Application has the use cases, commands and queries with their handlers, and it defines the interfaces it needs, like IShipmentRepository or IEmailSender. It depends only on Domain. Infrastructure implements those interfaces with real technology, EF Core, SQL Server, RabbitMQ, SMTP, external APIs. And the API layer, the presentation, has the controllers or minimal API endpoints and wires everything together with DI.
+
+Since Application defines the interfaces and Infrastructure implements them, the business logic doesn't depend on the database or frameworks. That's dependency inversion. So business rules are easy to unit test, and you can change technical details with less impact.
+
+The cost is more projects, more mapping, some ceremony. For a simple CRUD service, honestly, it's overkill.
+
+Our newer IRT APIs follow this structure, with MediatR handlers in the Application layer and EF Core in Infrastructure. So I work with it daily.
+
+@p17-151
+Vertical slice architecture organises code by feature instead of by technical layer. Each feature or use case, like CreateShipment or GetSiteInventory, gets its own folder or file with everything it needs, the request, validation, the handler with its data access, and the response. And slices are independent of each other.
+
+See, in a layered structure, adding one feature means touching a controller, a service, a repository, DTOs and mappings across several projects. With vertical slices, a change usually stays in one place, so it's easier to find, understand, and even delete code. Each slice can also pick the simplest approach it needs. One might use EF Core with projections, another raw SQL with Dapper, without forcing every feature through the same layers.
+
+Compared with clean architecture, which is about the direction of dependencies between layers, slices are about cohesion around features. They aren't really opposites. A lot of teams combine them, keep a shared domain model and infrastructure, but organise the application layer by feature, often with MediatR handlers.
+
+The risk with slices is duplication between them, and shared logic leaking around randomly. So when I notice repetition, I pull shared domain rules into the domain model.
+
+For CRUD-heavy services with lots of independent features, I like slices. For complex domains, I add a richer domain layer on top. That's how I'd balance it.
+
+@p17-152
+DRY, Don't Repeat Yourself, means each piece of knowledge should have one authoritative place in the code, so a change doesn't need to happen in ten places. KISS, Keep It Simple, means picking the simplest solution that works, because simple code is easier to understand, test and change. YAGNI, You Aren't Gonna Need It, means don't build features or abstractions for some imagined future need.
+
+Now DRY can go wrong, and I've seen it. It happens when you apply it to code that only looks similar but actually represents different business concepts. If I merge them into one shared method or base class, they're now coupled. When one changes for its own reasons, the shared code starts getting parameters and flags for each caller, and it becomes harder to understand than the duplication ever was. That's the wrong abstraction. A rule of thumb I like is the rule of three. Tolerate duplication twice, and abstract when the third case shows you the real pattern.
+
+Across microservices, DRY is even riskier. Sharing business code between services couples their deployments, so a little duplication is often the better deal.
+
+YAGNI and KISS go together. No generic plugin framework for one use case, no repository on top of a repository. I'd rather keep code simple and refactor when a real need shows up, with good tests backing me.
+
+@p17-153
+I use BenchmarkDotNet, because doing accurate micro-benchmarks by hand with a Stopwatch is surprisingly hard. The JIT needs warm-up, tiered compilation changes the code over time, the GC can pause right in the middle, and the compiler can optimise away code whose result isn't used. BenchmarkDotNet takes care of all that. It runs warm-up iterations, lots of measured iterations, in separate processes, and gives you stats like mean, error and standard deviation.
+
+I write a class with methods marked Benchmark, say comparing two ways of parsing a file line, mark one as the Baseline, add MemoryDiagnoser to see allocations per operation, and use Params to try different input sizes. Then I run it in Release mode, never Debug, with BenchmarkRunner.
+
+The results show time and allocated bytes per operation, and the ratio to the baseline. In a server app, honestly, allocations matter as much as time, because they drive GC pressure.
+
+A few practices I follow. Use realistic data. Return or consume the results so the code doesn't get eliminated. And remember a micro-benchmark only tells you about that tiny piece. Before optimising anything, I profile the real application first, with dotnet-trace or a profiler, to find the actual hot spot, and then use benchmarks to compare fixes.
+
+I also keep the important benchmarks in the repo, to catch regressions later.
+
+@p17-154
+These are the .NET diagnostic command-line tools, and they work on Windows, Linux and inside containers.
+
+dotnet-counters is always my first step. It shows live counters for a running process, CPU, working set, GC heap size, collections per generation, allocation rate, thread pool thread count and queue length, exception count, ASP.NET Core request rates. It quickly tells me what kind of problem I'm dealing with, a memory leak, GC pressure, or thread pool starvation, without stopping the app.
+
+dotnet-trace collects a detailed trace, like CPU sampling, over a period. I open it in Visual Studio, PerfView or speedscope to see which methods eat the most CPU. That's for "the service is slow and CPU is high".
+
+dotnet-dump captures a full memory dump, and you can analyse it with commands like dumpheap stat, to see which object types use the most memory, and gcroot, to see what's keeping an object alive. That's for memory leaks and hangs. And clrstack shows what every thread is doing, which helps a lot with deadlocks and blocked threads.
+
+dotnet-gcdump is a lighter heap snapshot, good for comparing two snapshots to find what's growing.
+
+In containers, I either include the tools in a debug image, or attach a sidecar sharing the diagnostics socket. And dumps contain real data, so we handle them securely. That's important in our domain.
+
+@p17-155
+In modern .NET, AssemblyLoadContext is the way to load plugin assemblies at runtime. It replaced AppDomains from .NET Framework.
+
+How it's structured, a shared contracts assembly defines the plugin interface, like IDataTransferJob, and both the host and the plugins reference it. Each plugin is built as a separate assembly with its own dependencies. At startup, the host scans a plugins folder, creates a custom AssemblyLoadContext per plugin, loads its main assembly, finds types implementing the interface, and creates them, usually with ActivatorUtilities so they get DI services.
+
+The custom load context uses AssemblyDependencyResolver, which reads the plugin's deps.json, so each plugin can use its own versions of dependencies without clashing with the host or other plugins. But the shared contracts assembly has to be loaded from the host's context. Otherwise the types won't match and casting to the interface fails. Honestly, that's the most common plugin bug.
+
+Load contexts can be collectible, so a plugin can be unloaded, but only if no references to it are left anywhere.
+
+A simpler alternative, when plugins are known at build time, is just to reference them as packages and register them in DI, selected by configuration. Often that's enough.
+
+Our newer data transfer APIs run integration jobs as plugins, so new vendor integrations can be added without changing the host. That's been really handy.

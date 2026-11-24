@@ -1010,7 +1010,7 @@ Facts that come from the resume (not invented): deployments 6 hours to 2, 6 peop
 - **p17-91** How do you secure webhooks you send and receive?
   - Our vendor status callbacks in the newer data transfer API verify an HMAC signature and timestamp before queuing the message.
 - **p17-108** What is multiple enumeration of IEnumerable, and why is it a problem?
-  - I once found a report that ran the same query three times because of this, and ToList fixed it.
+  - I once found a report that ran the same query three times because of this, and a single ToList fixed it.
 - **p17-206** What is a covering index, and what are INCLUDE columns?
   - Adding one covering index to the shipment search query removed a key lookup on about 40,000 rows and cut its time from several seconds to under 200 milliseconds.
 - **p17-213** What is Query Store, and how have you used it?

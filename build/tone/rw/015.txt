@@ -1,0 +1,141 @@
+@p17-168
+Route constraints restrict which values a route parameter accepts, so the route only matches when the value fits. You write them inside the route template after a colon. Like id colon int, id colon guid, code colon alpha, name with minlength 3, page with a range of 1 to 1000, or date colon datetime. You can combine a few, and there's regex for patterns.
+
+Mainly they're for disambiguating routes. Say I have shipments slash an int id, and also shipments slash a text reference for lookups by reference. The int constraint makes sure a numeric value goes to the first one, and anything else goes to the second. Without constraints, they'd just conflict.
+
+Now one thing people get wrong, constraints aren't validation. If a constraint fails, the route simply doesn't match, so the client gets a 404 Not Found, not a 400 Bad Request telling them what's wrong. That's really confusing for an API consumer who just passed a bad value. So I use constraints for routing decisions only, and do input validation separately, returning proper 400s with clear messages.
+
+You can also write custom constraints by implementing IRouteConstraint and registering them with a name, like a constraint that only matches valid study codes.
+
+And the datetime and decimal constraints use the invariant culture, which is good actually, because routes shouldn't depend on the server's culture.
+
+@p17-169
+So endpoint filters are basically the minimal API version of MVC action filters. They run before and after the endpoint handler. They can inspect and change the arguments, short-circuit with a different result, or modify the result after the handler runs.
+
+You add one with AddEndpointFilter on an endpoint or on a route group, either as a lambda or a class implementing IEndpointFilter. The filter gets an EndpointFilterInvocationContext, which gives you the HttpContext and the handler's arguments, plus a next delegate to call the rest of the pipeline.
+
+Where I use them, validation mostly. A generic filter finds the argument of a certain type, runs its FluentValidation validator, and returns a 400 validation problem if it fails, so the handler only ever runs with valid input. Also logging or timing for specific endpoints, checking a tenant or a feature flag, and wrapping results consistently.
+
+Filters on a route group apply to every endpoint in that group, which keeps cross-cutting logic in one place. And multiple filters run in the order you add them, like middleware.
+
+The difference from middleware is, endpoint filters run after routing. So they know which endpoint is executing and can see its typed arguments. Middleware runs for every request and only sees the raw HttpContext. So middleware for global stuff, endpoint filters for endpoint-specific stuff. That's how I split it.
+
+@p17-170
+MapGroup came in .NET 7. It creates a group of minimal API endpoints that share a common route prefix and common configuration. Like you create a shipments group with MapGroup on slash api slash shipments, and then call MapGet and MapPost on that group for the individual routes.
+
+The real benefit is applying configuration once to every endpoint in the group. RequireAuthorization with a policy, endpoint filters like validation, rate limiting, tags for OpenAPI docs, CORS policies, versioning. And groups can be nested, so an api group requires authentication, and an admin group inside it adds an admin policy on top.
+
+Honestly, it's also the key to organising minimal APIs in a bigger project. A common pattern is one static class per feature with an extension method, like MapShipmentEndpoints, which takes the route builder, creates the group and maps its endpoints. Then Program.cs just calls MapShipmentEndpoints and the same for each feature. So Program.cs stays small, each feature's endpoints live together, and it fits vertical slice architecture nicely. Some teams use libraries like Carter or FastEndpoints for even more structure.
+
+The handlers themselves I keep small. They bind input, call a service or MediatR, and return a typed result. The business logic lives somewhere else, not in the endpoint.
+
+@p17-171
+In minimal APIs, a handler can return results from the Results class, like Results.Ok or Results.NotFound, which give you the IResult interface. Or from TypedResults, which return concrete types, like Ok of ShipmentDto, or NotFound.
+
+TypedResults help you in two ways, really.
+
+One is OpenAPI documentation. Since the return type is concrete, the framework knows exactly what the endpoint returns, and generates the response schema and status codes automatically. No Produces attributes or extra metadata calls.
+
+The other is testing. In a unit test, I can call the handler directly, check the result is of type Ok of ShipmentDto, and look at its Value, without casting or spinning up an HTTP server.
+
+When a handler can return different things, like Ok or NotFound or ValidationProblem, I declare the return type as a union. Results of Ok of ShipmentDto, NotFound, ValidationProblem. Then the compiler checks the handler only returns those types, and OpenAPI documents all three responses. That's much clearer than returning IResult, where literally anything can come back.
+
+Performance-wise there's no big difference. It's mainly about correctness, docs and testability.
+
+So in new minimal APIs, I go with TypedResults and union return types by default, and plain Results only for quick prototypes.
+
+@p17-172
+Response compression shrinks the responses sent to the client, using algorithms like Brotli or Gzip. For JSON and HTML, you can get something like 70 to 90 percent smaller, which cuts bandwidth and speeds things up on slower networks.
+
+The client says what it supports in the Accept-Encoding header, and the server compresses the response and sets Content-Encoding.
+
+In ASP.NET Core, you add AddResponseCompression and UseResponseCompression, configure the Brotli and Gzip providers, pick the compression level, and the MIME types to compress. For HTTPS you have to opt in with EnableForHttps, because of security concerns, I'll come to that.
+
+But honestly, the first question is where compression should happen at all. If the app is behind IIS, NGINX, a load balancer or a CDN that already compresses, I let them do it. They're usually more efficient, and you don't want to compress twice. The middleware is useful when the app is exposed directly through Kestrel or the proxy can't compress.
+
+Compression costs CPU, so the fastest level is often the better deal for dynamic responses. And it's pointless for already-compressed stuff like images or zip files, or for tiny responses.
+
+The security thing is attacks like BREACH, which can extract secrets from compressed HTTPS responses that mix secrets with attacker-controlled input. So I avoid compressing responses that carry tokens alongside user input.
+
+@p17-173
+Since .NET 8, ASP.NET Core has request timeout middleware. You register it with AddRequestTimeouts, add UseRequestTimeouts to the pipeline, and set a default timeout, plus named policies for specific endpoints, with the RequestTimeout attribute or WithRequestTimeout on minimal API endpoints. Like a long export endpoint might get two minutes, while normal endpoints get ten seconds.
+
+The thing to really understand is how it works. When the timeout expires, it doesn't kill the request. It triggers HttpContext.RequestAborted, the request's cancellation token. So it only helps if your code passes that token all the way down, to EF Core queries, HttpClient calls, other async operations, so they actually stop. If the code ignores the token, the work just carries on.
+
+When the timeout fires and the response hasn't started yet, the middleware returns 504 Gateway Timeout by default, and you can customise that.
+
+Timeouts are also disabled while debugging, so they don't get in your way.
+
+Why bother? Without timeouts, slow requests keep holding resources, database connections and threads, long after the client has given up, because usually the load balancer times out first. Under load, that slows everything down. So I set a server-side timeout slightly shorter than the load balancer's, which frees those resources and keeps the service healthy.
+
+@p17-174
+ASP.NET Core apps on IIS use the ASP.NET Core Module, ANCM, which comes with the .NET Hosting Bundle. And there are two hosting models.
+
+In-process hosting is the default since ASP.NET Core 3.0. It runs the app inside the IIS worker process, w3wp.exe, using the IIS HTTP server instead of Kestrel. No extra hop for requests, so it's faster, more throughput.
+
+In out-of-process hosting, IIS acts as a reverse proxy. ANCM starts the app as a separate process running Kestrel and forwards requests to it over a local port. Bit slower, but the app process is separate from IIS, which can help in some isolation scenarios.
+
+You set it with the hostingModel attribute in web.config, or AspNetCoreHostingModel in the project file.
+
+A few practical things from experience. With in-process hosting, each app needs its own application pool, with No Managed Code selected. Startup errors usually show up as a 500.30, and turning on stdout logging in web.config temporarily helps you figure out why. The app_offline.htm file takes the app offline during deployment so files aren't locked. And IIS handles Windows authentication, TLS and process recycling for you.
+
+Our CIRT platform runs on IIS on-premise, so I've dealt with these settings quite a bit. Especially app pools and those 500.30 startup errors during deployments, honestly those were the most common headaches.
+
+@p17-175
+See, when an ASP.NET Core app runs behind a reverse proxy or load balancer, like NGINX, an AWS ALB or Azure Front Door, the app sees the proxy as the client. So RemoteIpAddress shows the proxy's IP, and Request.Scheme shows http if the proxy terminated TLS, even though the user actually came in on https.
+
+And that breaks a bunch of things. Redirect URLs and generated links use http instead of https. The OpenID Connect redirect URI is wrong, so login fails. HTTPS redirection goes into a loop. Rate limiting by IP lumps everyone together. And logs show the wrong client IP.
+
+The proxy adds headers with the original values. X-Forwarded-For for the client IP, X-Forwarded-Proto for the original scheme, and X-Forwarded-Host. The forwarded headers middleware, UseForwardedHeaders, reads them and updates the request, so the rest of the app sees the real values. It needs to run early in the pipeline.
+
+Security matters here, because clients can send fake X-Forwarded-For headers. So I configure KnownProxies or KnownNetworks, so the middleware only trusts headers from our real proxies, and ForwardLimit for chains of proxies.
+
+On IIS with in-process hosting, and in some container setups, it's handled automatically. But behind a cloud load balancer, I configure it explicitly. I've seen the login redirect issue bite people, so I don't leave it to chance.
+
+@p17-176
+Localization is about showing text, dates and numbers in the user's language and format.
+
+ASP.NET Core supports it out of the box. You call AddLocalization, keep translated strings in resource files per culture, like Messages.fr.resx, and inject IStringLocalizer of T to get the translated text by key. UseRequestLocalization decides the culture for each request, with providers that check, in order, a query string, a cookie, and the Accept-Language header, then fall back to a default. I list the supported cultures explicitly.
+
+Once the culture is set, dates, numbers and currencies format accordingly, as long as you use culture-aware formatting.
+
+For APIs though, I think carefully about what to localise. Data values, like dates and amounts in JSON, should stay culture-neutral, ISO 8601 and plain numbers, and the front end formats them for display. What the API might localise is user-facing messages, like validation errors, and generated documents, like emails and PDF reports.
+
+On the front end, React and Angular have their own i18n libraries, like react-i18next or Angular's built-in i18n.
+
+In our IRT, sites are spread across lots of countries. So emails come from templates per language, and dates are shown in each site's format, while the stored data stays in UTC and neutral formats. That separation has kept things sane for us.
+
+@p17-177
+Sometimes clients need to create or update lots of items at once, like 500 kit status changes. Calling a single-item endpoint 500 times is slow and chatty. So I build a bulk endpoint, but carefully.
+
+The first thing I decide is limits. A max number of items per request, like 1,000, to protect the server. For bigger volumes, an asynchronous job with a file upload instead.
+
+Then the transaction semantics, which have to be explicit. Either all-or-nothing, where if any item fails validation nothing is saved and the response lists all the errors. That's simpler for clients and right when items depend on each other. Or partial success, where valid items get saved and the response has a result per item, with its index or a client-provided reference, the status, and any error. For partial success I return 200 with a detailed body, or 207 Multi-Status. Never just a 201, which would hide the failures.
+
+After that, idempotency. An idempotency key for the whole request, or a client reference per item, so a retry doesn't create duplicates.
+
+And efficient processing. Validate everything first, load the data you need in a few queries, not one per item, and write in batches. For long-running bulk work, return 202 Accepted with a status URL.
+
+I document clearly which mode the endpoint uses, because clients handle those two very differently.
+
+@p17-178
+A good error response helps two audiences, honestly. The developer debugging the integration, and the program that needs to react automatically.
+
+I use the standard ProblemDetails format, RFC 9457, with type, title, status, detail and instance. Then I add extensions. A stable, machine-readable error code, like SITE_NOT_ACTIVE or KIT_ALREADY_DISPENSED, that clients can switch on, because messages change but codes don't. A trace id, so support can find the logs. And for validation errors, an errors dictionary with field names and messages, so the UI can show them next to each field.
+
+The HTTP status has to be right. 400 for invalid input, 401 and 403 for auth, 404 for not found, 409 for conflicts like duplicates or concurrency errors, 422 for valid input that breaks a business rule, 429 for rate limits, and 5xx only for actual server-side problems. Clients often decide whether to retry based on the status, so getting it wrong causes real trouble.
+
+What I never include is stack traces, SQL errors, internal server names, anything that reveals internals, especially in production. Those go to the logs, linked by the trace id.
+
+I document the error codes in the OpenAPI spec, and keep them consistent across services with shared middleware. In our newer IRT APIs, a global exception handler returns ProblemDetails with a trace id for every error.
+
+@p17-179
+Normally searching or filtering is a read, so GET with query parameters is the REST-correct choice. It's cacheable, bookmarkable, idempotent, and easy to call and log. For simple filters, like status, date range, site and page, I always use GET.
+
+But some searches just don't fit in a query string. Complex filters with nested conditions, like status in these five values and site in these 200 sites, or created before some date. Long lists of ids can blow past URL length limits, around 2,000 characters in some browsers and proxies, and servers have limits too. And sensitive values in a URL get logged by proxies, load balancers and browser history, which matters a lot for personal data.
+
+In those cases, I use POST to a dedicated search resource, like POST to api slash subjects slash search, with the criteria as a JSON body. It's a common, accepted pattern. I just document that it's a safe, read-only operation, even though it's a POST. GET with a body isn't a good option, because many clients, proxies and frameworks ignore it or reject it.
+
+Another option is a saved search. You POST the criteria, get back a search id, and then GET the results with that id, which also lets you share and page through them.
+
+HTTP also has a draft QUERY method for exactly this case, but support isn't widespread yet, so I wouldn't rely on it today.

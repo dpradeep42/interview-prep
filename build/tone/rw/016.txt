@@ -1,0 +1,133 @@
+@p17-180
+So ASP.NET Core supports several authentication schemes side by side. A scheme is just a named handler, like the JWT bearer handler, a cookie handler, or your own custom one.
+
+For API keys, which partners or older systems might use, I write a custom authentication handler by inheriting AuthenticationHandler. It reads the key from a header, like X-API-Key, and looks it up. And I compare a hash of the key, not plain text, with a constant-time comparison. If it's valid, it creates a ClaimsPrincipal with claims like the client id and its permissions. If the header isn't there at all, it returns NoResult, so other schemes get a chance.
+
+Then I register both. AddAuthentication with JWT as the default, AddJwtBearer, and AddScheme for the API key handler.
+
+To pick the scheme per request, you can go two ways. On the endpoints, use Authorize with AuthenticationSchemes listing what's accepted, or a policy that specifies them. Or a policy scheme, with AddPolicyScheme and a ForwardDefaultSelector, which looks at the request, like does it have a bearer Authorization header or an API key header, and forwards to the right handler.
+
+After that, authorization policies just work on claims, no matter how the caller authenticated.
+
+And the API keys themselves are long random values, stored hashed, scoped, rotatable, rate-limited, and only ever sent over HTTPS.
+
+@p17-181
+IClaimsTransformation lets you modify or add claims on the user's ClaimsPrincipal after authentication, before authorization runs. You implement TransformAsync, register it in DI, and ASP.NET Core calls it during authentication.
+
+The typical use is enriching the identity with app-specific data that isn't in the token. Identity providers usually issue tokens with generic claims, user id, email, maybe a few roles. But my application's permissions, like which studies and sites a user can access and what actions they can do, live in the application database. So the transformation looks up the user's permissions and adds them as claims, and then authorization policies just check for those claims. Nice and simple.
+
+Other uses, mapping claim names from different identity providers to one standard set, or flattening nested role claims. Like Keycloak puts realm roles inside a JSON structure, and you flatten them into standard role claims that the Authorize attribute understands.
+
+A few gotchas though. It can get called more than once per request, so it has to be idempotent, check whether the claims are already there. It runs on every request, so database lookups must be cached, in memory or Redis with a short expiry, or every single request pays for extra queries. And I don't stuff too many claims in, especially if they end up in a cookie. I learned that one when a cookie got way too big.
+
+@p17-182
+For years, ASP.NET Core templates used Swashbuckle to generate the OpenAPI document and show the Swagger UI. In .NET 9, Microsoft removed Swashbuckle from the templates and added built-in OpenAPI document generation, in the Microsoft.AspNetCore.OpenApi package. And in .NET 10 it supports OpenAPI 3.1.
+
+With the built-in support, you call AddOpenApi and MapOpenApi, and the document is served at openapi slash v1.json. It works with both controllers and minimal APIs, and has document and operation transformers, which are hooks to customise the output. Like adding a security scheme for JWT bearer tokens, or descriptions and examples. It also works with Native AOT, and the document can be generated at build time, which is handy for catching breaking changes in the pipeline.
+
+The built-in package doesn't come with a UI though. For interactive docs, you add one separately. Swagger UI from Swashbuckle's UI package pointed at the new document, or Scalar, which a lot of teams use now.
+
+Swashbuckle still works, and it's being actively maintained again, so existing projects don't need to rush a migration, especially if they lean on its filters a lot.
+
+For new .NET 9 or 10 services, I go with the built-in generator, add a bearer security scheme with a transformer, and expose the UI only in non-production environments.
+
+@p17-183
+Okay, the key thing is never loading the whole file into memory. If I read a 2 GB file into a byte array and return it, the server needs 2 GB of memory per concurrent download, it lands on the Large Object Heap, and the server can run out of memory pretty quickly.
+
+So I stream it instead. In ASP.NET Core, you return a file result with a Stream, like Results.File, or File in a controller, with a FileStream opened with async and sequential-scan options, or a stream from blob storage. The framework copies it to the response in small chunks, so memory stays small no matter how big the file is.
+
+Setting enableRangeProcessing to true supports HTTP range requests, so clients can resume interrupted downloads and video players can seek. I also set the content type, a Content-Disposition header with a safe file name, and ETag and Last-Modified headers for caching.
+
+For generated content, like a big CSV export, I write straight to the response body as I go, or return an IAsyncEnumerable for JSON. So rows stream from the database to the client without being collected in memory first.
+
+And when files are in cloud storage, often the best option is to not stream through the API at all. The API checks permissions and returns a short-lived pre-signed URL, and the client downloads directly from S3 or Blob Storage. Way less load on our servers.
+
+@p17-184
+ASP.NET Core has built-in HTTP logging middleware. You turn it on with AddHttpLogging and UseHttpLogging, and pick which fields to log. Method, path, query, headers, status code, duration, and optionally request and response bodies with a size limit. Since .NET 8, it can combine everything into one log entry per request, and there's an IHttpLoggingInterceptor to customise or redact per request.
+
+But honestly, I'm careful with what gets logged, because logs are widely accessible and kept for a long time. By default, headers are redacted unless you explicitly allow them, and I keep it that way for Authorization, cookies and API keys. Request and response bodies can contain personal data or credentials, so I don't log them in production. The only exception is specific, non-sensitive endpoints during a limited investigation, with masking.
+
+What I always want per request is the method, the route template rather than the full URL, status code, duration, user or client id, and the trace id, all in one structured entry. Serilog's request logging middleware, UseSerilogRequestLogging, does that neatly, with enrichment from the HttpContext.
+
+Health check and metrics endpoints I exclude, otherwise they just flood the logs.
+
+And for debugging production issues, distributed traces with OpenTelemetry usually give better insight than logging bodies, without the privacy risk. In our domain with patient data, that matters a lot.
+
+@p17-185
+IHttpContextAccessor gives you the current HttpContext from places that don't get it directly, like a service class. You register it with AddHttpContextAccessor, inject it, and read HttpContext from it. A common use is a CurrentUser service that reads the user's claims, or grabbing the correlation id for logging.
+
+Under the hood it uses AsyncLocal, so the context flows with the async execution of the request.
+
+But there are pitfalls, and I've hit some. Outside a request, like in a background service, a hosted service or a message consumer, HttpContext is just null, so code depending on it breaks there. If code captures the HttpContext and uses it after the request has ended, say in fire-and-forget work, it might be reading a recycled or disposed context, and you get really strange bugs. HttpContext isn't thread-safe either, so don't touch it from parallel tasks. And it couples business logic to the web layer, which makes testing and reuse harder.
+
+So my approach is, the business layer depends on a small abstraction, like ICurrentUser with UserId and Permissions. The web implementation reads from IHttpContextAccessor. A background job or message consumer gives its own implementation, using the user from the message. And tests just use a fake.
+
+Also, I copy the values I need while the request is still active, never the HttpContext itself.
+
+@p17-186
+For a large MVC application, I'd avoid a big-bang rewrite, honestly. I'd migrate incrementally.
+
+Microsoft's recommended approach is the strangler fig with YARP. You create a new ASP.NET Core app that sits in front of the old one as a reverse proxy. Requests for migrated routes are handled by the new app, and everything else gets forwarded to the legacy app. Then you move controllers and views one area at a time. The System.Web adapters help share code, and can share session and authentication between the two apps, so users don't even notice which app served the page.
+
+Before moving any code, I'd prepare it. Move business logic into class libraries targeting .NET Standard 2.0, so both old and new apps can use them. Remove System.Web dependencies like HttpContext.Current from business code. Update packages to versions that support modern .NET. The .NET Upgrade Assistant helps analyse and convert projects too.
+
+The main differences you have to deal with, Global.asax and web.config become Program.cs, middleware and appsettings.json. HTTP modules and handlers become middleware. Built-in DI replaces third-party containers. Authentication changes. And bundling, Razor and some HTML helpers are different.
+
+What we're doing is similar in spirit actually. Rather than converting the legacy MVC portal, we're moving modules into the React shell with new .NET APIs, and shared Keycloak SSO keeps it smooth for users, they don't feel the switch.
+
+@p17-187
+SignalR is ASP.NET Core's library for real-time communication between server and clients. It lets the server push messages to browsers instantly, notifications, live dashboards, progress updates, without the client polling.
+
+It uses WebSockets when available, and automatically falls back to Server-Sent Events or long polling. You define a Hub class on the server with methods clients can call, and the server can call methods on clients too. All clients, a specific user, or a group, like everyone viewing a particular study. The JavaScript and .NET clients handle the connection and automatic reconnection.
+
+Authentication uses the same JWT or cookie. But for WebSockets in browsers, the token is passed as a query string parameter, so I make sure that's not getting logged.
+
+Scaling out is the tricky part. Each connection lives on one server. So if server A wants to send a message to a user who's connected to server B, it can't, on its own. You fix that with a Redis backplane, where every server publishes messages through Redis pub-sub so all servers get them. Or a managed service like Azure SignalR Service, which holds all the connections itself, so your app servers don't. And sticky sessions are needed for the fallback transports, unless you go WebSockets-only.
+
+On AWS, API Gateway WebSocket APIs are an alternative, especially if you're going serverless.
+
+@p17-188
+Server-Sent Events is a simple standard where the server pushes a stream of text events to the browser over a normal HTTP connection. The browser uses the EventSource API, which reconnects automatically and can resume from the last event id. The response has the text/event-stream content type, and the server just writes events as they happen.
+
+Compared with WebSockets, SSE is one-way, server to client only, while WebSockets go both ways. SSE runs over plain HTTP, so it works through most proxies, load balancers and firewalls without special setup, and it gets HTTP/2 multiplexing. It's text-only, and reconnection is built in.
+
+So SSE fits when the client mostly just listens. Live notifications, progress of a long-running job, a dashboard feed, or streaming an AI model's response token by token. That's actually exactly how a lot of LLM APIs stream output. WebSockets are better for real two-way interaction, like chat or collaborative editing, or binary data.
+
+In ASP.NET Core, you can write SSE by hand, set the content type and flush writes to the response. And .NET 10 adds TypedResults.ServerSentEvents, which takes an IAsyncEnumerable and streams it as events. SignalR can also use SSE as one of its transports.
+
+One catch, the browser's EventSource can't set an Authorization header. So I use cookies, or a fetch-based client instead.
+
+@p17-189
+Let me start with HTTP/1.1. It sends one request at a time per connection, so browsers open several connections, and requests queue up behind each other.
+
+HTTP/2 multiplexes lots of requests and responses over a single TCP connection at the same time, as independent streams. It also compresses headers with HPACK, which saves a lot for APIs with big headers like tokens, and supports stream prioritisation. Fewer connections means less TLS handshaking too. And gRPC needs HTTP/2.
+
+But HTTP/2 still runs over TCP. So if one packet gets lost, all the streams on that connection wait for the retransmission. That's TCP head-of-line blocking, and it hurts on flaky networks, like mobile.
+
+HTTP/3 runs over QUIC, which is built on UDP. Each stream is independent, so a lost packet only delays its own stream. QUIC also sets up connections faster, by combining the transport and TLS 1.3 handshakes, and has connection migration, so a phone switching from Wi-Fi to mobile data keeps its connection.
+
+Kestrel supports both. HTTP/2 is on by default with TLS. HTTP/3 is supported since .NET 7, needs TLS and the platform's QUIC library, and you configure the endpoint with Http1AndHttp2AndHttp3. Clients discover it through the Alt-Svc header.
+
+In practice though, the load balancer or CDN in front usually handles HTTP/2 and HTTP/3 with clients, and talks to the app over HTTP/1.1 or HTTP/2.
+
+@p17-190
+In ASP.NET Core, session state is opt-in. You call AddSession with a distributed cache, and UseSession. The browser gets a cookie with a session id, and on the server, ISession stores small values, strings or byte arrays, keyed by that id. Unlike classic ASP.NET, it doesn't store objects directly, so I serialise them, usually as JSON.
+
+Storage is an IDistributedCache. The in-memory one only works on a single server. With multiple instances, you need Redis or SQL Server, so any instance can read the session.
+
+A few behaviours that catch people out. The session loads on first access, and since session access can be synchronous, I call LoadAsync first to avoid blocking. Session data isn't locked, so concurrent requests from the same user can overwrite each other's changes, which is different from old ASP.NET. Sessions expire after an idle timeout. And the session cookie has to be marked essential, or it won't be set when the user hasn't consented to non-essential cookies.
+
+Should you use it? For APIs, no. APIs should be stateless, with state in the client or the database. For server-rendered web apps, it's fine for small temporary data, like a multi-step wizard, but not for authentication or anything important.
+
+Our legacy MVC portal uses session state, and that's actually one reason Redis came in for the load-balanced IIS servers.
+
+@p17-191
+So all three are ways to build web UIs with .NET, just with different styles.
+
+MVC uses controllers and views. Controllers handle requests and pick views, with models in between. It suits large applications with lots of related actions, and teams who know the pattern well. It's also the basis of Web API controllers.
+
+Razor Pages is page-focused. Each page has a .cshtml file and a PageModel class with handlers like OnGet and OnPost. For page-based apps, forms and admin screens, it's simpler and more cohesive than MVC, because everything for a page sits in one place. Microsoft recommends it for new server-rendered page apps.
+
+Blazor lets you build interactive UIs with C# components instead of JavaScript. Since .NET 8, Blazor Web Apps support different render modes per component. Static server rendering. Interactive server, where the UI runs on the server and updates the browser over a SignalR connection. Interactive WebAssembly, where .NET runs in the browser. And auto, which starts on the server and switches to WebAssembly once it's downloaded.
+
+How I'd choose, for APIs consumed by React or Angular, which is our main setup, controllers or minimal APIs. For a simple internal tool built by .NET developers, Razor Pages or Blazor, so you avoid a separate JavaScript stack. And for rich public-facing apps with a big front-end team, React or Angular. That's roughly my thinking.

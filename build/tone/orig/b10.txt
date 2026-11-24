@@ -1,0 +1,138 @@
+@p17-108 | What is multiple enumeration of IEnumerable, and why is it a problem?
+An IEnumerable is often not a collection, but a recipe that's executed every time it's enumerated. That's deferred execution. So if I enumerate the same IEnumerable twice, the work runs twice.
+
+For example, if a method receives an IEnumerable from a LINQ query over a database or an iterator that reads a file, and the code calls Count, then later does a foreach, that's two database queries or two file reads. If the source is expensive, it's slow. If the source changes between enumerations, the two passes can see different data, giving inconsistent results. And some sources can't be enumerated twice at all, like a stream reader or a network response.
+
+Tools like ReSharper and Rider warn about "possible multiple enumeration" for this reason.
+
+The fix depends on the situation. If I need to go over it several times, I materialise it once with ToList or ToArray and use that. If I only need one pass, I write the logic in one loop. And in method signatures, if the method needs to enumerate several times or needs the count, I accept IReadOnlyCollection or IReadOnlyList instead of IEnumerable, which tells callers I expect a materialised collection.
+
+[I once found a report that ran the same query three times because of this, and ToList fixed it.]
+
+@p17-109 | How does Dictionary work internally, and what is its lookup complexity?
+A Dictionary is a hash table. When I add a key, it calls GetHashCode on the key, maps the hash to a bucket index, and stores the entry there. Entries that land in the same bucket, collisions, are chained together.
+
+When I look up a key, it computes the hash, goes straight to the bucket, and then compares the keys in that bucket using Equals. With a good hash function, buckets contain very few entries, so lookup, insert and remove are O(1) on average. Compare that with searching a List, which is O(n), because it may check every element.
+
+As the dictionary grows past its capacity, it resizes: allocates a bigger array, roughly doubling, and re-inserts every entry, which is an O(n) operation. So if I know the approximate size, I pass the capacity to the constructor and avoid repeated resizing.
+
+Performance depends on the key's hash. A bad GetHashCode, like one that returns the same value for everything, turns the dictionary into a slow linked list, O(n) per lookup.
+
+Also, Dictionary isn't thread-safe for writes; for concurrent use I'd use ConcurrentDictionary. It doesn't keep insertion order guaranteed, and for string keys, I often pass StringComparer.OrdinalIgnoreCase to make lookups case-insensitive.
+
+@p17-110 | When would you use a HashSet instead of a List?
+I use a HashSet when I need fast membership checks or uniqueness, and I don't care about order or duplicates.
+
+A List keeps items in order and allows duplicates, and Contains has to scan the list, which is O(n). A HashSet stores unique items using hashing, so Contains, Add and Remove are O(1) on average. Add returns false if the item already exists, which is handy for de-duplication.
+
+The difference is huge in loops. If I check, for each of 10,000 incoming records, whether its id is in a list of 10,000 existing ids, that's around 100 million comparisons with a List, but only about 10,000 hash lookups with a HashSet.
+
+HashSet also has efficient set operations: UnionWith, IntersectWith, ExceptWith and IsSubsetOf, which are perfect for things like "which kit ids in the file are not in the database".
+
+The trade-offs: a HashSet uses more memory than a List, there's no index access, and the order isn't guaranteed. And it relies on good Equals and GetHashCode for the element type.
+
+In LINQ, Distinct, Except and Intersect use a set internally, but if I do repeated lookups, I build the HashSet once myself.
+
+In our CSV import, I load the existing kit numbers into a HashSet once, so validating each row is a fast lookup.
+
+@p17-111 | What are the common pitfalls of ConcurrentDictionary?
+ConcurrentDictionary is thread-safe for individual operations, but there are a few traps.
+
+The biggest is that the value factory in GetOrAdd and AddOrUpdate isn't guaranteed to run only once. If two threads ask for the same missing key at the same time, both may run the factory, and only one result is stored. If the factory is expensive, like a database call, or has side effects, like creating a connection, that's a problem. The common fix is to store Lazy of T values, so the dictionary only stores the Lazy wrapper, and the expensive work runs once when Value is accessed, with thread-safe Lazy mode.
+
+Second, compound operations aren't atomic. Checking ContainsKey and then adding, or reading a value and then updating it, can race with other threads. I use the atomic methods instead: GetOrAdd, AddOrUpdate, TryUpdate with a comparison value, or TryRemove.
+
+Third, the values themselves aren't protected. If the value is a mutable List, two threads can still modify it at the same time.
+
+Fourth, some operations, like Count, Keys or ToArray, lock all internal locks, so calling them often under load hurts performance.
+
+And finally, a ConcurrentDictionary used as a cache grows forever unless something evicts entries. For caching, I'd usually use IMemoryCache or HybridCache instead, which have expiry and size limits.
+
+@p17-112 | lock vs SemaphoreSlim vs Monitor: when do you use each?
+All three limit concurrent access to something, but they fit different situations.
+
+lock is the simplest: it ensures only one thread at a time runs a block of code, using an object as the lock. Under the hood, it's Monitor.Enter and Monitor.Exit in a try-finally. It's fast and right for protecting small, synchronous critical sections, like updating a shared counter or list. But you can't await inside a lock; the compiler stops you, because the continuation might run on a different thread, which would break the lock's ownership. In .NET 9, there's also a dedicated System.Threading.Lock type that's a bit faster.
+
+Monitor is what lock uses, with extra features like TryEnter with a timeout, and Wait and Pulse for signalling. I rarely use it directly.
+
+SemaphoreSlim allows a set number of threads in at once, not just one, and it supports async with WaitAsync. So it's my choice when I need mutual exclusion around async code, like "only one refresh of this cache at a time", using a semaphore with a count of one, or for throttling, like "at most five concurrent calls to the vendor API". Always release it in a finally block.
+
+Mutex and Semaphore, without Slim, work across processes, but they're heavier, so I only use them when coordinating separate processes on one machine.
+
+@p17-113 | What is the Interlocked class used for?
+Interlocked provides atomic operations on shared variables, without taking a lock.
+
+A simple counter++ looks like one step, but it's actually three: read the value, add one, write it back. If two threads do it at the same time, both can read the same value, and one increment is lost. With Interlocked.Increment, the whole read-modify-write happens as one atomic CPU instruction, so no update is lost, and it's much cheaper than a lock.
+
+The main methods are Increment, Decrement and Add, for counters; Exchange, which sets a value and returns the old one atomically; and CompareExchange, which sets a value only if it currently equals an expected value. CompareExchange is the building block for lock-free algorithms. For example, to update a shared reference safely, I read the current value, compute a new one, and call CompareExchange; if another thread changed it in between, the call fails, and I retry.
+
+Typical uses: counting requests or processed messages, generating sequence numbers inside a process, making sure something runs only once with a flag set from 0 to 1, or swapping in a new configuration object.
+
+It only works for single variables, though. If several values must change together consistently, I still need a lock.
+
+@p17-114 | Why is async void dangerous?
+An async void method can't be awaited, and that causes two main problems.
+
+First, exceptions. In an async Task method, an exception is captured in the returned Task, and the caller sees it when it awaits. In async void, there's no Task to hold the exception, so it's raised directly on the synchronisation context or the thread pool. In ASP.NET Core or a console app, an unhandled exception there can crash the whole process. And no try-catch around the call can catch it, because the caller has already moved on.
+
+Second, the caller can't know when it finished. It can't await it, can't wait for it in tests, and can't sequence work after it. So you get race conditions, like a DbContext being disposed at the end of a request while the async void method is still using it, which gives ObjectDisposedException at random.
+
+The only legitimate use is event handlers, like a button click in WinForms or WPF, because the event signature requires void. Even then, I wrap the body in try-catch.
+
+Everywhere else, I return Task or ValueTask. If I truly want fire-and-forget, I don't hide it in async void; I put the work on a background queue processed by a hosted service, with proper error handling and logging, and a fresh DI scope.
+
+@p17-115 | Task.WhenAll vs Task.WhenAny: how do they work and how are exceptions handled?
+Task.WhenAll takes several tasks and returns a task that completes when all of them are finished. It's how I run independent async operations concurrently, like calling three services at once, so the total time is roughly the slowest call instead of the sum. With tasks of T, it returns an array of results.
+
+For exceptions: if any task fails, the WhenAll task faults. When I await it, only the first exception is thrown, which surprises people. All the exceptions are still available in the WhenAll task's Exception property, an AggregateException, and each individual task has its own status and exception. So if I need to know about every failure, I keep a reference to the WhenAll task and inspect it, or check each task.
+
+Also, WhenAll doesn't cancel the other tasks when one fails; they keep running. If I want that, I pass a shared CancellationTokenSource and cancel it on the first failure.
+
+Task.WhenAny completes as soon as any one task completes, and returns that task. It's useful for timeouts, racing a task against Task.Delay, or processing results as they arrive. It doesn't throw if the winning task failed; I await the returned task to observe its result or exception. Since .NET 6, WaitAsync with a timeout is a cleaner way to add a timeout.
+
+@p17-116 | How do you limit concurrency when running many async operations?
+If I have, say, 5,000 items and each needs an API call, starting them all at once with Task.WhenAll would open thousands of connections, overload the downstream service, hit rate limits, and maybe run out of sockets. So I limit how many run at the same time.
+
+The cleanest option in modern .NET is Parallel.ForEachAsync, available since .NET 6. I pass the items, ParallelOptions with MaxDegreeOfParallelism, like 10, and a CancellationToken, and an async lambda for each item. It processes at most 10 at once and starts the next as soon as one finishes.
+
+Before that, the common pattern was a SemaphoreSlim with a count of 10: each task awaits WaitAsync before the call and releases in a finally block, and then Task.WhenAll over all the tasks. It works well, but all tasks are created up front.
+
+For producer-consumer pipelines, I use System.Threading.Channels with a fixed number of consumer tasks reading from a bounded channel, or TPL Dataflow blocks with a bounded capacity.
+
+The right limit depends on the downstream: its rate limits, the connection pool size, and database capacity. I make it configurable and measure.
+
+Combined with retries and backoff, this keeps batch jobs fast without hurting the services they call.
+
+@p17-117 | What is IAsyncDisposable and await using?
+IAsyncDisposable is the asynchronous version of IDisposable. It has one method, DisposeAsync, which returns a ValueTask. It exists because some cleanup naturally involves I/O, like flushing a buffered stream to disk, closing a network connection gracefully, or committing and closing a database connection. With the synchronous Dispose, that I/O would block a thread, which hurts scalability and can even cause deadlocks.
+
+To use it, I write await using, either as a block or as a declaration, like await using var connection equals new SqlConnection. The object is disposed asynchronously at the end of the scope, even if an exception is thrown.
+
+Many framework types implement it: streams, SqlConnection, DbContext, Utf8JsonWriter, and the DI container's scopes. ASP.NET Core's DI disposes scoped services asynchronously at the end of the request if they implement it.
+
+When I write my own class that holds async resources, I implement IAsyncDisposable, and usually IDisposable too, so it works for callers who can't use async. The recommended pattern has a protected virtual DisposeAsyncCore method, so derived classes can add their own cleanup.
+
+One gotcha: if a service only implements IAsyncDisposable and someone disposes the DI scope synchronously, .NET throws an exception, so I use CreateAsyncScope in background workers.
+
+@p17-118 | What is a finalizer, and how is it different from Dispose?
+A finalizer, written with the tilde syntax like a destructor, is a method the garbage collector calls before reclaiming an object's memory. Dispose is a method that my code calls explicitly, usually through using, to release resources at a known time.
+
+The key difference is timing and reliability. Dispose runs immediately and deterministically. A finalizer runs at some unknown later time, on the finalizer thread, after the GC notices the object is unreachable, and may not run at all if the process exits abruptly.
+
+Finalizers are also costly. Objects with finalizers survive at least one extra GC, because they go to the finalization queue first, which promotes them to an older generation and increases memory pressure.
+
+So the classic dispose pattern was: Dispose releases resources and calls GC.SuppressFinalize, so the finalizer doesn't run; the finalizer is only a safety net for unmanaged resources if someone forgot to dispose.
+
+In modern .NET, I almost never write a finalizer. Unmanaged handles should be wrapped in a SafeHandle, which has its own reliable finalization, and my class just implements IDisposable and disposes the SafeHandle. For classes that only hold managed disposables, like a DbContext or HttpClient, I implement Dispose without any finalizer.
+
+@p17-119 | What is the Large Object Heap, and how do ArrayPool and pooling help?
+The Large Object Heap is a separate area of the managed heap for objects of 85,000 bytes or more, like big arrays, large strings or big byte buffers. It's treated differently because copying large objects is expensive. LOH objects are collected only with generation 2, the most expensive collection, and by default they aren't compacted, so the heap can become fragmented, with free gaps that are too small for new large objects.
+
+So if a service allocates big buffers frequently, for example reading every uploaded file into a new byte array, or building large JSON strings, it triggers frequent gen 2 collections, longer pauses, and growing memory.
+
+Pooling reuses large buffers instead of allocating new ones. ArrayPool of T, usually ArrayPool of byte dot Shared, lets me rent an array of at least the size I need and return it when I'm done, in a finally block. The same buffers are used again and again, so garbage is greatly reduced. I must remember the rented array can be larger than requested, and I mustn't use it after returning it.
+
+Related tools: RecyclableMemoryStream from Microsoft for pooled memory streams, ObjectPool for expensive objects, and streaming APIs, so I never need the whole payload in memory in the first place.
+
+I confirm the problem first with dotnet-counters, watching gen 2 collections and LOH size.
+

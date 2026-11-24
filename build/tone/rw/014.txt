@@ -1,0 +1,145 @@
+@p17-156
+Okay, so .NET Aspire is a set of tools and libraries for building and running distributed, cloud-ready apps, and honestly its biggest win is the local development experience.
+
+You have an App Host, which is a small C# project where you describe the parts of your application in code. The API projects, a front end, and resources like SQL Server, Redis, RabbitMQ or PostgreSQL. When you run it, Aspire starts everything, runs the infrastructure in containers, and wires up connection strings and service discovery for you. So a new developer can clone the repo and press F5, instead of following some long setup document that's always out of date.
+
+Then there's the Aspire dashboard. It shows all services, their logs, traces and metrics in one place, using OpenTelemetry, so I can follow a request across services locally. That's really nice for debugging.
+
+Service defaults is a shared project that adds OpenTelemetry, health checks, service discovery and HTTP resilience to every service with one call, so they're all consistent.
+
+And integrations are NuGet packages for common services, like Redis or Azure Service Bus, that register clients with health checks and telemetry built in.
+
+For deployment, Aspire can generate manifests and deploy to Azure Container Apps or Kubernetes, but a lot of teams keep their own pipelines.
+
+So I'd say it's very useful for local dev and consistency, even if production still goes through Terraform or the existing pipelines.
+
+@p17-157
+Knowing this actually helps me pick the right collection, so let me go through the common ones.
+
+List of T is a dynamic array. Index access is O(1). Adding at the end is O(1) on average, with the occasional resize. Inserting or removing in the middle is O(n), because elements shift. Contains or IndexOf is O(n), since it scans. Sort is O(n log n).
+
+Dictionary and HashSet are hash tables, so O(1) average for add, remove and lookup by key, and no ordering.
+
+SortedDictionary is a balanced tree, O(log n) for add, remove and lookup, and it keeps keys sorted. SortedList is an array-backed sorted collection, O(log n) lookup with binary search, but O(n) inserts. It uses less memory though.
+
+LinkedList has O(1) insert and remove when you already have the node, but O(n) to find anything, and poor cache locality. So honestly it's rarely the best choice in practice.
+
+Queue and Stack are O(1) for enqueue, dequeue, push and pop.
+
+PriorityQueue, which came in .NET 6, is a heap. O(log n) to enqueue and to dequeue the smallest priority item, and O(1) to peek.
+
+In real projects, the biggest win I've seen is replacing repeated List.Contains or First lookups inside loops with a Dictionary or HashSet built once. That turns O(n squared) into O(n), and it's usually a five-minute fix.
+
+@p17-158
+See, an async method that awaits I/O, like a database query or an HTTP call, doesn't hold a thread while it waits. The thread goes back to the pool, and when the I/O finishes, some thread picks up the continuation. That's what makes servers scale.
+
+Task.Run is different. It queues a delegate to run on a thread pool thread, so it's for CPU-bound work, it moves the work off the current thread. In a desktop app, that's useful to keep the UI thread responsive while doing some heavy calculation.
+
+But in ASP.NET Core, the request is already running on a thread pool thread. So wrapping work in Task.Run and immediately awaiting it just swaps one pool thread for another. Extra overhead, zero benefit. And wrapping a synchronous I/O call in Task.Run, what people call fake async, still blocks a thread, it just hides it somewhere else. The real fix there is a truly async API.
+
+Task.Run in ASP.NET Core makes sense only in specific cases. Running several CPU-bound pieces of work in parallel, or kicking off fire-and-forget background work. Even for that, honestly, I prefer a hosted service with a queue, because it handles errors, scopes and shutdown properly.
+
+So my rule is simple. async and await for I/O, and Task.Run only for CPU-bound work that really benefits from running somewhere else.
+
+@p17-159
+Tuples let you group a few values together without defining a class. Modern C# uses ValueTuple, which is a struct, with nice syntax. A method can return a tuple of int Count and decimal Total, and the caller just reads result.Count and result.Total. The element names are compile-time only, so you get readable code without creating a type.
+
+Deconstruction splits a tuple, or any type with a Deconstruct method, into separate variables. Like var, open bracket count comma total, equals GetSummary. Records support it automatically through their positional parameters, and you can use underscore as a discard for values you don't care about. It also gives you neat tricks, like swapping two variables in one line, a comma b equals b comma a.
+
+Tuples work nicely in pattern matching too. Like switching on a tuple of status and isUrgent together, which is way clearer than nested ifs.
+
+Where I use them, private and internal helper methods returning two or three related values, and local grouping in LINQ. I avoid them in public APIs, DTOs and anything serialised, because the element names don't survive serialisation, and they don't carry meaning or validation. If a tuple is getting passed around a lot, that's a sign it should be a record.
+
+The older System.Tuple class, with Item1 and Item2, is a reference type, and I don't use it in new code.
+
+@p17-160
+A local function is just a method declared inside another method. It's only visible inside that method, so you keep helper logic close to where it's used without cluttering up the class.
+
+How it's different from a lambda, a few things. Local functions can be declared after they're used, they're named, and recursion is easy. They support generics, ref and out parameters, params, and iterators with yield return. And there's performance. A lambda that captures variables allocates a closure object and a delegate on the heap. A local function that's only called directly can capture variables into a struct on the stack, so no allocation. In hot paths, that adds up.
+
+If you mark a local function static, it can't capture any variables of the enclosing method. That makes dependencies explicit and avoids accidental captures.
+
+Two places I use them a lot. One is argument validation for iterators and async methods. An iterator's body runs lazily, so I validate arguments in the outer method, which runs immediately, and put the yield return logic in a local function. Same for async methods, when I want validation exceptions thrown right away and not inside the task. The other is breaking a long method into readable steps that don't really make sense as class-level methods.
+
+And I use lambdas when I need a delegate to pass somewhere, like into LINQ or an event.
+
+@p17-161
+I always paginate list endpoints. Returning everything works fine in testing and then blows up in production when the table grows, I've seen that happen.
+
+The request takes either a page number and page size, or a cursor. Page size has a sensible default, like 25, and a hard max, like 100, enforced on the server, so nobody can ask for a million rows.
+
+The response wraps the items with some metadata. For page-based paging, the page number, page size and total count. For cursor-based paging, a next cursor or continuation token, and whether there's more. Some APIs also return links to next and previous pages, or use the Link header, so clients don't build URLs themselves.
+
+Which style depends on the data. Offset paging, skip and take, is simple and lets users jump to page 10, so it suits admin screens. But it gets slow on deep pages, because the database still reads all the skipped rows. And results shift if rows get added while someone's paging. Cursor or keyset paging uses the last item's sort key, like created after this date and id, which is fast at any depth and stable. So that's better for big tables, infinite scrolling, and API consumers syncing data.
+
+One thing people forget, ordering must be deterministic, so I always add a unique tie-breaker like the id to the sort.
+
+And total counts can be expensive on big tables, so I make them optional.
+
+@p17-162
+So an ETag is a version identifier for a resource, sent back in a response header. It can be a hash of the content, or a version number like SQL Server's rowversion. Clients use it in conditional requests, and it helps with two things.
+
+One is caching. The client sends If-None-Match with the ETag it already has. If the resource hasn't changed, the server returns 304 Not Modified with no body. That saves bandwidth and processing, which really helps for large resources fetched often, like study configuration.
+
+The other is concurrency control. When updating, the client sends If-Match with the ETag it got when it read the resource. The server compares it with the current version. If someone else changed it in the meantime, they don't match, and the server returns 412 Precondition Failed instead of silently overwriting the other person's change. That's the lost update problem. The client then reloads and the user can merge or retry. Some APIs even return 428 Precondition Required if If-Match is missing on updates, just to force clients to use it.
+
+In ASP.NET Core, I wire this up myself. Map the entity's row version to the ETag header, read If-Match in the update endpoint, and pass that version into EF Core's concurrency token check, so the database actually enforces it.
+
+It's basically optimistic concurrency, just the HTTP version of it.
+
+@p17-163
+HTTP caching headers tell browsers, CDNs and proxies whether they can reuse a response and for how long. Done right, it can massively cut load.
+
+Cache-Control is the main one. max-age equals 300 means the response can be reused for 300 seconds. public allows shared caches like a CDN to store it, while private means only the user's own browser can cache it, which is what you want for user-specific data. no-cache, and this confuses people, means the client can store it but has to revalidate with the server before using it, usually with an ETag. no-store means don't store it anywhere, which I use for sensitive stuff like patient information or tokens.
+
+Vary tells caches which request headers change the response, like Accept-Language or Authorization, so different versions get cached separately.
+
+For APIs, my defaults are like this. Sensitive or user-specific data gets no-store, or private with no-cache. Truly public data that rarely changes, like a list of countries or static reference data, gets public with a max-age, maybe through a CDN. And responses with ETags support cheap revalidation.
+
+In ASP.NET Core, I set headers directly, use the ResponseCache attribute, or use output caching middleware. That last one is different actually, it's the server reusing its own response, regardless of what clients do.
+
+Getting caching wrong with user data can leak information between users. So honestly, I'm conservative here.
+
+@p17-164
+Content negotiation is how the server picks the response format based on what the client asks for. The client sends an Accept header, like application/json or application/xml, and the server picks a matching output formatter. If more than one is acceptable, it follows the client's preference order.
+
+In ASP.NET Core controllers, JSON is the default formatter, using System.Text.Json. You can add others, like XML with AddXmlSerializerFormatters, or a custom formatter for CSV. By default, if the client asks for a format the server doesn't support, it just falls back to JSON. If you set ReturnHttpNotAcceptable to true, it returns 406 Not Acceptable instead, which is stricter.
+
+The Produces attribute restricts or documents which content types an action returns, and Consumes does the same for request bodies. That's checked against the Content-Type header, and you get 415 Unsupported Media Type if it doesn't match.
+
+Minimal APIs are simpler. They return JSON by default and don't do full negotiation, so for other formats I return a specific result, like Results.Text or a file.
+
+Honestly, in practice most modern APIs are JSON only, and that's fine. Where I've actually used negotiation is exports, where the same report endpoint returns JSON for the UI and CSV for download, based on the Accept header or a format parameter.
+
+Accept-Language for localisation is a related kind of negotiation too.
+
+@p17-165
+HATEOAS stands for Hypermedia as the Engine of Application State. It's the top level of the Richardson maturity model for REST. The idea is that responses include links telling the client what it can do next. Like a shipment response containing "cancel" or "track" links, only when those actions are allowed. So the client discovers actions from the response, instead of hard-coding URLs and business rules.
+
+In theory, clients are less coupled to URL structures, and the server controls which actions are available based on the current state and the user's permissions.
+
+But honestly, I rarely see full HATEOAS in real projects, ours included. Most front ends are built together with the API, so they already know the URLs. Client developers find parsing links more work than calling documented endpoints. And tooling, like OpenAPI clients, is built around fixed endpoints anyway.
+
+What I do use are the practical bits. Pagination links in list responses, next and previous. A Location header on 201 Created pointing to the new resource. And flags in responses saying which actions are allowed, like canCancel or canReturn, computed on the server from the state and the user's permissions. So the UI shows the right buttons without duplicating business rules in the front end. That gets you most of the benefit, with way less complexity, so that's where I've landed.
+
+@p17-166
+Data annotations are attributes on model properties, like Required, StringLength, Range or EmailAddress. They're built in and simple, and ASP.NET Core with ApiController checks them automatically before the action runs and returns a 400 with validation problem details. For simple rules on simple DTOs, they're fine.
+
+FluentValidation is a library where the rules live in a separate validator class, like a CreateShipmentValidator inheriting AbstractValidator, written as fluent code. RuleFor Quantity GreaterThan zero, RuleFor SiteId NotEmpty, that kind of thing.
+
+For real applications I prefer FluentValidation. Complex rules are just much easier. Conditional rules with When, rules comparing properties, collection rules with RuleForEach, and async rules that hit the database, like "site must exist and be active". Validators are classes, so they can use dependency injection. Messages are easy to customise and localise. The DTO stays clean because rules are kept out of it. And validators are really easy to unit test.
+
+One thing to know, the FluentValidation team doesn't recommend the automatic ASP.NET Core integration anymore. So I run validators explicitly, usually in a MediatR pipeline behaviour, or in an endpoint filter for minimal APIs.
+
+That's actually how our newer IRT APIs work. FluentValidation sits in a MediatR behaviour, so every command gets validated before its handler runs.
+
+@p17-167
+Model binding maps data from the HTTP request, route values, query strings, headers, form fields, the body, to your action's parameters. The built-in binders handle common types and JSON bodies well. A custom model binder lets you control how a specific type gets created from the request when the defaults don't fit.
+
+When would I need one? Like binding a strongly typed id, say StudyId, from a route string. Or parsing a comma-separated list in the query string, ids equals 1,2,3, into a list. Or combining values from different places, like a header and a route value, into one object.
+
+To write one, you implement IModelBinder, read the value through the ValueProvider, convert it, and either set the result as success or add a model state error. Then register it with a ModelBinder attribute on the type or parameter, or globally through an IModelBinderProvider.
+
+But honestly, there's often a simpler option. For simple types, if the type has a static TryParse method, both controllers and minimal APIs bind it from route and query values automatically. Minimal APIs also support a static BindAsync method for custom binding from the whole HttpContext.
+
+So I try TryParse or BindAsync first, and only write a full model binder for the complex cases in controllers. Most of the time I never get that far.

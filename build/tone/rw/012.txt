@@ -1,0 +1,153 @@
+@p17-132
+Thread pool starvation is when all the thread pool threads are busy, mostly just blocked and waiting, so new work, like incoming requests or async continuations, has to wait for a free thread. And the thread pool adds new threads slowly, roughly one or two a second once you're above the minimum. So under load, response times explode while CPU stays low. That low CPU is the giveaway.
+
+The most common cause, honestly, is sync over async. Calling .Result, .Wait or GetAwaiter().GetResult on async code. The thread blocks waiting for an operation whose continuation also needs a thread pool thread, so under load all the threads end up waiting on each other. Other causes are long synchronous I/O, like a sync database or file call, Thread.Sleep, or long locks in hot paths.
+
+What you see is requests getting very slow or timing out, the thread count climbing and climbing, and CPU not high at all. Health checks can time out too, so you get restarts on top.
+
+To detect it, I use dotnet-counters and watch thread pool queue length and thread count. A growing queue is the signal. A memory dump, or dotnet-stack, shows lots of threads blocked in the same place, like waiting on a Task.
+
+The real fix is making the call chain async all the way, removing blocking calls, and using async APIs for I/O. Raising the minimum threads only buys you time.
+
+@p17-133
+Best answer, honestly, avoid it. Make the calling code async too, all the way up. In ASP.NET Core, controllers, middleware, hosted services, even Main can be async, so there's almost always a way.
+
+But when I really can't, like a legacy interface I'm not allowed to change, or a constructor, then there are options and risks.
+
+Blocking with .Result, .Wait or GetAwaiter().GetResult works, but it blocks a thread. In apps with a synchronisation context, like classic ASP.NET on .NET Framework, WinForms or WPF, it can deadlock. The async method tries to resume on the context that's blocked waiting for it, so both just wait forever. ASP.NET Core has no synchronisation context, so it won't deadlock there, but blocking still wastes threads and can cause thread pool starvation under load. If I must block, I prefer GetAwaiter().GetResult over .Result, because it throws the original exception instead of an AggregateException. And in libraries, ConfigureAwait false reduces the deadlock risk.
+
+For constructors, I just avoid async work entirely. I use an async factory method like CreateAsync, or lazy async initialisation, or do the work in a hosted service at startup.
+
+For event handlers in desktop apps, async void with a try-catch is acceptable.
+
+Our legacy .NET Framework code actually had a few of these deadlocks, so for us it's a real concern during the migration.
+
+@p17-134
+A race condition is a bug where the result depends on the timing of two or more operations running at the same time. So it works most of the time and fails once in a while, which makes it really hard to reproduce.
+
+Classic example is check-then-act. Two requests try to reserve the last kit at a site. Both read the stock and see one available. Both pass the check. Both reserve it. Now we've allocated two kits when only one existed. Each request was correct on its own, the problem is just the interleaving.
+
+Another one is a shared counter incremented by many threads without synchronisation, where updates get lost. Or a lazy cache that gets initialised twice.
+
+They happen in memory and in databases. And with multiple server instances, an in-memory lock doesn't help at all, which people sometimes forget.
+
+The fix depends on where the shared state lives. In memory, locks, Interlocked, or concurrent collections. In the database, make the check and the update one atomic operation, like an UPDATE with a WHERE condition on the available quantity and then check rows affected. Or optimistic concurrency with a row version, or a unique constraint so the second insert just fails. Across instances, a distributed lock, or a single queue consumer per key.
+
+In our IRT, kit allocation uses database transactions and concurrency checks for exactly this reason. You really can't afford a double allocation there.
+
+@p17-135
+Lazy of T delays creating an object until it's first needed, and then caches it. You give it a factory function, and the first time you read its Value property, it runs the factory and stores the result. After that, reads just return the same instance.
+
+It's useful when something is expensive to create, like loading a big lookup table or building a complex client, and it might not even be needed in every code path. So you don't pay the cost at startup, or at all if it's never used.
+
+It's thread-safe by default too. In the default mode, ExecutionAndPublication, if many threads read Value at the same time, only one runs the factory, the rest wait and get the same result. So it's an easy way to do a thread-safe singleton or a one-time initialisation. And it's the standard trick to make ConcurrentDictionary's GetOrAdd run the factory only once.
+
+One gotcha though. If the factory throws, Lazy caches the exception by default, and every later access rethrows it. That's bad for transient failures, like a network blip at startup, because now it's stuck failing forever. In that case I use PublicationOnly mode, or a custom approach that retries.
+
+For async initialisation, Lazy of Task of T works, but libraries like AsyncLazy handle retry and cancellation better. So I'd lean on those.
+
+@p17-136
+Both rethrow an exception from a catch block, but they treat the stack trace very differently.
+
+Plain throw, on its own, rethrows the current exception and keeps the original stack trace. So I can still see where the error actually happened, deep down in the call chain.
+
+throw ex resets the stack trace to the current spot, the catch block. Everything about where the exception really came from is gone, and that makes production debugging so much harder. Code analysis tools flag it as a warning for that reason.
+
+So inside a catch block, if I want to log something and let the exception carry on, I use plain throw.
+
+If I want to add context, I wrap it. Throw a new ShipmentProcessingException with a useful message and pass the original as the inner exception. Then both the new context and the original stack trace are kept.
+
+If I need to rethrow later, outside the catch block, like capturing it on one thread and rethrowing on another, ExceptionDispatchInfo.Capture and Throw preserve the original stack trace. That's actually what await does internally.
+
+And honestly, often the best choice is not catching at all. I only catch when I can handle it, add useful context, or translate it, and let the global exception handling deal with everything else.
+
+@p17-137
+Exception filters let you add a condition to a catch block using the when keyword, like catching HttpRequestException only when the status code is NotFound. The catch block runs only if the condition is true. Otherwise the exception just keeps going, as if that catch block wasn't even there.
+
+Why is that better than catching and then rethrowing inside an if? A few reasons.
+
+The stack isn't unwound when the filter is evaluated. So if the filter returns false, the exception continues with its original state intact, and debugging and crash dumps are more useful.
+
+The code is cleaner, especially with several catch blocks for the same exception type but different conditions. Like handling a SqlException differently for a deadlock, error number 1205, versus a unique constraint violation, 2627 or 2601.
+
+There's also a neat trick, logging inside a filter. You write a filter that calls a LogAndReturnFalse method. It logs the exception right where it happened, with the full stack, and returns false, so the exception isn't actually caught and continues upwards. I've used that one.
+
+Transient error checks for retries benefit too, like catching only specific HTTP status codes.
+
+Just keep filters quick, and they must not throw, because an exception inside a filter gets swallowed and treated as false. Then you're scratching your head wondering why your catch never ran.
+
+@p17-138
+For me, exceptions are for exceptional, unexpected stuff, like the database being down, a bug, or a broken invariant. They're expensive to throw, they're invisible in method signatures, and if you use them for normal business outcomes, like "validation failed" or "stock not available", your control flow turns into hidden jumps.
+
+The Result pattern makes the expected outcome explicit. The method returns a Result that's either success with a value, or failure with an error, like a code and a message. The caller has to handle both, and the signature itself tells you this can fail. It's faster too, since nothing is thrown.
+
+In practice, I use both. Expected business failures, a validation error, a not-found entity, a rule like "site not active", or a conflict, return a Result. The API layer maps that to the right HTTP response, 400, 404, 409 or 422 with ProblemDetails. Unexpected technical failures throw exceptions, which go to the global exception handler, get logged, and become a 500.
+
+Libraries like FluentResults, ErrorOr or OneOf help, or honestly a small custom Result type is enough.
+
+The downside is the code gets a bit more verbose, and the team has to apply it consistently.
+
+In our newer IRT APIs, MediatR handlers return results for business rules, and FluentValidation errors become 400 responses automatically. That's worked well.
+
+@p17-139
+System.Text.Json is the built-in serialiser in modern .NET, and the default in ASP.NET Core. Newtonsoft.Json, Json.NET, is the older, hugely popular third-party library.
+
+System.Text.Json is faster and allocates less, because it works on UTF-8 bytes and spans, and it supports source generation for even better performance and Native AOT. It's secure by default and strict. Case-sensitive property matching by default outside ASP.NET Core, no comments or trailing commas unless you turn them on, and no loose conversions like a number sitting in a string.
+
+Newtonsoft is more feature-rich and flexible. Very lenient parsing, JObject and LINQ to JSON for dynamic JSON, rich converters, reference loop handling, tons of settings. And a lot of older code and libraries depend on it.
+
+To be fair, System.Text.Json has caught up a lot. Polymorphic serialisation with JsonDerivedType, JsonNode for dynamic documents, required properties, ReferenceHandler for cycles, naming policies including snake case.
+
+When you migrate, what bites you is case sensitivity, how enums, dates and nulls are handled, private setters, and custom converters, which you have to rewrite.
+
+My approach, System.Text.Json for new code with web defaults, and Newtonsoft only where some legacy behaviour or library needs it. In our legacy .NET Framework code, Newtonsoft is still there.
+
+@p17-140
+String comparisons can be ordinal, which compares the raw character codes, or culture-sensitive, which follows the language rules of a culture, like how accented letters sort.
+
+The problem is some methods are culture-sensitive by default, like string.Compare, StartsWith with a string, ToUpper and ToLower. So the result can change depending on the server's culture settings. The famous one is the Turkish I problem. In Turkish culture, uppercase of small i isn't capital I, so a check like "file" ToUpper equals "FILE" fails on a Turkish machine. And these bugs only show up for certain users or servers, which makes them nasty.
+
+Culture-sensitive comparison is slower too.
+
+So my rule is, for identifiers, codes, keys, file paths, URLs, HTTP headers, config keys, anything machine-readable, use ordinal, StringComparison.Ordinal or OrdinalIgnoreCase. For dictionary keys that should be case-insensitive, pass StringComparer.OrdinalIgnoreCase. Culture-sensitive comparison only for text shown to and sorted for users, with the user's culture set explicitly.
+
+I always pass the StringComparison argument explicitly, and the code analysers, CA1307 and CA1309, help enforce that.
+
+For normalising case, ToUpperInvariant, not ToUpper.
+
+In a global product with sites in so many countries, like ours, this really matters.
+
+@p17-141
+So the Strategy pattern puts a family of interchangeable algorithms behind one interface, and the calling code picks one at runtime without knowing the details. It basically replaces those big if-else or switch blocks that choose behaviour based on a type or a setting.
+
+Let me take an example. Calculating resupply quantities for sites, where different studies use different methods. One uses a simple min and max level, another uses a predictive method based on upcoming visits. Instead of one method with an ever-growing switch, I define an interface, IResupplyStrategy, with something like CalculateQuantity. Then I write a MinMaxResupplyStrategy and a PredictiveResupplyStrategy, each with its own logic and its own unit tests. The calling service gets the right strategy based on the study's configuration and just calls CalculateQuantity.
+
+With DI, I register all the strategies, inject an IEnumerable of them, and pick by a key property. Or in .NET 8, use keyed services and resolve by strategy name.
+
+What you get is each algorithm isolated and testable, adding a new one doesn't touch existing code, that's open-closed, and the choice can come from configuration.
+
+The pluggable SFTP providers I built are also a Strategy, one interface, three provider implementations, picked by configuration.
+
+But honestly, for just two simple cases, I won't bother. An if statement is fine.
+
+@p17-142
+The Decorator pattern wraps an object with another object that implements the same interface, and adds behaviour before or after calling the wrapped one. The caller has no idea it's talking to a decorator. And you can stack them.
+
+It's perfect for cross-cutting stuff I don't want inside the business class, caching, logging, retries, timing metrics, authorization checks.
+
+Let me give an example. I have an IStudyConfigProvider that reads study configuration from the database. Then I write a CachedStudyConfigProvider that also implements IStudyConfigProvider, takes the real provider in its constructor, checks the cache first, and only calls the inner provider on a miss. The database class stays simple, and caching can be added, removed or tested on its own.
+
+In ASP.NET Core's built-in DI, registering decorators is a bit manual. You register the inner class, then register the interface with a factory that creates the decorator around it. The Scrutor library makes it one line with services.Decorate, which is nicer.
+
+And the framework uses this pattern a lot. DelegatingHandler for HttpClient is a decorator chain, each handler adds something like logging or auth headers. MediatR pipeline behaviours work the same way around handlers. And stream wrappers, BufferedStream or GZipStream, are decorators too. So once you see it, you see it everywhere.
+
+@p17-143
+A factory is just an object or method whose job is creating other objects, so the calling code doesn't need to know which concrete class to create or how to build it.
+
+The Factory Method lets a method decide which class to instantiate, usually based on input. Like a NotificationSenderFactory that returns an EmailSender or an SmsSender depending on the channel. Abstract Factory creates families of related objects that belong together.
+
+Now with dependency injection, the container handles most object creation, so you need fewer factories. But I still use them in a few cases. When the concrete type depends on runtime data, like the study's configuration or a user's choice, which the container can't know at startup. When the object needs both injected services and runtime parameters, like a file processor that needs a logger and a file path. Or when creation is complex and needs validation.
+
+In .NET, the factory itself is registered in DI and gets its dependencies injected. It can use IServiceProvider internally, carefully, or ActivatorUtilities.CreateInstance, which builds an object using DI for services plus the runtime parameters you pass. Keyed services in .NET 8 often replace simple factories that just choose by name. IHttpClientFactory and IDbContextFactory are framework examples.
+
+What I avoid is factories that just wrap new for no reason. That's just extra code.

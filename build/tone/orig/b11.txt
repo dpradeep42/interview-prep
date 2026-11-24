@@ -1,0 +1,136 @@
+@p17-120 | What are readonly struct and ref struct?
+Both are special kinds of structs aimed at correctness and performance.
+
+A readonly struct declares that all its fields are readonly, so the struct is immutable. Besides making the intent clear, it helps performance. When you call a method on a struct through a readonly reference, like an in parameter or a readonly field, the compiler normally makes a defensive copy, because it can't be sure the method won't modify the struct. With a readonly struct, it knows nothing can change, so it skips those copies. I use readonly structs for small value types, like a Money or Coordinates type.
+
+A ref struct is a struct that must live only on the stack. It can't be boxed, can't be a field of a class or a normal struct, couldn't traditionally be used as a generic type argument, can't be captured in lambdas, and historically couldn't be used across await in async methods. Span of T is the famous example. These rules make it safe for Span to point at stack memory or slices of arrays, because it can never outlive the memory it points to.
+
+C# 13 relaxed some rules: ref structs can implement interfaces and be used as generic arguments with the allows ref struct constraint, and can be used in async methods and iterators, as long as they don't cross an await or yield.
+
+@p17-121 | What are covariance and contravariance in C#?
+Variance describes whether a generic type can be used with more specific or more general type arguments than declared.
+
+Covariance, marked with the out keyword, lets me use a more derived type where a base type is expected, for types that only produce values. IEnumerable of T is covariant, so an IEnumerable of string can be assigned to an IEnumerable of object. That's safe, because I can only read from it, and every string is an object.
+
+Contravariance, marked with the in keyword, goes the other way, for types that only consume values. Action of T and IComparer of T are contravariant, so an Action of object can be used where an Action of string is needed. That's safe, because a method that accepts any object can certainly accept a string.
+
+Func of T result is both: contravariant in its input parameters and covariant in its return type.
+
+List of T is invariant, so a List of string can't be assigned to a List of object. If that were allowed, I could add an integer through the object list into what is really a list of strings.
+
+Arrays are covariant for historical reasons, which isn't type-safe: putting the wrong type into a covariant array compiles but throws ArrayTypeMismatchException at runtime.
+
+Variance only applies to interfaces and delegates, and only to reference types.
+
+@p17-122 | What are source generators, and why use them instead of reflection?
+Source generators are compiler plug-ins that run during the build. They inspect my code, like classes marked with a certain attribute, and generate additional C# code that's compiled together with it.
+
+The main reason to use them instead of reflection is that the work moves from runtime to compile time. Reflection discovers types and members while the app is running, which costs startup time and CPU, allocates memory, and is a problem for Native AOT and trimming, because the trimmer can't see which members are used through reflection and may remove them. Generated code is just normal code: fast, visible, debuggable, and trimming-safe.
+
+.NET itself uses them a lot. System.Text.Json source generation creates serialisation code for my types, which speeds up startup and supports AOT. GeneratedRegex compiles regular expressions at build time. LoggerMessage generates high-performance logging methods. And the Configuration binder and minimal API request delegates have generators for AOT.
+
+Popular libraries use them too, like Mapperly for object mapping, which generates mapping code instead of reflection-based AutoMapper.
+
+Writing my own generator is more advanced. Today, I'd use the incremental generator API for performance, and I'd only do it for real repetitive boilerplate across a codebase.
+
+In our newer services, I use LoggerMessage and GeneratedRegex.
+
+@p17-123 | What are expression trees, and where are they used?
+An expression tree represents code as data. When a lambda is assigned to an Expression of Func type, instead of compiling it to executable code, the compiler builds an object tree describing it: a parameter, a member access, a comparison, a constant, and so on. Other code can then inspect that tree and translate it into something else.
+
+That's exactly how LINQ providers work. When I write a Where clause on an EF Core IQueryable, the lambda becomes an expression tree, and EF Core walks the tree and translates it into SQL. With a plain IEnumerable, the same lambda is a compiled delegate and runs in memory. That's why some C# methods can't be used inside EF queries: the provider doesn't know how to translate them.
+
+Other uses: building dynamic queries at runtime, like combining filters chosen by the user on a search screen, using Expression.AndAlso or a library like LinqKit's PredicateBuilder. Strongly typed property selectors, like in FluentValidation's RuleFor, or Moq's Setup, which read the property name from the expression. And generating fast code at runtime by compiling an expression into a delegate, which was a common way to avoid slow reflection.
+
+Compiling expressions is relatively expensive, so compiled delegates should be cached.
+
+@p17-124 | Static class vs singleton pattern: which and when?
+A static class can't be instantiated; all its members are static. It's fine for stateless helpers, like extension methods, simple calculations or constants.
+
+A singleton is a normal class with exactly one instance. The classic implementation has a private constructor and a static Instance property, made thread-safe with Lazy of T or a static readonly field.
+
+The singleton has real advantages over a static class. It can implement interfaces and be passed around as a dependency, so it can be mocked in tests. It can hold state that's initialised lazily. And it can inherit from a base class.
+
+But in modern .NET, I almost never write the classic singleton pattern. Instead, I register a normal class in the DI container with AddSingleton. The container ensures there's one instance, while my class stays a plain, testable class with constructor injection, and consumers depend on an interface, not on a static Instance property.
+
+Static classes and classic singletons both share a problem: they're global state, hidden dependencies that make testing and reasoning harder.
+
+My rule: static for pure, stateless functions; DI singletons for shared services, like a cache, a configuration provider or an HttpClient wrapper. And any singleton must be thread-safe, because many requests use it at once.
+
+@p17-125 | What is the difference between decimal, double and float, and which do you use for money?
+float and double are binary floating-point types: float is 32-bit with about 7 significant digits, and double is 64-bit with about 15 to 17. They're very fast, because CPUs support them in hardware, and they have a huge range. But they store numbers in base 2, so many decimal fractions, like 0.1, can't be represented exactly. That's why 0.1 plus 0.2 isn't exactly 0.3 in double, and small errors build up in repeated calculations.
+
+decimal is a 128-bit decimal floating-point type, with 28 to 29 significant digits, which stores numbers in base 10. So 0.1 is exact. It's slower and has a smaller range, but it's precise for decimal values.
+
+So for money, prices, quantities with fixed decimal places, and anything where exact decimal results and rounding matter, I use decimal. For scientific calculations, measurements, graphics or statistics, where tiny errors are acceptable and speed matters, double.
+
+A few related points. Never compare doubles with double-equals; use a tolerance. Use Math.Round with an explicit MidpointRounding mode, because the default is banker's rounding. And in SQL Server, use decimal with a fixed precision and scale, not float, for money columns, and make sure EF Core maps the precision explicitly.
+
+@p17-126 | DateTime vs DateTimeOffset vs DateOnly: which should you use?
+DateTime stores a date and time, with a Kind property that says whether it's UTC, local or unspecified. The problem is that Kind is easily lost, for example when reading from a database or JSON, so you get an unspecified value and nobody knows which time zone it was in. DateTime.Now on a server is especially risky, because it depends on the server's time zone.
+
+DateTimeOffset stores a date and time plus an offset from UTC, like plus 5:30. So it represents an exact instant unambiguously, and it's what I use for timestamps: when something happened, created and modified dates, and API values. SQL Server has a matching datetimeoffset type.
+
+DateOnly and TimeOnly, added in .NET 6, represent just a calendar date or just a time of day. They're right for things like a date of birth, a visit date or a store opening time, where a time or time zone makes no sense. Storing a birth date as a midnight DateTime can shift it by a day when time zones are converted.
+
+Note that an offset isn't a time zone. Plus 5:30 doesn't tell you about daylight saving rules. For future local times, like "every day at 9 AM in New York", I store the IANA time zone id and convert with TimeZoneInfo.
+
+And I use TimeProvider instead of calling the clock directly, so tests can control time.
+
+@p17-127 | What is the difference between ReadOnlyCollection, ImmutableList and FrozenDictionary?
+They all prevent changes, but in different ways.
+
+A read-only collection, like ReadOnlyCollection or IReadOnlyList, is a read-only view over another collection. My code can't modify it through that view, but whoever owns the underlying List can still change it, and I'll see the changes. It's about API design: exposing a collection without letting callers modify it.
+
+Immutable collections, from System.Collections.Immutable, like ImmutableList and ImmutableDictionary, can never change. Methods like Add return a new collection, sharing most of the structure with the old one, so it's efficient. They're great for thread-safety, because readers never need locks, and for snapshot semantics, like a configuration state that's swapped atomically. Lookups are slower than in a normal List or Dictionary, though, because they're tree-based.
+
+Frozen collections, FrozenDictionary and FrozenSet, came in .NET 8. They're also immutable, but they're optimised for read speed instead of updates. Creating one is relatively expensive, because it analyses the data to build the fastest possible lookup, but after that, lookups are faster than a normal Dictionary.
+
+So I use IReadOnlyList for exposing data from methods, immutable collections for shared state that changes occasionally, and frozen collections for data built once at startup and read constantly, like lookup tables or permission maps.
+
+@p17-128 | What are default interface methods, and when are they useful?
+Since C# 8, interfaces can provide a default implementation for a member. Classes that implement the interface get that behaviour automatically, unless they provide their own.
+
+The main reason this was added is evolving an interface without breaking existing implementations. Before, adding a new method to a published interface broke every class that implemented it, which is a real problem for libraries with many consumers. Now the library can add the method with a default body, and old implementations keep compiling.
+
+It also allows some trait-like reuse, where small bits of shared behaviour are defined in terms of other interface members. For example, an ILogger-like interface could have a default LogError method that calls the core Log method with an error level.
+
+There are some rules worth knowing. The default member is only accessible through the interface type, not through the class variable, unless the class implements it. Interfaces still can't have instance fields, so they can't hold state. And it can lead to diamond-inheritance ambiguities if two interfaces provide the same default, which must be resolved in the class.
+
+I use them sparingly: mostly for API evolution in shared libraries. For sharing actual behaviour and state, an abstract base class or composition is usually clearer.
+
+@p17-129 | What are static abstract interface members and generic math?
+Since C# 11, interfaces can declare static abstract members, meaning each implementing type must provide a static method, property or operator. Before that, generics couldn't call static members or operators on a type parameter, so you couldn't write one generic Sum method that works for int, double and decimal.
+
+Generic math is built on this. .NET 7 added interfaces like INumber of T, IAdditionOperators and IParsable, implemented by all the numeric types. So I can write a method like T Sum of T where T is INumber of T, and inside it use T.Zero and the plus operator. It works for every numeric type with full performance, because the JIT generates specialised code for value types.
+
+Other uses beyond maths: a static abstract factory method, like static abstract T Create, so a generic method can create instances without reflection. Or a static abstract Parse, which is exactly what IParsable gives, so a generic method can parse strings into any parsable type.
+
+In everyday business code, I don't use it often, but it's useful in libraries, for example a generic statistics helper or a strongly typed id that's parsable from route values.
+
+It's also a nice example of how C# keeps adding features that remove the need for reflection or code duplication.
+
+@p17-130 | What are Native AOT and trimming in .NET?
+Native AOT, ahead-of-time compilation, compiles a .NET application directly to native machine code at publish time, instead of shipping IL that the JIT compiles at runtime. The result is a self-contained executable that doesn't need the .NET runtime installed.
+
+The benefits are very fast startup, often a few tens of milliseconds, lower memory use, and smaller deployments. That's valuable for serverless functions like AWS Lambda, where cold starts matter, for containers that scale quickly, and for command-line tools.
+
+Trimming is part of it: the publish process analyses the app and removes unused code from the framework and libraries, to reduce size.
+
+The limitations come from the fact that everything must be known at compile time. No runtime code generation, so no Reflection.Emit, and dynamic assembly loading isn't supported. Reflection over types that the trimmer can't see may break, so libraries must be AOT-compatible. Serialisation needs source-generated System.Text.Json contexts. And not everything supports it; for example, EF Core's AOT support is still limited, and some popular libraries rely on reflection.
+
+ASP.NET Core supports AOT for minimal APIs with the slim builder, and the compiler shows warnings for anything incompatible.
+
+I'd use it for Lambdas and small, focused services, and stay on the normal JIT for large apps with heavy reflection-based libraries.
+
+@p17-131 | What is tiered compilation and ReadyToRun in .NET?
+These are about how .NET turns IL into machine code, balancing startup speed and peak performance.
+
+The JIT compiles methods the first time they're called. Tiered compilation means it first compiles quickly with few optimisations, tier 0, so the app starts fast. Methods that are called often get recompiled in the background with full optimisations, tier 1. Long-running loops can switch to optimised code mid-execution, which is on-stack replacement.
+
+Dynamic PGO, profile-guided optimisation, is on by default since .NET 8. While running tier 0 code, the runtime collects data about how the code is actually used, like which types are passed to an interface call, and the tier 1 compile uses that to optimise, for example devirtualising and inlining the common case. This gave many apps a noticeable free speed-up.
+
+ReadyToRun is a publish option that pre-compiles IL to native code ahead of time, while keeping the IL. The app starts faster, because less JIT work is needed at startup, and the JIT can still re-optimise hot methods later. The files are bigger.
+
+So for a service where startup matters, like containers that scale often or Lambdas, I'd enable ReadyToRun, or consider Native AOT. For long-running services, the defaults with tiered compilation and dynamic PGO work very well.
+
