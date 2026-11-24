@@ -1,0 +1,107 @@
+@p4-80
+Both mean the request couldn't be matched, but at different levels.
+
+404 Not Found means the thing doesn't exist. Either there's no route for that URL at all, or the route exists but the specific resource doesn't, like GET on a shipment id that isn't in the database. 405 Method Not Allowed means the URL does exist, but not for that HTTP method. Like, sending DELETE to an endpoint that only supports GET and POST. The response should include an Allow header listing the supported methods, and ASP.NET Core endpoint routing returns 405 for you automatically.
+
+This difference really helps debugging, honestly. A 404 makes me check the URL, the route template or the data. A 405 tells me the URL is right, but the client is using the wrong verb, often a typo in the front end or a missing HttpPut attribute.
+
+A small but important point. Some teams intentionally return 404 instead of 403 for records the user isn't allowed to see, so we don't leak that the record exists. I can talk about that security choice.
+
+@p4-81
+409 and 422 are both about valid-looking requests that we still can't accept, but for different reasons.
+
+409 Conflict means the request clashes with the current state of the resource. Typical cases are creating something that already exists, like a duplicate site number, or an optimistic concurrency conflict, where the client is updating an old version of a record that someone else has already changed. The client usually needs to reload and try again. 422 Unprocessable Entity means the request is well-formed, the JSON is valid and the fields are the right types, but it breaks a business rule. Like requesting more kits than the depot has, or a ship date in the past.
+
+Some teams use 400 for all validation errors, which is also fine, I'd say, as long as it's consistent and the ProblemDetails body explains the problem.
+
+In our APIs, the EF Core row-version check maps DbUpdateConcurrencyException to 409, and our business rule validation returns 422 with a ProblemDetails listing each failed rule. That gives the front end a clear way to react. I can show what that error body looks like.
+
+@p4-82
+These are server-side errors, and each one points to a different layer, which is really useful when troubleshooting.
+
+500 Internal Server Error means something failed inside our own service, usually an unhandled exception. The fix is in our code or data, so I go to the logs with the correlation id. 502 Bad Gateway means a proxy or load balancer, like our ALB or API gateway, got an invalid response from the service behind it. Often the container crashed, closed the connection, or isn't listening on the right port. 503 Service Unavailable means the service is temporarily unable to handle requests, say overloaded, in maintenance, or the load balancer has no healthy targets. Ideally it includes a Retry-After header. And 504 Gateway Timeout means the upstream took too long.
+
+So when I see these, I know where to look. 500, our application logs. 502 or 503, the ALB target health and ECS task events. 504, slow queries or downstream calls.
+
+During one deployment issue, a spike of 503s actually told us that new tasks were failing health checks, not that the code was throwing. I can walk through how I'd debug each.
+
+@p4-83
+A DTO, or Data Transfer Object, is a simple class or record that defines exactly what data crosses a boundary, like what an API accepts in a request or returns in a response. It holds data only, with no business behaviour.
+
+The main reason I use DTOs is to separate the API contract from the internal model. Database entities change for internal reasons, and if they were the contract, every schema change could break clients. DTOs also let us hide internal or sensitive fields, prevent over-posting, because input DTOs only contain fields the client may set, put validation attributes on inputs, and shape data per use case, like a short list item versus a full detail view.
+
+In our services, DTOs are C# records, which are concise and immutable. For reads, we project directly into DTOs with a Select in EF Core, so SQL only fetches the needed columns. For writes, we map request DTOs to entities in the service layer.
+
+In a clinical system this separation honestly matters a lot, because we must never accidentally expose something like treatment assignment data. I can explain mapping options like Mapster or manual mapping.
+
+@p4-84
+Exposing EF entities directly from an API looks quick, but it causes some real problems.
+
+Coupling is the big one. The database schema becomes the public contract, so renaming a column or splitting a table breaks clients. Then data leakage. Entities often have internal or sensitive fields, and adding a new column could silently expose it. Over-posting too. If you bind input directly to an entity, a client can set fields it shouldn't, like a status or an approval flag. Serialization problems as well. Navigation properties cause circular references, and with lazy loading, serializing can trigger lots of extra queries. And performance, because you usually load full entities, and their relationships, instead of only the columns needed.
+
+In a clinical trial system, the leakage risk is serious. Accidentally exposing a blinding-related field would be a major compliance issue, not just a bug.
+
+So in our services, every endpoint uses DTOs. Reads use Select projections into DTOs, and writes map request DTOs to entities in the service layer, with tests that check responses contain only expected fields. I can explain how we keep the mapping code manageable, honestly it's not much work.
+
+@p4-85
+A DTO and a ViewModel are both simple data classes, but they serve different purposes.
+
+A DTO, Data Transfer Object, carries data across a boundary, like between an API and its clients, or between services. It's a transport contract, shaped for the use case and kept stable, with no behaviour. A ViewModel is shaped for one specific screen, usually in server-rendered MVC or Razor Pages. It contains exactly what that view needs, and can include display-only data, like formatted dates, dropdown lists or flags that control what's shown.
+
+In an API-first architecture with a separate front end, like React, the server mostly deals with DTOs. The front end builds its own view state from them, so the ViewModel concept kind of moves to the client.
+
+In our system, the APIs return DTOs, like a ShipmentSummaryDto for lists and a ShipmentDetailDto for one shipment. The React front end then combines them into what each screen needs. In older MVC parts of the system, we had ViewModels with select lists for forms. I can talk about how we design DTOs for list versus detail endpoints.
+
+@p4-86
+ApiController is an attribute I put on API controllers, and it switches on a set of behaviours that make building Web APIs simpler and more consistent.
+
+Automatic validation responses are the main one. If the model is invalid, it returns a 400 with a ValidationProblemDetails body before the action runs, so I don't need "if not ModelState IsValid" in every action. Then binding source inference. Complex types come from the body, route values from the route, and simple types from the query string, so fewer FromBody attributes. Attribute routing is required, so routes are explicit. And error status codes come back as ProblemDetails, the standard error format.
+
+It's usually applied on a base controller, or at assembly level, so every API controller gets it.
+
+In our services, we put it on a shared base controller and customised InvalidModelStateResponseFactory, so validation errors also include our correlation id. That way, every 400 from every service has the same shape, and support can trace it in the logs. I think that's been really handy. I can explain how it compares with minimal APIs, which handle this differently.
+
+@p4-87
+Routing is how ASP.NET Core maps an incoming URL and HTTP method to the code that handles it, like a controller action or a minimal API handler.
+
+You've got two styles. Attribute routing puts the route template directly on the controller and actions, like Route "api/studies/{studyId}/shipments" on the controller, and HttpGet "{id}" on an action. It's explicit, supports route constraints like int, and matches REST resource design well, so it's the standard for APIs and is required with ApiController. Conventional routing defines one central pattern in Program.cs, like "controller/action/id", and all controllers follow it. It's common in traditional MVC websites, where URLs follow a predictable pattern.
+
+Minimal APIs use their own MapGet and MapPost calls, which are basically attribute routing in code, and route groups help share prefixes and policies.
+
+In our services, we use attribute routing with versioned, resource-based routes, like api/v1/studies/{studyId}/shipments. That makes the URL design visible right in the code and in the OpenAPI document. I can explain route constraints or versioning next.
+
+@p4-88
+Filtering and sorting in an API is about giving clients flexibility while keeping the queries safe and fast.
+
+I accept parameters in the query string, like status equals Shipped, siteId equals 12, sortBy equals shipDate and descending equals true, usually bound to a query object. Then I build the query step by step on IQueryable. For each filter that's present, I add a Where clause. For sorting, I map the sortBy value to a known expression from an allow-list, never to a raw column name or SQL string, which prevents injection and stops clients from sorting by unindexed columns. Then I apply paging with Skip and Take, or keyset paging for large tables, and return the total count or a next link.
+
+Because everything stays on IQueryable until the end, EF Core translates it all into one SQL query, so the database does the work.
+
+On our shipment search, I made sure the most common filter combinations, study, status and ship date, were covered by an index, and checked the execution plans. That kept the search fast as the data grew, honestly. I can explain keyset versus offset paging.
+
+@p4-89
+OpenAPI is a standard, machine-readable way to describe a REST API, in JSON or YAML. It lists every endpoint, its parameters, request and response models, status codes and security requirements. Swagger is the original name and now the name of the tooling around it, like Swagger UI, which renders the document as an interactive page where you can try the calls.
+
+In .NET, the document is generated from the code. Earlier we used Swashbuckle, and since .NET 9, there's built-in support with Microsoft.AspNetCore.OpenApi. To make it genuinely useful, I add XML comments, ProducesResponseType for every status code, examples, and the authentication scheme so you can test with a token.
+
+The real value, I think, is that the contract is shared. Front-end and vendor teams read it, and they can generate typed clients from it, so they don't hand-code requests. We also publish it per version, and in our pipeline, a check compares the new document with the previous one to catch breaking changes.
+
+For security, Swagger UI is enabled only in non-production environments. I can explain how we handle breaking changes with versioning.
+
+@p4-90
+I secure an API in layers, so that if one control fails, the others still protect it.
+
+Transport at the bottom, HTTPS only, with HSTS. Then authentication. Every request needs a valid JWT from Keycloak, our identity provider, and we validate the issuer, audience, signature and expiry. Then authorization, role and policy checks, plus resource-level checks, like "does this user have access to this specific study", which is critical in multi-tenant clinical data. Then input, DTOs, validation, parameterised queries through EF Core, and size limits. Abuse protection, rate limiting and restricted CORS. And operations, secrets in AWS Secrets Manager, no sensitive data in logs, least-privilege IAM and database roles, dependency scanning in the pipeline, and audit logs for every change.
+
+Security also covers logout and token lifetime. We use short [15-minute] access tokens, and for immediate logout, we added a token-id denylist in Redis that the API checks in about [1 ms].
+
+Every new endpoint goes through a security checklist in code review, honestly no exceptions. I can go deeper into any of these layers.
+
+@p4-91
+An access token and a refresh token work together, but they have very different jobs and lifetimes.
+
+The access token is short-lived, in our case [15 minutes]. It's sent with every API call, usually as a bearer JWT, and the API validates it to know who the user is and what they can do. Because it's short-lived, if it leaks, the damage window is small. The refresh token lives much longer, hours or days. It's never sent to the APIs, only to the identity provider's token endpoint, to get a new access token when the old one expires, so the user doesn't have to log in again. It has to be stored securely, and it can be revoked on the server, and with rotation, each use issues a new one.
+
+We actually used this in a real fix. Users reported that after logging out, their old token still worked until it expired. We revoked the refresh token on logout, and added a denylist of token ids in Redis, which every API checks in about [1 ms]. So logout became immediate.
+
+I can explain how token rotation detects stolen refresh tokens.
