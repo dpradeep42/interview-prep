@@ -1,0 +1,107 @@
+@p4-68
+Middleware runs in exactly the order it's registered, so a wrong order doesn't usually crash the app. It quietly breaks behaviour, which is honestly worse.
+
+A few common examples. If UseAuthorization comes before UseAuthentication, the user isn't identified yet when authorization runs, so every protected endpoint returns 401 or 403. If UseCors is placed after the endpoints, or after authentication, preflight requests don't get CORS headers and the browser blocks the call, even though Postman works fine. If the exception handler is added late, exceptions thrown by earlier middleware aren't caught, and the client gets a raw 500. And if static files come after authentication, even public files need a login.
+
+A typical correct order is exception handling and HSTS, HTTPS redirection, static files, routing, CORS, authentication, authorization, rate limiting, then the endpoints.
+
+I actually hit one of these. When adding our correlation-id middleware in [2024], we placed it after the exception handler, so error logs had no correlation id. Moving it earlier fixed that. I can walk through the full order if useful.
+
+@p4-69
+Use, Run and Map are the three basic ways to build the middleware pipeline.
+
+Use adds middleware that receives the context and a next delegate. It can do work before calling next, call next to pass the request on, and then do more work as the response comes back. It can also choose not to call next and short-circuit. Run adds terminal middleware. It doesn't get a next delegate, so it always ends the pipeline, and anything registered after it never runs. Map branches the pipeline by path. Like, Map of "/health" creates a separate mini-pipeline for that path. MapWhen branches on any condition, and UseWhen branches but rejoins the main pipeline.
+
+In practice, for normal application routes I use endpoint routing, MapControllers, MapGet and so on, not raw Map. Use is what I use for custom middleware, like our correlation-id middleware, which sets the id, calls next, and adds the id to the response.
+
+A common mistake I've seen is putting Run in the middle and wondering why later middleware never executes. I can sketch it if helpful.
+
+@p4-70
+Endpoint routing is the routing system in ASP.NET Core that separates matching a route from executing it.
+
+UseRouting runs early in the pipeline. It matches the request to an endpoint, like a controller action or a minimal API handler, and stores that endpoint on the HttpContext. The endpoint carries metadata, such as the Authorize attribute, a CORS policy, a rate limiting policy or AllowAnonymous. So middleware that runs between routing and the endpoint, like CORS, authentication, authorization and rate limiting, can read that metadata and make decisions. The endpoint itself executes at the end of the pipeline.
+
+The big win is one consistent routing system for controllers, minimal APIs, gRPC, SignalR and health checks, and policy-aware middleware. Before it, in old MVC, routing happened inside MVC, so middleware couldn't know which action would run.
+
+I've used it directly, actually. Our correlation-id and audit middleware calls GetEndpoint to read a custom attribute, so certain endpoints, like health checks, skip auditing. I can explain how authorization uses the endpoint metadata.
+
+@p4-71
+Since .NET 6, Startup.cs isn't part of the default template anymore. Microsoft introduced the minimal hosting model, which merges Program.cs and Startup.cs into one file.
+
+Earlier, Program.cs built the host, and the Startup class had two methods, ConfigureServices for registering services, and Configure for building the middleware pipeline. Now, you create a WebApplicationBuilder. The service registrations that were in ConfigureServices go on builder dot Services. Then you call builder dot Build to get the app, and the pipeline that was in Configure goes on the app object, with app dot Use and app dot Map calls. Top-level statements remove the boilerplate.
+
+Nothing is lost. Startup still works if you prefer it, and large apps often keep things organised with extension methods, like AddPersistence or AddMessaging, so Program.cs stays readable.
+
+When we upgraded our services from older versions, we moved to the minimal hosting model step by step. We grouped registrations into extension methods per area, which made Program.cs much shorter and easier to review, honestly. I can show what a typical Program.cs looks like.
+
+@p4-72
+CORS doesn't protect your API. It's a browser rule, not a server security feature, and people mix that up a lot.
+
+Browsers follow the same-origin policy, which stops a script on one site from reading responses from another origin. CORS, Cross-Origin Resource Sharing, is a way for the server to relax that rule, by telling the browser which other origins are allowed to read its responses. For non-simple requests, the browser sends a preflight OPTIONS request first and checks the headers.
+
+But only browsers enforce it. Postman, curl, a script or another server can call the API regardless of the CORS settings. So CORS protects users in the browser from malicious sites reading data with their cookies. It doesn't stop anyone from calling your API directly.
+
+Real API security comes from authentication, authorization, input validation and rate limiting. In our services, CORS only allows our own front-end origins explicitly, never a wildcard with credentials, and every endpoint still needs a valid token with the right roles. I can explain how a preflight request works step by step.
+
+@p4-73
+HTTPS has two parts, basically. Where TLS is terminated, and how the app enforces it.
+
+In development, ASP.NET Core uses a local dev certificate, trusted with dotnet dev-certs. In production you can configure a certificate on Kestrel directly, but more commonly TLS is terminated at a load balancer or API gateway. In the app, I add UseHttpsRedirection, so plain HTTP requests get redirected, and UseHsts in production, which tells browsers to always use HTTPS for that domain. When behind a proxy, I configure the forwarded headers middleware, so the app knows the original request was HTTPS and redirects and links are correct.
+
+In our AWS setup, the Application Load Balancer terminates TLS using a certificate from AWS Certificate Manager, which renews automatically. HTTP on port 80 is redirected to 443 at the ALB. Traffic between components is also encrypted where our policy requires it, and the database connections use TLS.
+
+For a regulated system, we also enforce modern TLS versions with a TLS security policy on the ALB. I can explain how HSTS works in more detail.
+
+@p4-74
+Health checks are endpoints that report whether the app and its dependencies are healthy, so infrastructure can make routing and restart decisions automatically.
+
+In ASP.NET Core, I call AddHealthChecks and add checks for important dependencies, like the database, RabbitMQ or Redis, either from community packages or custom IHealthCheck classes. Then I map them with MapHealthChecks. I usually expose two. A liveness endpoint that only says the process is running, and a readiness endpoint that checks dependencies, so the instance only gets traffic when it can actually serve it. Each check returns Healthy, Degraded or Unhealthy.
+
+In our setup, the Application Load Balancer target group calls the health endpoint, and only healthy containers get traffic. ECS replaces tasks that keep failing. We keep liveness cheap, because if it checked the database, a database blip would make ECS restart every container at once, which makes things worse. I've seen teams learn that the hard way.
+
+The health endpoints are excluded from authentication and audit logging. I can explain how we monitor them with CloudWatch alarms.
+
+@p4-75
+Graceful shutdown means that when an instance is stopped, it finishes or safely hands back its current work, instead of dropping requests or messages halfway.
+
+When a container is stopped, say during a deployment, it gets a SIGTERM signal. The ASP.NET Core host then stops accepting new requests, lets in-flight requests finish within the shutdown timeout, which is 30 seconds by default, fires the ApplicationStopping event, and cancels the stopping token for every BackgroundService. After that, it disposes services and exits.
+
+My job is to make the code cooperate. Background loops check the stopping token. Our RabbitMQ consumers stop taking new messages, finish and acknowledge the current message, and then close the channel. Anything not acknowledged goes back to the queue for another instance, so nothing is lost. On AWS, the ALB deregistration delay drains connections first, and the ECS stop timeout gives the container time before it's killed.
+
+Honestly, this is a big reason we use manual acks. I can explain how we test it during deployments.
+
+@p4-76
+A CancellationToken is how .NET tells asynchronous work to stop early, and I treat it as a normal part of every async method signature.
+
+In an API action, I accept a CancellationToken parameter. ASP.NET Core binds it to HttpContext.RequestAborted, which is cancelled if the client disconnects. I pass that token all the way down, to EF Core queries, HttpClient calls and Task.Delay, so an abandoned request stops using the database. For timeouts, I create a linked CancellationTokenSource with CancelAfter. In background services I use the stopping token.
+
+When cancellation happens, an OperationCanceledException is thrown. I treat that as normal, not as an error, so it isn't logged as a failure or returned as a 500. And I'm careful where I stop. I don't cancel halfway through a database transaction without rolling back.
+
+A concrete benefit, I'd say. On a heavy shipment report endpoint, users often navigated away. Passing the token to the EF Core query meant SQL Server stopped running those abandoned queries. I can show how to test cancellation.
+
+@p4-77
+PUT and PATCH both update a resource, but PUT replaces it completely, while PATCH changes only part of it.
+
+With PUT, the client sends the full representation of the resource, and the server replaces what it has. Any field the client leaves out is cleared or set to its default. PUT is idempotent, so sending the same request twice gives the same final state, which makes it safe to retry. PATCH sends only the changes. You'll usually see JSON Merge Patch, where you send just the fields to change, or JSON Patch, a list of operations like replace or remove. PATCH isn't guaranteed to be idempotent, like an "add item" operation.
+
+The risk with PUT is a client that sends an old or partial object and accidentally wipes fields. That's why, for small updates, I think PATCH is safer.
+
+In our APIs, we use PATCH for things like updating only a shipment's status or a site's contact details, combined with a row version, so if someone else changed the record in the meantime, we return 409 instead of silently overwriting it. I can explain the concurrency check if useful.
+
+@p4-78
+Both are success codes, but they mean different things to the client.
+
+200 OK is the general success response. The request worked and the result is in the body, like a GET returning a shipment, or a PUT returning the updated resource. 201 Created specifically means the request created a new resource. By convention, a 201 response includes a Location header with the URL of the new resource, and usually the created resource in the body, including server-generated values like its id. There's also 202 Accepted, when work has been queued but not finished yet, and 204 No Content, when it succeeded with nothing to return, like a DELETE.
+
+Using the right code helps clients and tools behave correctly without reading the body, and it makes the API self-documenting in OpenAPI.
+
+In ASP.NET Core, I return CreatedAtAction or TypedResults.Created. Like, when a POST creates a shipment, we return 201 with a Location pointing to the GET endpoint for that shipment. And our CSV import returns 202 Accepted with a link to check the import status, because processing runs in the background. I can explain the other status codes as well, if you want.
+
+@p4-79
+These three are honestly the most commonly confused client errors.
+
+400 Bad Request means the request itself is wrong, invalid JSON, a missing required field, or a failed validation rule. The client needs to fix the request. 401 Unauthorized, despite its name, actually means unauthenticated. We don't know who you are, because the token is missing, invalid or expired, so the client should log in or refresh its token. 403 Forbidden means we know exactly who you are, but you're not allowed to do this. Logging in again won't help.
+
+The difference matters for the client's behaviour. On 401, our front end tries a token refresh once and then redirects to login. On 403, it shows an "access denied" message. If we returned 401 for permission problems, users would get stuck in a login loop.
+
+A real example. In our IRT system, a user logged in with valid access to one study who tries to open another study's shipments gets a 403 from our resource-based authorization check. Some teams return 404 there to avoid revealing that the record exists. I can explain why.
