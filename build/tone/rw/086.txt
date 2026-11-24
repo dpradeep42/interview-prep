@@ -1,0 +1,151 @@
+@p17-1020 | What is the competing consumers pattern?
+Competing consumers basically means several instances of a consumer read from the same queue, and each message goes to only one of them. It's the standard way to scale background processing. If the queue's growing, add more consumers.
+
+The broker handles the distribution. RabbitMQ delivers messages round-robin to consumers on the same queue, limited by each consumer's prefetch count. SQS hands messages to whichever poller asks, hiding them for the visibility timeout. Service Bus uses peek-lock with similar behaviour, and in Kubernetes, KEDA can scale consumer pods based on queue length.
+
+It brings a few consequences. Order isn't guaranteed, because two consumers process messages in parallel. So if order matters per entity, you need partitioning, like Service Bus sessions, SQS FIFO message groups or a consistent hash exchange, so all messages for one key go to one consumer. Messages can be redelivered if a consumer crashes, so processing must be idempotent. And poison messages that always fail need a retry limit and a dead-letter queue, or they block a consumer forever.
+
+Prefetch needs tuning, and people miss this one. A high prefetch is efficient for fast, small messages, but it can leave one busy consumer holding lots of messages while others sit idle. For slow messages, a prefetch of one or a few spreads the work fairly.
+
+Our notification and data processing workers use this pattern on RabbitMQ, with multiple worker instances per queue, a low prefetch for heavy messages, and retry with a dead-letter exchange, so scaling is just adding instances.
+
+@p17-1021 | What is the claim check pattern for large messages?
+Message brokers have size limits, like 256 kilobytes for SQS and Service Bus standard, and even where they allow bigger messages, large payloads slow the broker down and eat expensive memory. The claim check pattern avoids putting large data in the message at all.
+
+The producer stores the big payload in external storage, S3, Azure Blob Storage or a database table, and sends a small message with a reference, the claim check, like the object key, plus useful metadata like type, size and a hash. The consumer reads the message, fetches the payload using the reference and processes it.
+
+Things to get right. Write the payload before sending the message, so the consumer never gets a reference to something that isn't there. Decide who deletes the payload. Honestly, a lifecycle rule that expires objects after a few days is simpler than tracking when every consumer's finished. Secure the storage, since the payload might have sensitive data, using encryption and access limited to the producer and consumers, or short-lived presigned URLs. And include a checksum so the consumer can verify the content.
+
+The Amazon SQS extended client library does this automatically for Java and Python, and similar helpers exist for other SDKs.
+
+A natural example is file processing. An uploaded file lands in storage, and a message with its location triggers the import job. In our data transfer flows, large extracts get written to storage and only the reference and metadata travel through the queue, which keeps the broker fast and messages easy to inspect.
+
+@p17-1022 | How do you propagate timeouts and deadlines across a chain of service calls?
+When service A calls B, which calls C, each with its own timeout, the timeouts often don't add up. If A gives up after two seconds but B waits five seconds for C, then B and C keep working on a request nobody's waiting for, wasting capacity exactly when the system's under stress.
+
+Deadline propagation fixes that by passing the remaining time budget down the chain. The edge sets a deadline for the whole request, and each service uses whatever's left, minus a small margin, as the timeout for its own downstream calls. If very little time remains, it fails fast instead of starting work that can't finish.
+
+gRPC has this built in. The client sets a deadline, it travels in the request metadata, and the server's cancellation token fires when it expires. With HTTP, you can pass a custom header with the deadline or the remaining milliseconds and turn it into a cancellation token.
+
+In .NET, the important bit is actually honouring cancellation. Pass the request's cancellation token through to database queries and HTTP calls, so the work really stops. Combining it with a timeout using a linked cancellation token source keeps the code simple.
+
+Some general rules I follow. Timeouts should get shorter the deeper you go in the chain. Retries have to fit inside the remaining budget, or they make things worse. And queued messages should carry an expiry, so a consumer doesn't process a request that's already stale.
+
+It's one of those details that turns a small slowdown into a full outage if you ignore it, because abandoned work just keeps piling up.
+
+@p17-1023 | How do you invalidate caches across services when data changes?
+When several instances or services cache the same data, a change in one place has to reach all the caches, or users see stale data. You've got a few options, and each has its own cost.
+
+The simplest is short expiry times. Data's allowed to be stale for a known period, like sixty seconds, and no invalidation is needed. For a lot of reference data, honestly that's good enough.
+
+Event-based invalidation is the next level. The service that owns the data publishes an event when it changes, like product updated, and every service that caches it removes or refreshes that entry. With a message broker, each instance needs its own subscription, not a shared queue, or only one instance hears the event. That one catches people out. Redis pub/sub or keyspace notifications work well for in-memory caches across instances.
+
+A shared distributed cache like Redis avoids the problem for instance-local copies, because all instances read the same entry, and the owner updates or deletes it on change. A two-level cache, memory in front of Redis, still needs invalidation messages for the memory level. HybridCache in .NET 9 supports this layering with tag-based invalidation.
+
+Version stamps are another option. Include a version in the cache key and bump it when data changes, so old entries just never get read again.
+
+Always keep expiry as a safety net, since invalidation messages can get lost. In our IIS web farm, configuration data is cached in memory per node, with Redis pub/sub invalidation messages and a short expiry as a backup, which keeps all nodes consistent within seconds.
+
+@p17-1024 | What is the tolerant reader pattern?
+The tolerant reader pattern says a consumer of an API or message should be strict only about what it actually needs, and ignore everything else. It's really the robustness principle applied, be conservative in what you send and liberal in what you accept.
+
+In practice, a tolerant reader ignores unknown fields instead of failing, so the producer can add fields without breaking anyone. It reads only the fields it uses, rather than mapping the whole payload into a strict model. It handles missing optional fields with sensible defaults. And for enums, it has a fallback for unknown values, because a new status value from the producer shouldn't crash the consumer.
+
+Most serializers support this. System.Text.Json ignores unknown properties by default, though .NET 8 added an option to disallow them, which you should leave off for external contracts. In TypeScript, a runtime validator like Zod should be set up to strip unknown keys rather than reject them.
+
+The pattern is what makes independent deployment possible. A producer can add a field, deploy, and consumers update later when they actually want to use it. Combined with additive-only changes from producers, versioning becomes rare.
+
+There's a balance, though, I'd say. Being tolerant doesn't mean silently accepting invalid data. Required fields and business rules still have to be validated, and unknown enum values should be logged so you notice them.
+
+Our front-end sub-apps consume the same APIs at different release cadences. Tolerant parsing with safe defaults means a backend can release a new field without forcing every sub-app to release at the same time.
+
+@p17-1025 | What is AsyncAPI, and how do you document event-driven APIs?
+OpenAPI documents request-response HTTP APIs, but it doesn't really describe events and message queues well. AsyncAPI is the equivalent spec for event-driven systems.
+
+An AsyncAPI document describes the servers, like a RabbitMQ or Kafka broker. The channels, queues, topics, or exchanges and routing keys. The operations, saying whether the application sends or receives on each channel. And the message payloads with JSON Schema or Avro, plus headers like correlation id and message type. It can also describe security, and bindings specific to each protocol.
+
+From that, tools generate human-readable documentation, code models and even boilerplate for producers and consumers. The specs can live in each service's repo and get validated in CI like OpenAPI files.
+
+The practical value is discoverability. In an event-driven system, it's surprisingly hard to answer which events exist, who publishes them, who consumes them and what fields they contain. Without documentation, people read code or guess from messages in queues. An event catalog, like EventCatalog, or a developer portal like Backstage, can pull the AsyncAPI files from all services into one browsable place, showing producers and consumers for each event.
+
+Combined with schema compatibility checks, it also supports safe evolution. A change to a message schema shows up in review, and breaking changes can fail the build.
+
+For a team with lots of RabbitMQ queues built up over years, I'd start small. Document the most widely consumed events first, with their payload schemas and owners, because that's where unclear contracts cause the most incidents.
+
+@p17-1026 | Event notification vs event-carried state transfer: what is the difference?
+These are two ways to design what goes in an event, sometimes called thin and fat events.
+
+An event notification is thin. It says something happened and gives an id, like order 123 was updated. Consumers that care call back to the owning service's API to get the current details. Events stay small and stable, and consumers always see the latest data. The downsides are extra calls, load on the owner, and runtime coupling. If the owner's down, consumers can't process the event.
+
+Event-carried state transfer is fat. The event contains the relevant data, like the order's status, items and totals. Consumers can update their own local copy without calling back, so they keep working when the owner's down, and queries become local and fast. The downsides are bigger messages, more fields that become part of the contract, harder schema evolution, and data duplicated across services that's eventually consistent.
+
+There's also a middle path. Include the fields most consumers need, plus the id for anyone who needs more.
+
+Ordering matters with fat events, and people forget this. If a consumer processes an older event after a newer one, it might overwrite fresh data with stale data, so include a version or timestamp and ignore older ones.
+
+I choose based on the consumers. When lots of services need their own view of reference data, like site or product details, event-carried state transfer cuts chatter and coupling. For sensitive data, a thin notification is safer, since the details stay behind the owner's API with its access controls.
+
+@p17-1027 | What is a cell-based architecture?
+Okay so, a cell-based architecture splits a system into several independent, complete copies, called cells, each serving a subset of customers or tenants. Each cell has its own application instances, databases, queues and caches. A thin routing layer sends each request to the right cell based on, say, the tenant id.
+
+The main reason is limiting blast radius. A bad deployment, a noisy tenant, a poison message or a database problem affects one cell, not everyone. It's the bulkhead pattern applied to the whole infrastructure, and AWS uses it heavily for its own services.
+
+It also helps scaling and operations. Cells have a known maximum size, so you test that size and add new cells as you grow, instead of discovering new limits in one giant deployment. Deployments roll out cell by cell, which fits naturally with deployment rings.
+
+The costs are real though. More infrastructure to run and pay for. The routing layer has to be very simple and highly available, since it's shared. Moving a tenant between cells needs a data migration process. And cross-cell features, like global reporting or search, need separate aggregation.
+
+It fits systems with natural partitioning, like multi-tenant SaaS, where each customer's data is mostly independent.
+
+A per-study database model is a small step in this direction. Each study's data is isolated, so a problem with one study's data or a migration rarely affects others. A full cell design would go further and split the application tier too, so a group of studies runs on its own infrastructure.
+
+@p17-1028 | How do you share reference data across microservices?
+Reference data is stuff many services need but that rarely changes, like countries, currencies, product catalogues, site details or configuration lists. The question is how services get it without all coupling to one central database.
+
+Option one is a reference data service with an API. Every service calls it, usually with caching. It keeps one source of truth, but adds a runtime dependency, and if that service is slow or down, callers suffer unless their caches are good.
+
+Option two is replication through events. The owning service publishes changes, and each consumer keeps its own local copy, in its own database or cache. Reads are local and fast, and consumers keep working during outages. The cost is eventual consistency and some duplicated storage, which for reference data is usually fine.
+
+Option three is shipping static data with the code, as a package or config file. For truly static standards, like ISO country codes, this is the simplest. It needs a release to change, though.
+
+What I'd avoid is a shared database every service reads directly, because then nobody can change the schema safely.
+
+Whatever you pick, be clear about the owner, use stable identifiers that don't change when display names do, and version changes. For data that affects business rules, like a site being closed, decide how quickly consumers have to see it, because that drives the choice between caching, events and direct calls.
+
+In our platform, slowly changing configuration is cached per node with invalidation messages, while truly static lists ship with the application.
+
+@p17-1029 | How do you debug a running pod with kubectl debug and ephemeral containers?
+Modern images are often distroless or minimal, with no shell, curl or debugging tools, which is great for security but makes troubleshooting hard. You can't just exec into the pod and run commands that don't exist.
+
+Ephemeral containers solve that. kubectl debug adds a temporary container, with an image that has the tools you need, like busybox or netshoot, to a running pod without restarting it. With the target option, the debug container shares the process namespace of the application container, so you can see its processes, read its files through the proc filesystem, and use the same network namespace for testing connectivity, DNS and ports.
+
+kubectl debug has two other modes. It can create a copy of a pod with changes, like a different image or a changed command, which helps when a container crashes on startup, because you can start the copy with a shell instead. And it can debug a node, starting a privileged pod on that node with the host filesystem mounted, which saves you having to SSH into nodes.
+
+For .NET, you can attach a debug container with the dotnet diagnostic tools to collect a dump or trace from the running process, since they share the process namespace. I think that's one of the handiest tricks.
+
+Security matters here. Creating ephemeral containers needs its own RBAC permission, which should be limited to people who need it, especially in production, and usage should be audited. Debugging this way is a last resort after logs, metrics and traces, but when you need it, it saves rebuilding images with tools inside.
+
+@p17-1030 | How do you speed up Docker builds in CI with BuildKit cache?
+On a fresh CI agent, Docker has no local layer cache, so every build starts from scratch, restoring packages, compiling, everything. BuildKit, the default builder in modern Docker, can import and export cache from outside the machine.
+
+With docker buildx build, the cache-to and cache-from options store and reuse layer cache. Common targets are a registry, where the cache gets pushed as a separate image or tag, the GitHub Actions cache backend, or a local directory the CI system caches. Mode max caches intermediate layers from all stages of a multi-stage build, not just the final image, which matters because the expensive work happens in the build stage.
+
+The Dockerfile has to be cache-friendly too. Copy the dependency files first, the project files for .NET, or package and lock files for Node, restore dependencies, and only then copy the rest of the source. Then a code change doesn't invalidate the restore layer. A good dockerignore keeps unneeded files from busting the cache.
+
+BuildKit cache mounts help with package caches. A RUN instruction with a cache mount for the NuGet or npm cache folder keeps downloaded packages between builds without putting them in the image.
+
+Other tips, pin base images by digest so cache hits are predictable, build stages in parallel where you can, and avoid steps that change every time, like writing a build timestamp early in the Dockerfile. That last one quietly kills caching, trust me.
+
+In practice, switching a .NET service pipeline to registry cache with restore-first ordering brought typical image builds down from several minutes to under one minute.
+
+@p17-1031 | How do you cancel work in Node.js with AbortController?
+AbortController is the standard cancellation mechanism in JavaScript, in browsers and in Node. You create a controller, pass its signal to an operation, and call abort when you want it to stop. The operation listens to the signal and rejects with an AbortError.
+
+Lots of Node APIs accept a signal now. fetch, timers in the promises module, events once, streams, child processes, and file system functions like readFile. Libraries like undici, axios and database drivers support it too.
+
+Two helpers make it convenient. AbortSignal timeout creates a signal that aborts after a given number of milliseconds, which is the easiest way to put a timeout on fetch. AbortSignal any combines several signals, say a request-level signal plus a timeout, so the operation stops when either one fires.
+
+In a web server, a useful pattern is creating a controller per request and aborting it when the client disconnects, by listening for the request's close event, then passing the signal down to database queries and outgoing calls. It's kind of like passing a cancellation token through an ASP.NET Core request, and it stops wasted work for requests nobody's waiting for.
+
+For your own long-running functions, check signal aborted in loops, or call throw if aborted on the signal, and listen for the abort event to clean up resources.
+
+Handle the error properly. An AbortError is usually expected, so log it at a lower level than real failures, and make sure aborted operations don't leave half-written data behind.
